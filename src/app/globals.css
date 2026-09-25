@@ -1,26 +1,32 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* 色は docs/ui-mock/README.md「デザインの基本」 */
+@theme {
+  --color-canvas: #f5f3ee;
+  --color-surface: #ffffff;
+  --color-ink: #1d2528;
+  --color-ink-sub: #5b6468;
+  --color-line: #e2ded6;
+  --color-line-input: #d8d3ca;
+  --color-muted: #efece6;
+  --color-primary: #1f5c5a;
+  --color-primary-hover: #153f3e;
+  --color-primary-soft: #e3eeec;
+  --color-caution: #9a5b0b;
+  --color-caution-soft: #f7ecdc;
+  --color-danger: #a3261d;
+  --color-danger-soft: #f8e4e1;
+  --color-dark: #1d2528;
+  --color-dark-2: #2f3b3f;
+  --color-weight-mid: #d5e3f0;
+  --color-weight-mid-ink: #1f4e79;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-gothic), sans-serif;
+  --font-mincho: var(--font-mincho), serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-gothic), sans-serif;
 }

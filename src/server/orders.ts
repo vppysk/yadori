@@ -153,7 +153,7 @@ export type GuestTicket = {
 
 export async function listConversationTickets(conversationId: string): Promise<GuestTicket[]> {
   return query<GuestTicket>(
-    `select t.id, t.status, t.created_at,
+    `select t.id, t.status, to_char(t.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') created_at,
        round(extract(epoch from (t.due_at - t.created_at)) / 60)::int due_minutes_total,
        coalesce(json_agg(json_build_object('item', l.item_name, 'quantity', l.quantity, 'note', l.note) order by l.id), '[]') lines
      from tickets t left join ticket_lines l on l.ticket_id = t.id

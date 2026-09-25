@@ -14,6 +14,8 @@ import { createTickets, getCatalog, listConversationTickets, type CreatedTicket,
 import { route, type RouteResult } from "./router";
 
 const HISTORY_LIMIT = 12;
+// クライアントに渡す時刻はISO文字列（UTC）に揃える。文字列のまま比較・並べ替えできる
+export const ISO_TIMESTAMP = (column: string) => `to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 // 回答の主担当を決める優先順（重いものを優先）
 const PATTERN_PRIORITY: Pattern[] = ["complaint", "reservation", "external", "info", "order"];
 
@@ -29,6 +31,7 @@ export type GuestChatMessage = {
 
 export type GuestSession = {
   hotelName: string;
+  timezone: string;
   guest: Pick<GuestContext, "roomNumber" | "checkIn" | "checkOut">;
   today: string;
   conversationId: string;
@@ -44,12 +47,31 @@ export async function getGuestSession(reservationId: string): Promise<GuestSessi
   const [messages, tickets] = await Promise.all([listMessages(conversationId), listConversationTickets(conversationId)]);
   return {
     hotelName: hotel.name,
+    timezone: hotel.timezone,
     guest: { roomNumber: guest.roomNumber, checkIn: guest.checkIn, checkOut: guest.checkOut },
     today: localNow(hotel.timezone).date,
     conversationId,
     messages,
     tickets,
   };
+}
+
+// ヘッダーの「スタッフと話す」。会話を人に引き継ぐ（ガードレール: 必ず人に引き継ぐ条件）
+export async function requestStaff(reservationId: string) {
+  const guest = await getGuestContext(reservationId);
+  if (!guest) throw new Error(`予約が見つかりません: ${reservationId}`);
+  const hotel = await getHotel(guest.hotelId);
+  const conversationId = await findOrCreateConversation(hotel, guest);
+  const band = await currentTimeBand(hotel);
+  return handOffToStaff(hotel, guest, conversationId, "info", band?.id, "ゲストが画面の「スタッフと話す」を押した");
+}
+
+async function handOffToStaff(hotel: Hotel, guest: GuestContext, conversationId: string, pattern: Pattern, timeBandId: string | undefined, summary: string) {
+  await createHandoff({ hotelId: hotel.id, kind: "talk_request", conversationId, roomNumber: guest.roomNumber, summary });
+  const reply = "承知しました。スタッフにおつなぎします。こちらの画面でそのままお待ちください。";
+  await insertMessage(conversationId, "assistant", reply);
+  await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern, timeBandId, handlerKind: "human", handler: "引き継ぎ", outcome: "handed_off", signals: { wants_staff: true } });
+  return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
 }
 
 // ゲストの1通を処理する: ルーターで分解 → オーダーはチケット発行（機械の割り当て）→ 案内係エージェントがまとめて回答
@@ -68,13 +90,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   const { intents, wants_staff } = routed.result;
 
   // 「スタッフと話したい」は必ず人に引き継ぐ（ガードレール）
-  if (wants_staff) {
-    await createHandoff({ hotelId: hotel.id, kind: "talk_request", conversationId, roomNumber: guest.roomNumber, summary: text });
-    const reply = "承知しました。スタッフにおつなぎします。こちらの画面でそのままお待ちください。";
-    await insertMessage(conversationId, "assistant", reply);
-    await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern: intents[0].pattern, timeBandId: band?.id, handlerKind: "human", handler: "引き継ぎ", outcome: "handed_off", signals: { wants_staff: true } });
-    return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
-  }
+  if (wants_staff) return handOffToStaff(hotel, guest, conversationId, intents[0].pattern, band?.id, text);
 
   const tickets = await issueOrders(hotel, guest, conversationId, text, intents, band?.id);
   const unsupportedItems = intents.flatMap((i) => i.unsupported_items ?? []);
@@ -320,7 +336,7 @@ async function insertMessage(conversationId: string, role: "user" | "assistant",
 
 async function listMessages(conversationId: string, limit = 200): Promise<GuestChatMessage[]> {
   const rows = await query<GuestChatMessage>(
-    `select id, role, content, citations, created_at from messages
+    `select id, role, content, citations, ${ISO_TIMESTAMP("created_at")} created_at from messages
      where conversation_id = $1 and role in ('user', 'assistant', 'staff')
      order by created_at desc limit $2`,
     [conversationId, limit],

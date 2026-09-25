@@ -7,20 +7,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 現状
 
 ホテル運営AIエージェント（Nebius x NVIDIA Global AI Hackathon 応募作品、締切 2026-10-30 10:00 PDT）。
-W1の初期構築（Next.js＋Mastra＋LLM層）とDBスキーマまで。業務機能は未実装。
+W1（初期構築・DBスキーマ）完了。W2のゲスト対応（ルーター・滞在日での案内・オーダーの自動割り当て・ゲストチャット画面 `/guest/[予約番号]`）まで実装済み。
 
 ## コマンド
 
 - `npm run dev` / `npm run build` / `npm run lint` / `npm run typecheck`（`next typegen` 込み）
 - `npm run verify:llm`: LLM層の疎通確認（モック、費用なし）。`npm run verify:llm:nebius` はToken Factoryを実際に呼ぶ（少額課金）
-- `npm run db:start` / `db:stop` / `db:reset`: ローカルSupabase（Docker必須）
+- `npm run db:start` / `db:stop` / `db:reset`: ローカルSupabase（Docker必須）。クラウドへの適用は `npx supabase db push --db-url "$DATABASE_URL"`
+- `npm run dev:shifts`: デモのスタッフを今日の枠に出勤させる（割り当ての確認に必要）
+- `npm run try:guest -- R-1203 "プール何時まで？"`: ゲストの1通を画面なしで処理する（`.env.local` の `LLM_MODE` に従う）
 - テストランナーは未導入
 
 ## コード構成
 
 - `src/lib/llm/models.ts`: モデル取得の唯一の入口 `getModel(tier, { thinking })`。`LLM_MODE=mock`（既定）でAI SDKのモックモデル、`nebius`でToken Factory。tierは small=Nemotron 3.5 Lightning / medium=3 Super / large=3 Ultra。エージェントや処理から直接プロバイダーを生成しない
 - `src/lib/llm/structured.ts`: 構造化出力は `generateStructured`（強制ツール呼び出し＋Zod検証＋再試行）を使う。Token Factoryの`json_schema`はNemotronでスキーマを保証しないため、MastraやAI SDKの`output`／`structuredOutput`は使わない
-- `src/mastra/`: Mastraのエージェント・ツール。`src/app/api/mastra/[...mastra]/route.ts` でMastraのHTTP APIを `/api/mastra/*` に公開（`prefix` とフォルダ位置を一致させる）
+- `src/server/`: 業務ロジック（DBは `db.ts` の `pg` で直接SQL）。`guest-chat.ts` がゲスト1通の処理の流れ（ルーター → チケット発行 → 知識の取得 → 回答 → 計測の記録）
+- `src/server/orders.ts`: チケットの割り当ては機械ロジック（同フロアのまとめ → 担当量最小 → 最後の割り当てが古い順）。LLMは使わない
+- `src/mastra/`: Mastraのエージェント。`src/app/api/mastra/[...mastra]/route.ts` でMastraのHTTP APIを `/api/mastra/*` に公開（`prefix` とフォルダ位置を一致させる）
 - `scripts/verify-llm.ts`: LLM層の確認スクリプト。`registerMockToolFixture` でモック時の強制ツール呼び出しの戻り値を登録する
 - `supabase/migrations/`: DBスキーマ（SQLが正）。設計の理由は `docs/001_db_schema.md`。`supabase/seed.sql` はデモ用データ
 
@@ -37,6 +41,9 @@ W1の初期構築（Next.js＋Mastra＋LLM層）とDBスキーマまで。業務
 - thinkingは `chat_template_kwargs.enable_thinking` で切り替え（`getModel`が注入）。ルーター・抽出はオフが基本（オンは遅く、Nanoでは10秒超）
 - Superはthinkingオフだとツール呼び出しの前に英語の独り言を本文に出すことがある
 - 日付はモデルに推測させない。滞在日・今日の日付は必ずプロンプトかツール引数で渡す
+- ゲスト向けの回答係（`concierge`）にはツールを持たせない。営業情報・特記事項はサーバーが滞在日で取得し、文章にして指示に入れる。Nemotronがツール呼び出しを文字で書く・同じ呼び出しを216回繰り返す事象があったため
+- 案内の回答は中型（Super）が既定。小型（Lightning）はデータのない項目（朝食時間など）を推測で答えた。ルーターは小型で可
+- ルーターの品目は、ゲストの言い方が品目名・別名と重なるときだけ採用する（`acceptKnownItems`）。LLMは「充電器」を既存品目に当てはめることがあった
 
 ## 仕様の正
 
