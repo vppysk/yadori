@@ -442,7 +442,7 @@ create table ticket_lines (
   id uuid primary key default gen_random_uuid(),
   ticket_id uuid not null references tickets (id) on delete cascade,
   order_item_id uuid references order_items (id),
-  item_name text not null, -- 登録時点の名前の写し
+  item_name text not null, -- ゲストの言い方（バスタオルなど）。品目マスタとは order_item_id でつなぐ
   quantity integer not null check (quantity > 0),
   note text -- 「低め」「設置まで」など
 );

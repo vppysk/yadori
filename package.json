@@ -12,7 +12,9 @@
     "typecheck": "next typegen && tsc --noEmit",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
-    "db:reset": "supabase db reset"
+    "db:reset": "supabase db reset",
+    "dev:shifts": "tsx --env-file=.env.local scripts/dev-start-shifts.ts",
+    "try:guest": "tsx --env-file=.env.local scripts/try-guest-chat.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.55",
@@ -23,6 +25,7 @@
     "@supabase/supabase-js": "^2.117.1",
     "ai": "^7.0.114",
     "next": "16.3.6",
+    "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "^4.6.5"
@@ -30,6 +33,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

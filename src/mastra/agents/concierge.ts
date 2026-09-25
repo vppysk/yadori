@@ -1,29 +1,29 @@
 import { Agent } from "@mastra/core/agent";
-import { createTool } from "@mastra/core/tools";
-import { z } from "zod";
-import { getModel } from "@/lib/llm/models";
+import type { RequestContext } from "@mastra/core/request-context";
+import { getModel, type ModelTier } from "@/lib/llm/models";
 
-// W1の疎通確認用。マスタ・RAG・特記事項の実装（W2）で置き換える
-export const searchFacilityHours = createTool({
-  id: "search_facility_hours",
-  description: "施設の営業時間を滞在日で検索する。特記事項があれば通常の営業情報より優先して返す",
-  inputSchema: z.object({
-    facility: z.string().describe("施設名（例: 屋外プール）"),
-    date: z.string().describe("滞在日 YYYY-MM-DD"),
-  }),
-  execute: async ({ facility, date }) => ({
-    facility,
-    date,
-    hours: "9:00-18:00",
-    notice: "本日15時まで点検で閉鎖",
-  }),
-});
+// リクエストごとに決まる値。モデル（時間帯×パターンの担当）と指示はホテルの設定から作る
+export type ConciergeContext = {
+  tier: ModelTier;
+  thinking: boolean;
+  instructions: string;
+};
 
+function ctx(requestContext: RequestContext | undefined): ConciergeContext {
+  const get = <K extends keyof ConciergeContext>(key: K) => requestContext?.get(key) as ConciergeContext[K];
+  const instructions = get("instructions");
+  if (!instructions) throw new Error("requestContext に instructions がありません");
+  return { tier: get("tier") ?? "small", thinking: get("thinking") ?? false, instructions };
+}
+
+// ゲスト向けの回答係。営業情報・特記事項・文書はサーバー側で滞在日に合わせて取得し、指示に入れて渡す。
+// ツールを持たせないのは、Nemotronがツール呼び出しを文字で書く・同じ呼び出しを繰り返すことがあったため（2026-09-25 検証）
 export const conciergeAgent = new Agent({
   id: "concierge",
   name: "concierge",
-  instructions:
-    "あなたはホテルの案内係。施設の営業時間は必ずツールで調べ、特記事項があればそれを優先して日本語で簡潔に答える。",
-  model: getModel("medium"),
-  tools: { searchFacilityHours },
+  instructions: ({ requestContext }) => ctx(requestContext).instructions,
+  model: ({ requestContext }) => {
+    const { tier, thinking } = ctx(requestContext);
+    return getModel(tier, { thinking });
+  },
 });

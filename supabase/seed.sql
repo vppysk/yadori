@@ -114,14 +114,15 @@ insert into facility_offerings (facility_id, name, valid) values
   ('00000000-0000-0000-0000-00000000f001', '冬の鍋会席', '[2026-10-15,2027-03-31]');
 
 -- ---------- AIの担当範囲・指示・ガードレール（UIモックのサンプル） ----------
+-- 案内・オーダーの回答は中型（Super）。小型（Lightning）は情報のない項目を推測で答えることがあった（2026-09-25 検証）
 
 insert into ai_assignments (hotel_id, pattern, time_band_id, handler, locked)
 select h.id, a.pattern, tb.id, a.handler, a.pattern = 'complaint'
 from hotels h
 join time_bands tb on tb.hotel_id = h.id
 join (values
-  ('info', 1, 'small'), ('info', 2, 'small'), ('info', 3, 'medium'),
-  ('order', 1, 'small'), ('order', 2, 'small'), ('order', 3, 'small'),
+  ('info', 1, 'medium'), ('info', 2, 'medium'), ('info', 3, 'medium'),
+  ('order', 1, 'medium'), ('order', 2, 'medium'), ('order', 3, 'medium'),
   ('external', 1, 'medium'), ('external', 2, 'medium'), ('external', 3, 'human'),
   ('reservation', 1, 'human'), ('reservation', 2, 'human'), ('reservation', 3, 'human'),
   ('complaint', 1, 'large'), ('complaint', 2, 'large'), ('complaint', 3, 'large')

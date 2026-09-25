@@ -47,10 +47,11 @@ export function getModel(tier: ModelTier, { thinking = false }: ModelOptions = {
 
 // --- ローカル確認用のモック（LLM費用なし） ---
 
-// 強制ツール呼び出しで返す引数。toolName → 固定の引数
-const mockToolFixtures: Record<string, unknown> = {};
+// 強制ツール呼び出しで返す引数。toolName → 固定の引数、または最後のユーザー発言から作る関数
+type MockFixture = unknown | ((userText: string) => unknown);
+const mockToolFixtures: Record<string, MockFixture> = {};
 
-export function registerMockToolFixture(toolName: string, input: unknown) {
+export function registerMockToolFixture(toolName: string, input: MockFixture) {
   mockToolFixtures[toolName] = input;
 }
 
@@ -77,7 +78,8 @@ function createMockModel(tier: ModelTier): LanguageModelV4 {
       const inputChars = JSON.stringify(options.prompt).length;
       const choice = options.toolChoice;
       if (choice?.type === "tool" && choice.toolName in mockToolFixtures) {
-        const input = JSON.stringify(mockToolFixtures[choice.toolName]);
+        const fixture = mockToolFixtures[choice.toolName];
+        const input = JSON.stringify(typeof fixture === "function" ? fixture(lastUserText(options)) : fixture);
         return {
           content: [{ type: "tool-call", toolCallId: "mock-call", toolName: choice.toolName, input }],
           finishReason: { unified: "tool-calls", raw: "tool_calls" },
