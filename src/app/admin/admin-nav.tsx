@@ -1,0 +1,49 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { logoutAction } from "../staff/actions";
+
+export type AdminNavItem = { href: string; label: string; exact?: boolean; badge?: number; ready?: boolean; allowed?: boolean };
+
+export function AdminNav({ hotelName, memberName, items }: { hotelName: string; memberName: string; items: AdminNavItem[] }) {
+  const pathname = usePathname();
+  return (
+    <nav aria-label="管理メニュー" className="flex w-[230px] shrink-0 flex-col gap-1 bg-dark px-4 py-6 text-canvas">
+      <div className="px-2.5 pb-5 font-mincho text-lg font-semibold">
+        {hotelName}
+        <span className="block font-sans text-[11px] font-normal text-[#AEB6B9]">管理</span>
+      </div>
+      {items.map((item) => {
+        const path = item.href.split("#")[0];
+        const active = !item.href.includes("#") && (item.exact ? pathname === path : pathname.startsWith(path));
+        if (item.ready === false) {
+          return (
+            <span key={item.href} className="flex min-h-11 items-center rounded-[10px] px-3 text-sm text-[#6F7A7E]" title="準備中">
+              {item.label}
+            </span>
+          );
+        }
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? "page" : undefined}
+            className={`flex min-h-11 items-center justify-between rounded-[10px] px-3 text-sm ${active ? "bg-dark-2 font-bold" : "hover:bg-dark-2"}`}
+          >
+            {item.label}
+            {item.badge ? <span className="text-xs text-[#AEB6B9]">{item.badge}</span> : null}
+          </Link>
+        );
+      })}
+      <div className="mt-auto flex items-center justify-between px-2.5 pt-6 text-xs text-[#AEB6B9]">
+        <span>{memberName}</span>
+        <form action={logoutAction}>
+          <button type="submit" className="min-h-11 underline">
+            ログアウト
+          </button>
+        </form>
+      </div>
+    </nav>
+  );
+}

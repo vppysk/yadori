@@ -18,6 +18,9 @@ const MODEL_IDS: Record<ModelTier, string> = {
   large: process.env.LLM_MODEL_LARGE ?? "nvidia/Nemotron-3-Ultra-550b-a55b",
 };
 
+// 画像の書き起こし用（Token FactoryにNemotronの画像対応モデルがないため別系統。docs/000_plan.md 6章）
+export const VISION_MODEL_ID = process.env.LLM_MODEL_VISION ?? "zai-org/GLM-5.3-Flash";
+
 export function llmMode(): "mock" | "nebius" {
   return process.env.LLM_MODE === "nebius" ? "nebius" : "mock";
 }
@@ -29,10 +32,13 @@ export function modelIdFor(tier: ModelTier): string {
 export function getModel(tier: ModelTier, { thinking = false }: ModelOptions = {}): LanguageModelV4 {
   if (llmMode() === "mock") return createMockModel(tier);
 
+  // Token Factoryはjson_schemaを保証しないため、構造化出力は強制ツール呼び出しで行う（structured.ts）
+  return nebiusProvider(thinking).chatModel(MODEL_IDS[tier]);
+}
+
+function nebiusProvider(thinking: boolean) {
   const apiKey = process.env.NEBIUS_API_KEY;
   if (!apiKey) throw new Error("LLM_MODE=nebius には NEBIUS_API_KEY が必要です");
-
-  // Token Factoryはjson_schemaを保証しないため、構造化出力は強制ツール呼び出しで行う（structured.ts）
   return createOpenAICompatible({
     name: "nebius",
     apiKey,
@@ -42,7 +48,12 @@ export function getModel(tier: ModelTier, { thinking = false }: ModelOptions = {
       ...body,
       chat_template_kwargs: { ...body.chat_template_kwargs, enable_thinking: thinking },
     }),
-  }).chatModel(MODEL_IDS[tier]);
+  });
+}
+
+export function getVisionModel(): LanguageModelV4 {
+  if (llmMode() === "mock") return createMockModel("small");
+  return nebiusProvider(false).chatModel(VISION_MODEL_ID);
 }
 
 // --- ローカル確認用のモック（LLM費用なし） ---

@@ -11,6 +11,7 @@ import { currentTimeBand, getAiAgentMemberId, getAssignment, getHotel, localNow,
 import { getFacilityInfo, listFacilityNames, searchDocuments, type FacilityInfo } from "./knowledge";
 import { recordLlmCall, recordWorkEvent } from "./metrics";
 import { createTickets, getCatalog, listConversationTickets, type CreatedTicket, type GuestTicket } from "./orders";
+import { recordUnanswered } from "./questions";
 import { route, type RouteResult } from "./router";
 
 const HISTORY_LIMIT = 12;
@@ -152,8 +153,10 @@ export async function handleGuestMessage(reservationId: string, text: string) {
     ms: Math.round(performance.now() - startedAt),
   };
 
-  // 指示してもマークダウンの強調・見出しを出すことがあるため取り除く
-  const generated = result.text.replace(/\*\*|__|^#+\s*/gm, "").trim();
+  // 答えられなかった質問の印（ゲストには見せずに未回答の一覧へ）。指示してもマークダウンを出すことがあるため取り除く
+  const unansweredMarks = [...result.text.matchAll(/\[\[未回答[:：]\s*(.+?)\]\]/g)].map((m) => m[1].trim());
+  const generated = result.text.replace(/\[\[未回答[:：].*?\]\]/g, "").replace(/\*\*|__|^#+\s*/gm, "").trim();
+  for (const question of unansweredMarks) await recordUnanswered(hotel.id, question);
   // 空の回答や、ツール呼び出しを文字で書いた回答はゲストに出さず、スタッフに引き継ぐ
   const failed = generated === "" || /\[TOOL_CALL\]|<tool_call>|<function=/.test(generated);
   if (failed) {
@@ -248,7 +251,12 @@ async function buildInstructions(params: {
     "【特記事項】は通常の営業情報より優先する。特記事項がある日は、特記事項の内容で答え、通常との違いも伝える。",
     "「情報なし」の施設・項目について聞かれたら、時間などを推測せず、スタッフに確認してご連絡すると伝える。「情報なし」「特記事項」などの内部の表記はそのまま言わない。",
     "日付は「本日」「明日」「10/21」のように短く書く（年は書かない）。",
+    "ご到着前のゲストには「現在」「本日」ではなく「ご滞在中（10/20〜10/23）は」のように滞在日を主語にして答える。",
+    "館内の情報に書かれていないサービス（ルームサービスなど）を勧めない。",
+    "答えられた質問には「スタッフに確認します」を付けない。",
+    "営業時間などは、会話の中の過去の回答ではなく、必ず今回の「館内の情報」で答える（情報は更新されていることがある）。",
     "ゲストの状況に書かれていない事実（到着からの経過時間など）を付け足さない。",
+    "情報がなくて答えられなかった質問があれば、回答の最後に [[未回答: 質問を短くまとめたもの]] と書く（ゲストには表示されない）。答えられた質問には書かない。",
     "マークダウン記法（**や#）は使わない。",
     "",
     "## ホテルの指示",
