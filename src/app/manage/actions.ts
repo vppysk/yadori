@@ -3,6 +3,7 @@
 import { refresh } from "next/cache";
 import { audit, authorize, PermissionError } from "@/server/auth";
 import { applyAssignments, type Handler } from "@/server/dashboard";
+import { savePolicy, type PolicyInput } from "@/server/policy";
 import { replay, type ReplayRequest, type ReplayResult } from "@/server/replay";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -39,4 +40,13 @@ export async function runReplayAction(requests: ReplayRequest[]): Promise<{ ok: 
     console.error("[runReplayAction]", error);
     return { ok: false, error: error instanceof Error ? error.message : "精密見積もりに失敗しました" };
   }
+}
+
+export async function savePolicyAction(input: PolicyInput): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.ai_policy");
+    await savePolicy(member, input);
+    await audit(member, "settings.ai_policy", "ai_policy.save");
+    refresh();
+  });
 }

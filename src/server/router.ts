@@ -31,6 +31,8 @@ function routeSchema(facilityNames: string[]) {
         }),
       )
       .min(1),
+    safety: z.boolean().describe("急病・けが・火事・閉じ込めなど、体や安全に関わる内容なら true"),
+    strong_emotion: z.boolean().describe("強い怒りや不満（「ふざけるな」「最悪」など）が表れていれば true"),
     wants_staff: z
       .boolean()
       .describe("「スタッフと話したい」「人に代わって」のように、人との会話をはっきり求めているときだけ true。不満や苦情だけなら false（complaint にする）"),
@@ -48,7 +50,7 @@ export type RouteIntent = {
   unsupported_items?: string[];
 };
 
-export type RouteResult = { facilities: string[]; intents: RouteIntent[]; wants_staff: boolean };
+export type RouteResult = { facilities: string[]; intents: RouteIntent[]; wants_staff: boolean; safety: boolean; strong_emotion: boolean };
 
 // ルーター（plan 3章）: 1通の発言を5パターンの要望に分解し、オーダーは品名と数量まで読み取る
 export async function route(
@@ -86,7 +88,7 @@ function normalize(raw: RawRoute, catalog: CatalogItem[]): RouteResult {
       const { items, unsupported } = matchCatalog(intent.requested ?? [], catalog);
       return { pattern: "order", summary: intent.summary, items, unsupported_items: unsupported };
     });
-  return { facilities: raw.facilities, intents, wants_staff: raw.wants_staff };
+  return { facilities: raw.facilities, intents, wants_staff: raw.wants_staff, safety: raw.safety, strong_emotion: raw.strong_emotion };
 }
 
 // ゲストの言い方と品目名・別名の部分一致で品目マスタに当てる。当たらないものはマスタにない依頼
@@ -116,5 +118,5 @@ function mockRoute(text: string, catalog: CatalogItem[], facilityNames: string[]
   if (/時|営業|何時|どこ|ある/.test(text) || requested.length === 0) intents.push({ pattern: "info", summary: text });
   if (requested.length > 0) intents.push({ pattern: "order", summary: text, requested });
   if (/うるさい|遅い|ひどい/.test(text)) intents.push({ pattern: "complaint", summary: text });
-  return { facilities, intents, wants_staff: /スタッフと話/.test(text) };
+  return { facilities, intents, wants_staff: /スタッフと話/.test(text), safety: /けが|怪我|具合|救急|火事/.test(text), strong_emotion: /最悪|ふざけ/.test(text) };
 }

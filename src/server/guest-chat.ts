@@ -5,7 +5,8 @@ import type { LlmUsage } from "@/lib/llm/structured";
 import { generateAnswer, type Answer, type ConciergeContext } from "@/mastra/agents/concierge";
 import { query, queryOne, transaction } from "./db";
 import { getGuestContext, type GuestContext } from "./guest-context";
-import { createHandoff } from "./handoffs";
+import { checkReply, enabledHandoffCodes, unansweredCount } from "./guardrails";
+import { createHandoff, type HandoffKind } from "./handoffs";
 import { currentTimeBand, getAiAgentMemberId, getAssignment, getHotel, localNow, type Hotel, type Pattern } from "./hotel";
 import { fmtDate, noticeCitations, renderFacilities, type Citation } from "./answer-context";
 import { getFacilityInfo, listFacilityNames, searchDocuments, type FacilityInfo } from "./knowledge";
@@ -69,9 +70,17 @@ export async function requestStaff(reservationId: string) {
   return handOffToStaff(hotel, guest, conversationId, "info", band?.id, "ゲストが画面の「スタッフと話す」を押した");
 }
 
-async function handOffToStaff(hotel: Hotel, guest: GuestContext, conversationId: string, pattern: Pattern, timeBandId: string | undefined, summary: string) {
-  await createHandoff({ hotelId: hotel.id, kind: "talk_request", conversationId, roomNumber: guest.roomNumber, summary });
-  const reply = "承知しました。スタッフにおつなぎします。こちらの画面でそのままお待ちください。";
+async function handOffToStaff(
+  hotel: Hotel,
+  guest: GuestContext,
+  conversationId: string,
+  pattern: Pattern,
+  timeBandId: string | undefined,
+  summary: string,
+  options: { kind?: HandoffKind; reply?: string } = {},
+) {
+  await createHandoff({ hotelId: hotel.id, kind: options.kind ?? "talk_request", conversationId, roomNumber: guest.roomNumber, summary });
+  const reply = options.reply ?? "承知しました。スタッフにおつなぎします。こちらの画面でそのままお待ちください。";
   await insertMessage(conversationId, "assistant", reply);
   await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern, timeBandId, handlerKind: "human", handler: "引き継ぎ", outcome: "handed_off", signals: { wants_staff: true } });
   return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
@@ -90,16 +99,29 @@ export async function handleGuestMessage(reservationId: string, text: string) {
 
   const routed = await route(text, catalog, facilityNames);
   await recordLlmCall({ hotelId: hotel.id, conversationId, messageId: userMessageId, purpose: "router", thinking: false, usage: routed.usage });
-  const { intents, wants_staff } = routed.result;
+  const { intents } = routed.result;
+  const conditions = await enabledHandoffCodes(hotel.id);
 
-  // 「スタッフと話したい」は必ず人に引き継ぐ（ガードレール）
-  if (wants_staff) return handOffToStaff(hotel, guest, conversationId, intents[0].pattern, band?.id, text);
+  // ガードレール（前）: 必ず人に引き継ぐ条件
+  if (conditions.has("safety") && routed.result.safety) {
+    return handOffToStaff(hotel, guest, conversationId, intents[0].pattern, band?.id, text, {
+      kind: "safety",
+      reply: "すぐにスタッフにおつなぎします。命に関わる緊急の場合は、ためらわず119番に通報してください。",
+    });
+  }
+  if (conditions.has("wants_staff") && routed.result.wants_staff) return handOffToStaff(hotel, guest, conversationId, intents[0].pattern, band?.id, text);
 
   const tickets = await issueOrders(hotel, guest, conversationId, text, intents, band?.id);
   const unsupportedItems = intents.flatMap((i) => i.unsupported_items ?? []);
   const complaints = intents.filter((i) => i.pattern === "complaint");
-  for (const complaint of complaints) {
-    await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: complaint.summary });
+  // クレームと強い不満は人へ引き継ぐ（AIは一次受け止めのみ。「強い不満」の条件をオフにすると引き継がない）
+  if (conditions.has("strong_complaint")) {
+    for (const complaint of complaints) {
+      await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: complaint.summary });
+    }
+    if (complaints.length === 0 && routed.result.strong_emotion) {
+      await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: `強い不満: ${text}` });
+    }
   }
 
   const primary = PATTERN_PRIORITY.find((p) => intents.some((i) => i.pattern === p)) ?? "info";
@@ -135,7 +157,21 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   if (failed) {
     await createHandoff({ hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: `AIが回答を作れなかった質問: ${text}` });
   }
-  const reply = failed ? "確認してすぐにご連絡いたします。少々お待ちください。" : generated;
+  // ガードレール（後）: してはいけないことに反する回答はゲストに出さず、人に引き継ぐ
+  const check = failed ? ({ ok: true } as const) : await checkReply(hotel.id, generated, conversationId);
+  if (!check.ok) {
+    console.warn("[guest-chat] ガードレールで回答を止めた", { rule: check.rule, reason: check.reason, generated });
+    await createHandoff({
+      hotelId: hotel.id, kind: "talk_request", conversationId, roomNumber: guest.roomNumber,
+      summary: `AIの回答が決まり「${check.rule}」に反したため止めた。ゲストの発言: ${text}`,
+    });
+  }
+  // 同じ会話で2回答えられなかったら人へ
+  const isUnanswered = failed || unanswered.length > 0;
+  if (isUnanswered && conditions.has("unanswered_twice") && (await unansweredCount(conversationId)) >= 1) {
+    await createHandoff({ hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: `同じ会話で2回答えられなかった。直近の質問: ${text}` });
+  }
+  const reply = failed ? "確認してすぐにご連絡いたします。少々お待ちください。" : !check.ok ? "担当のスタッフから改めてご案内いたします。少々お待ちください。" : generated;
   const citations = failed ? [] : buildCitations(facilities, routed.result.facilities, reply, guest, today);
 
   const assistantMessageId = await insertMessage(conversationId, "assistant", reply, citations);
@@ -154,7 +190,8 @@ export async function handleGuestMessage(reservationId: string, text: string) {
       outputTokens: first ? usage.outputTokens + routed.usage.outputTokens : 0,
       durationMs: first ? usage.ms + routed.usage.ms : 0,
       costJpy: first ? costJpy : 0,
-      outcome: failed ? "unanswered" : intent.pattern === "complaint" ? "escalated_complaint" : "resolved",
+      outcome: isUnanswered ? "unanswered" : !check.ok ? "handed_off" : intent.pattern === "complaint" ? "escalated_complaint" : "resolved",
+      signals: check.ok ? {} : { guardrail_blocked: check.rule },
     });
   }
 
