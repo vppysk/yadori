@@ -3,6 +3,8 @@
 import { refresh } from "next/cache";
 import { audit, authorize, PermissionError } from "@/server/auth";
 import { applyAssignments, type Handler } from "@/server/dashboard";
+import { decideWrite, saveIntegration, type FieldRuleRow } from "@/server/integrations-admin";
+import { saveMasters, type Masters } from "@/server/masters";
 import { savePolicy, type PolicyInput } from "@/server/policy";
 import { replay, type ReplayRequest, type ReplayResult } from "@/server/replay";
 
@@ -47,6 +49,33 @@ export async function savePolicyAction(input: PolicyInput): Promise<Result> {
     const member = await authorize("settings.ai_policy");
     await savePolicy(member, input);
     await audit(member, "settings.ai_policy", "ai_policy.save");
+    refresh();
+  });
+}
+
+export async function saveIntegrationAction(integrationId: string, input: { readRule: string; writeRule: string; fields: FieldRuleRow[] }): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.integrations");
+    await saveIntegration(member, integrationId, input);
+    await audit(member, "settings.integrations", "integration.save", { type: "integration", id: integrationId });
+    refresh();
+  });
+}
+
+export async function decideWriteAction(writeId: string, approve: boolean): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.integrations");
+    await decideWrite(member, writeId, approve);
+    await audit(member, "settings.integrations", approve ? "integration_write.approve" : "integration_write.reject", { type: "integration_write", id: writeId });
+    refresh();
+  });
+}
+
+export async function saveMastersAction(input: Omit<Masters, "jobTitles" | "actualMinutes">): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.masters");
+    await saveMasters(member, input);
+    await audit(member, "settings.masters", "masters.save");
     refresh();
   });
 }
