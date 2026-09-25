@@ -19,6 +19,8 @@
     "@mastra/ai-sdk": "^1.10.5",
     "@mastra/core": "^1.71.0",
     "@mastra/next": "^0.2.29",
+    "@mastra/pg": "^1.27.1",
+    "@supabase/supabase-js": "^2.117.1",
     "ai": "^7.0.114",
     "next": "16.3.6",
     "react": "19.2.8",
