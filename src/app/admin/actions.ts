@@ -4,6 +4,7 @@ import { refresh } from "next/cache";
 import { audit, authorize, PermissionError } from "@/server/auth";
 import { queryOne } from "@/server/db";
 import { addNotice, deleteNotice, draftFromFile, saveFacility, saveFacilitySchema, type ImportedDraft } from "@/server/knowledge-admin";
+import { addSlot, deleteSlot, saveItemSettings, type SaveItemsInput } from "@/server/items";
 import { previewOrder, reassignManually, registerOrder, type OrderPreview } from "@/server/order-board";
 import { answerQuestion, dismissQuestion } from "@/server/questions";
 
@@ -116,6 +117,33 @@ export async function reassignAction(ticketId: string, slotId: string, toMemberI
     const member = await authorize("order.reassign", slotId);
     await reassignManually(member, ticketId, toMemberId);
     await audit(member, "order.reassign", "ticket.reassign", { type: "ticket", id: ticketId }, { to: toMemberId });
+    refresh();
+  });
+}
+
+export async function saveItemSettingsAction(input: SaveItemsInput): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.items");
+    await saveItemSettings(member, input);
+    await audit(member, "settings.items", "items.save", undefined, { items: input.items.length, settings: input.settings });
+    refresh();
+  });
+}
+
+export async function addSlotAction(jobRoleId: string, areaId: string | null): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.items");
+    await addSlot(member, jobRoleId, areaId);
+    await audit(member, "settings.items", "slot.add", undefined, { jobRoleId, areaId });
+    refresh();
+  });
+}
+
+export async function deleteSlotAction(slotId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.items");
+    await deleteSlot(member, slotId);
+    await audit(member, "settings.items", "slot.delete", { type: "slot", id: slotId });
     refresh();
   });
 }

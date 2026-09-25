@@ -17,7 +17,7 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
     { href: "/admin", label: "ホーム", exact: true },
     { href: "/admin/orders", label: "オーダー", allowed: keys.has("order.board.view") },
     { href: "/admin/knowledge", label: "施設・営業情報", allowed: keys.has("knowledge.facility.edit") || keys.has("knowledge.notice.edit") },
-    { href: "/admin/items", label: "品目・担当設定", ready: false, allowed: keys.has("settings.items") },
+    { href: "/admin/items", label: "品目・担当設定", allowed: keys.has("settings.items") },
     { href: "/admin/documents", label: "館内案内・マニュアル", ready: false, allowed: keys.has("knowledge.document.register") },
     { href: "/admin#questions", label: "未回答の質問", badge: questions.length, allowed: keys.has("knowledge.question.answer") },
     { href: "/admin/handoffs", label: "引き継ぎ・クレーム履歴", ready: false, allowed: keys.has("handling.complaint.view") },
