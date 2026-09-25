@@ -2,10 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+@AGENTS.md
+
 ## 現状
 
 ホテル運営AIエージェント（Nebius x NVIDIA Global AI Hackathon 応募作品、締切 2026-10-30 10:00 PDT）。
-**まだ実装コードはなく、`docs/` の企画書とUIモックのみ**。ビルド・lint・テストのコマンドは未整備（スタックを確定したらここに追記する）。
+W1の初期構築（Next.js＋Mastra＋LLM層）のみ。業務機能・DBスキーマは未実装。
+
+## コマンド
+
+- `npm run dev` / `npm run build` / `npm run lint` / `npm run typecheck`（`next typegen` 込み）
+- `npm run verify:llm`: LLM層の疎通確認（モック、費用なし）。`npm run verify:llm:nebius` はToken Factoryを実際に呼ぶ（少額課金）
+- `npm run db:start` / `db:stop` / `db:reset`: ローカルSupabase（Docker必須）
+- テストランナーは未導入
+
+## コード構成
+
+- `src/lib/llm/models.ts`: モデル取得の唯一の入口 `getModel(tier, { thinking })`。`LLM_MODE=mock`（既定）でAI SDKのモックモデル、`nebius`でToken Factory。tierは small=Nemotron 3.5 Lightning / medium=3 Super / large=3 Ultra。エージェントや処理から直接プロバイダーを生成しない
+- `src/lib/llm/structured.ts`: 構造化出力は `generateStructured`（強制ツール呼び出し＋Zod検証＋再試行）を使う。Token Factoryの`json_schema`はNemotronでスキーマを保証しないため、MastraやAI SDKの`output`／`structuredOutput`は使わない
+- `src/mastra/`: Mastraのエージェント・ツール。`src/app/api/mastra/[...mastra]/route.ts` でMastraのHTTP APIを `/api/mastra/*` に公開（`prefix` とフォルダ位置を一致させる）
+- `scripts/verify-llm.ts`: LLM層の確認スクリプト。`registerMockToolFixture` でモック時の強制ツール呼び出しの戻り値を登録する
+
+## LLM（Nemotron）の注意
+
+- thinkingは `chat_template_kwargs.enable_thinking` で切り替え（`getModel`が注入）。ルーター・抽出はオフが基本（オンは遅く、Nanoでは10秒超）
+- Superはthinkingオフだとツール呼び出しの前に英語の独り言を本文に出すことがある
+- 日付はモデルに推測させない。滞在日・今日の日付は必ずプロンプトかツール引数で渡す
 
 ## 仕様の正
 
@@ -15,9 +37,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `screens/*.dc.html` はClaudeデザインキャンバス専用形式（`<x-dc>` `<sc-for>` `{{...}}` など）でブラウザ単体では表示されない。寸法・色はインラインstyleから読み取り、Next.js（React）に書き直す
   - デザイン値（フォント Shippori Mincho B1 / Zen Kaku Gothic New、配色、タップ領域44px以上、絵文字不使用）は `docs/ui-mock/README.md` の「デザインの基本」に従う
 
-## 計画中の技術スタック（未確定、`000_plan.md` 6章）
+## 技術スタック（`000_plan.md` 6章）
 
-Next.js（フロント）／ Hono（API）／ Strands Agents SDK（TS対応は要確認）／ Supabase（Postgres＋pgvector）／ Nebius Token Factory 上のNVIDIA Nemotron（Nano/Super/Ultra）／ 自作モックMCPサーバー。
+TypeScriptで統一: Next.js（App Router）＋ Mastra（Next.jsに組み込み、別のAPIサーバーは立てない）／ Supabase（Postgres＋pgvector）／ Nebius Token Factory 上のNVIDIA Nemotron 3（OpenAI互換API）／ 自作モックMCPサーバー。
+
+- LLMの呼び出し先は環境変数で差し替え可能にする（ローカルはAI SDKのモックモデル、本番はToken Factory）。提出・ホスト済みデモの推論はToken Factory必須
+- APIキーは `.env.local`（Git管理外）に置く
 
 ## アーキテクチャ上、複数章を読まないと分からない設計判断
 

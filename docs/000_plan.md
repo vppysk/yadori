@@ -230,7 +230,7 @@ flowchart TB
     M["経営ダッシュボード<br/>コスト・満足度・つまみ"]
   end
 
-  subgraph API["API（Hono）"]
+  subgraph API["API（Next.js＋Mastra）"]
     R["ルーター<br/>分類・分解"]
     A1["案内エージェント"]
     A2["オーダーエージェント"]
@@ -322,13 +322,16 @@ sequenceDiagram
 
 | 領域 | 採用候補 | 備考 |
 |---|---|---|
-| フロント | Next.js | ゲスト・スタッフ・経営の3画面 |
-| API | Hono | |
-| エージェント | Strands Agents SDK | TypeScript対応状況を要確認。代替も検討 |
+| 言語 | TypeScriptで統一 | 画面とエージェントで型を共有 |
+| フロント | Next.js（App Router） | ゲスト・現場スマホ・管理PC・経営の画面 |
+| API・エージェント | Mastra（Next.jsに組み込み） | 構造化出力（ルーター・品目抽出）、ツール付きエージェント（案内・相談・予約）、ワークフロー、計測（トークン・時間）、評価（精密見積もり・RAG評価）、MCPクライアント／サーバー。Hono・FastAPIは使わない |
+| 業務ロジック | 素のTS | オーダー割り当て・期限切れ昇格はLLMを使わない。期限監視は定期実行（pg_cronかcron） |
 | DB・ベクトル | Supabase（Postgres＋pgvector） | 構造化データとRAGを同居 |
-| 推論 | Nebius Token Factory | Nemotron 3 Nano／Super（日常の速い処理）、Ultra（重い推論・クレーム一次対応など）。単価は要確認 |
-| 埋め込み | NVIDIA系埋め込みモデル | Token Factoryでの提供状況を要確認 |
+| 推論 | Nebius Token Factory（OpenAI互換、`https://api.tokenfactory.nebius.com/v1/`） | 小型＝Nemotron 3.5 Lightning（3 Nanoと同単価で速く、RPMも上）、中型＝3 Super、大型＝3 Ultra（重い推論・クレーム一次対応）。単価と実測は12章 |
+| PDF・画像の読み取り | Token Factory上の画像対応モデル（GLM-5.3-Flash、MiniCPM-Vなど） | Token FactoryにNemotronの画像対応モデルはない（2026-09-25時点）。文字のPDFはテキスト抽出してNemotronに渡す |
+| 埋め込み | Qwen/Qwen3-Embedding-8B（Token Factory、$0.01/1M） | NVIDIA製の埋め込みは提供なし。ローカルと本番でインデックスを混ぜない |
 | 外部連携 | MCPサーバー（自作モック） | 予約・客室管理、レストラン予約 |
+| ローカル確認 | AI SDKのテスト用モックモデル | LLM費用なしでUI・業務ロジックを確認。品質評価はToken Factoryで行う |
 | ホスティング | 要検討 | 提出にホスト済みデモが必要 |
 | オプション | Tavily | 周辺の最新情報検索。特別賞あり |
 
@@ -384,7 +387,7 @@ sequenceDiagram
 | W5 | 10/23–10/30 | 仕上げと提出 | デモシナリオ調整、ホスティング、README・セットアップ手順、英語動画の撮影・編集、提出（余裕を持って10/29中に） |
 
 ### 週ごとの判断ポイント
-- **W1末**: Token Factoryで使えるモデルとStrandsのTS対応を確定。問題があれば構成を変更
+- **W1末**: Token FactoryのNemotronでツール呼び出し・構造化出力を確定。Mastra経由で動かなければOpenAI互換プロバイダー（baseURL指定）に、モデル側が苦手ならルーターの構造化出力＋自前のツール実行に切り替える
 - **W3末**: 動く部分でデモを一度通し撮り。足りない部分を洗い出す
 - **W4末**: 機能凍結。以降は品質と動画に集中
 
@@ -419,8 +422,15 @@ sequenceDiagram
 
 ## 12. 未決事項
 
-- [ ] Token Factoryで使えるNVIDIAモデルと単価
-- [ ] Strands Agents SDKのTypeScript対応状況
+- [x] 技術スタック → Next.js＋Mastra（TS統一）。Strands・Python案は不採用（2026-09-25）
+- [x] Token FactoryのNemotronの実呼び出し確認（2026-09-25）
+  - 単価（/1M、APIの`/v1/models`より）: Lightning・Nano 入$0.06/出$0.24、Super 入$0.30/出$0.90、Ultra 入$1/出$3
+  - ツール呼び出し: 4モデルとも動作。`tool_choice`で関数を指定した強制呼び出しも動作
+  - 構造化出力: `json_schema`はエラーにならないが、モデル一覧で`structured_outputs`非対応の表示。スキーマは保証されないため、構造化出力は強制ツール呼び出し＋Zod検証＋再試行で行う
+  - `usage`: 4モデルとも入出力トークン数を返す（Nanoのみ推論トークンの内訳なし）
+  - 推論（thinking）は`chat_template_kwargs: {enable_thinking: false}`で無効化でき、速度とトークンが大きく改善（例: Nano 11.9秒→1.9秒）。ルーター・抽出は無効、クレーム・難問は有効を基本にする
+  - 応答時間（thinking無効、短文）: Lightning 0.5〜0.8秒、Super・Ultra 約1〜1.3秒、Nano 1〜2秒
+- [x] Mastra経由で`chat_template_kwargs`と強制ツール呼び出しを渡せるか → 可（`scripts/verify-llm.ts`で確認、2026-09-25）
 - [ ] ホスティング先
 - [ ] デモ用マスタの数値（時給・パターン別対応時間）→ 本人が入力
 - [ ] デモ用ホテルの設定（架空ホテル、季節メニュー、施設）
