@@ -1,5 +1,6 @@
 import type { LlmUsage } from "@/lib/llm/structured";
 import { query, queryOne } from "./db";
+import { dispatchWorkEvent } from "./webhooks";
 import type { Pattern } from "./hotel";
 
 type Price = { input_usd_per_mtok: string; output_usd_per_mtok: string };
@@ -57,14 +58,18 @@ export async function recordWorkEvent(params: {
   outcome: Outcome;
   signals?: Record<string, unknown>;
 }) {
-  await query(
+  const [row] = await query<Record<string, unknown>>(
     `insert into work_events (hotel_id, conversation_id, ticket_id, pattern, time_band_id, handler_kind, handler,
        input_tokens, output_tokens, duration_ms, cost_jpy, outcome, signals)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     returning id, occurred_at, pattern, handler_kind, handler, input_tokens, output_tokens, duration_ms, cost_jpy::float cost_jpy, outcome, signals,
+       (select name from time_bands where id = time_band_id) time_band`,
     [
       params.hotelId, params.conversationId ?? null, params.ticketId ?? null, params.pattern, params.timeBandId ?? null,
       params.handlerKind, params.handler, params.inputTokens ?? 0, params.outputTokens ?? 0, params.durationMs ?? 0,
       params.costJpy ?? 0, params.outcome, JSON.stringify(params.signals ?? {}),
     ],
   );
+  // 出力口（CSV/JSON・MCP）と同じ項目をWebhookでも送る。会話IDなどの内部IDは含めない
+  dispatchWorkEvent(params.hotelId, row);
 }

@@ -9,6 +9,7 @@ import { grantPermission, revokeGrant, saveGroup, setMemberGroup } from "@/serve
 import { savePolicy, type PolicyInput } from "@/server/policy";
 import type { InstructionOverrides } from "@/server/guest-chat";
 import type { Pattern } from "@/server/hotel";
+import { addWebhook, deleteWebhook, sendTest } from "@/server/webhooks";
 import { replay, tryInstructions, type InstructionTrial, type ReplayRequest, type ReplayResult } from "@/server/replay";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -135,4 +136,33 @@ export async function tryInstructionsAction(pattern: Pattern, draft: Instruction
     console.error("[tryInstructionsAction]", error);
     return { ok: false, error: error instanceof Error ? error.message : "試せませんでした" };
   }
+}
+
+export async function addWebhookAction(url: string): Promise<{ ok: true; secret: string } | { ok: false; error: string }> {
+  try {
+    const member = await authorize("settings.integrations");
+    const secret = await addWebhook(member, url.trim());
+    await audit(member, "settings.integrations", "webhook.add", undefined, { url });
+    refresh();
+    return { ok: true, secret };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "登録できませんでした" };
+  }
+}
+
+export async function deleteWebhookAction(id: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.integrations");
+    await deleteWebhook(member, id);
+    await audit(member, "settings.integrations", "webhook.delete", { type: "webhook", id });
+    refresh();
+  });
+}
+
+export async function testWebhookAction(id: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.integrations");
+    const r = await sendTest(member, id);
+    if (!r.ok) throw new Error(`送信に失敗しました（${r.status ?? "接続できない"}）`);
+  });
 }

@@ -2,13 +2,19 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { can, requireMember } from "@/server/auth";
 import { getIntegration, listIntegrations } from "@/server/integrations-admin";
+import { listWebhooks } from "@/server/webhooks";
+import { WebhookSection } from "./webhook-section";
 import { IntegrationEditor } from "./integration-editor";
 
 export default async function IntegrationPage({ params }: PageProps<"/manage/integrations/[integrationId]">) {
   const { integrationId } = await params;
   const member = await requireMember(`/manage/integrations/${integrationId}`);
   if (!(await can(member.id, "settings.integrations"))) return <p className="text-sm text-ink-sub">外部連携の権限がありません</p>;
-  const [integrations, detail] = await Promise.all([listIntegrations(member.hotel_id), getIntegration(member.hotel_id, integrationId)]);
+  const [integrations, detail, webhooks] = await Promise.all([
+    listIntegrations(member.hotel_id),
+    getIntegration(member.hotel_id, integrationId),
+    listWebhooks(member.hotel_id),
+  ]);
   if (!detail) notFound();
   return (
     <div className="flex flex-1 flex-col gap-5 xl:flex-row">
@@ -26,7 +32,10 @@ export default async function IntegrationPage({ params }: PageProps<"/manage/int
           </Link>
         ))}
       </aside>
-      <IntegrationEditor key={detail.id} detail={detail} />
+      <div className="flex min-w-0 flex-1 flex-col gap-4">
+        <IntegrationEditor key={detail.id} detail={detail} />
+        <WebhookSection webhooks={webhooks} />
+      </div>
     </div>
   );
 }
