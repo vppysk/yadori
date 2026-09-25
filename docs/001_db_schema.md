@@ -98,3 +98,7 @@
 - Mastraの保存先（会話メモリなど）: `@mastra/pg` で別スキーマ（`mastra`）に置く予定
 - Supabase Auth と `members.auth_user_id` の紐づけ、ログイン画面
 - デモ用ホテルの設定（名前、施設、季節メニュー）は未決（plan 12章）。シードの営業時間は仮の値
+
+## 追加のマイグレーション
+- `20260926000000_guardrail_codes.sql`: `guardrails.code`。必ず人に引き継ぐ条件のうち、アプリが判定を実装している組み込みの条件（`wants_staff`・`strong_complaint`・`unanswered_twice`・`safety`）を識別する。オン・オフは `enabled`
+- `20260926010000_order_settings.sql`: `hotels` にオーダーの割り当て設定（未着手のまま次の人へ回すまでの分数、同じフロアのまとめ、「対応できない」の理由必須）。品目・担当設定の画面で編集する
