@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 export function ManageTabs({ tabs }: { tabs: { href: string; label: string }[] }) {
   const pathname = usePathname();
   return (
-    <nav aria-label="AIチームの運営" className="flex gap-1 rounded-xl border border-line bg-surface p-1">
+    <nav aria-label="AIチームの運営" className="flex max-w-full gap-1 overflow-x-auto rounded-xl border border-line bg-surface p-1">
       {tabs.map((tab) => {
         const active = tab.href === "/manage" ? pathname === "/manage" : pathname.startsWith(tab.href);
         return (

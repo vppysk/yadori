@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 現状
 
 ホテル運営AIエージェント（Nebius x NVIDIA Global AI Hackathon 応募作品、締切 2026-10-30 10:00 PDT）。
-W1（初期構築・DBスキーマ）とW2（ゲスト対応）完了。W3は現場スマホ（`/staff/*`: オーダー・AI相談・通知・引き継ぎ）、管理PC（`/admin`: 今日の要対応・施設・営業情報の編集とPDF/画像からの下書き）、期限切れの昇格まで実装済み。管理PCのオーダーボード・品目設定・マニュアル登録・引き継ぎ履歴は未実装（メニューに「準備中」）。
+W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番号]`、現場スマホ `/staff/*`、管理PC `/admin/*`、経営 `/manage/*`（担当範囲とコスト・指示とガードレール・外部連携・変更履歴・マスタ）。
+未実装: 管理PCのオーダーボード・品目設定・マニュアル登録・引き継ぎ履歴（メニューに「準備中」）、メンバーと権限の画面（4.8）、指示変更を過去の会話で試す機能、Webhook。
 スタッフ画面は `/staff/login` でメンバーを選ぶデモ用ログイン（パスワードなし）。
 
 ## コマンド
@@ -18,7 +19,8 @@ W1（初期構築・DBスキーマ）とW2（ゲスト対応）完了。W3は現
 - `npm run dev:shifts`: デモのスタッフを今日の枠に出勤させる（割り当ての確認に必要）
 - `npm run try:guest -- R-1203 "プール何時まで？"`: ゲストの1通を画面なしで処理する（`.env.local` の `LLM_MODE` に従う）
 - `npm run dev:cron`: 期限の監視（未着手の付け替え・期限切れの昇格）を1分ごとに実行（`npm run dev` と並行して起動）
-- `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
+- `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績を生成（`signals.demo=true`）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
+- DBのマイグレーション追加後は `npx supabase db push --db-url "$DATABASE_URL"`（`.env.local` を読み込んでから）
 - デモ用の文書は `docs/demo/`（冬季営業のお知らせのPDF・画像）
 - テストランナーは未導入
 
@@ -30,7 +32,10 @@ W1（初期構築・DBスキーマ）とW2（ゲスト対応）完了。W3は現
 - `src/server/orders.ts`: チケットの割り当ては機械ロジック（同フロアのまとめ → 担当量最小 → 最後の割り当てが古い順）。LLMは使わない
 - `src/server/auth.ts`: `requireMember`（画面）と `authorize(権限キー, 対象ID)`（サーバーアクション）。操作は必ず `authorize` → 処理 → `audit` の順
 - `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`questions.ts`（未回答→回答でRAGへ）、`staff-ask.ts`（スタッフのAI相談）
-- サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）と `src/app/admin/actions.ts`（管理PC）
+- サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）、`src/app/manage/actions.ts`（経営）
+- MCP: `src/mcp/pms-server.ts`（予約・客室管理のモック、`/api/mcp/pms`）と `src/mcp/work-events-server.ts`（実績の出力口、`/api/mcp/work-events`）。どちらもBearerトークン必須。予約情報の読み書きは必ず `src/server/integrations/pms.ts`（変換層）を通し、項目ルールとAIの権限を確認する
+- `src/server/guardrails.ts`: 応答前の引き継ぎ条件（`guardrails.code`）と応答後の禁止事項チェック。`dashboard.ts`／`replay.ts`: 簡易・精密見積もり
+- Mastraの全HTTP API（`/api/mastra/*`）は公開しない（誰でもエージェントを呼べてしまうため削除済み）
 - `src/mastra/`: Mastraのエージェント。`src/app/api/mastra/[...mastra]/route.ts` でMastraのHTTP APIを `/api/mastra/*` に公開（`prefix` とフォルダ位置を一致させる）
 - `scripts/verify-llm.ts`: LLM層の確認スクリプト。`registerMockToolFixture` でモック時の強制ツール呼び出しの戻り値を登録する
 - `supabase/migrations/`: DBスキーマ（SQLが正）。設計の理由は `docs/001_db_schema.md`。`supabase/seed.sql` はデモ用データ
@@ -52,6 +57,8 @@ W1（初期構築・DBスキーマ）とW2（ゲスト対応）完了。W3は現
 - 回答は `generateAnswer`（`answer` ツールの強制呼び出し）で、回答文と答えられなかった質問を分けて受け取る
 - 館内情報はシステム指示ではなく、最後のユーザー発言の前に【最新の館内情報】として付ける。システム指示に置くと、マスタ更新後も会話中の古い回答を繰り返した
 - 情報にないことを「ございません」と断定しやすいので、指示で禁止している（未回答として記録させる）
+- 禁止事項の後チェックは中型（Super）。小型は値引きの約束や他の客の情報を見逃した
+- 精密見積もりのAI採点は差が出にくい（どちらも4点になりがち）。採点基準の改善は未着手
 - 案内の回答は中型（Super）が既定。小型（Lightning）はデータのない項目（朝食時間など）を推測で答えた。ルーターは小型で可
 - ルーターのLLMは品名と数量の読み取りだけ。品目マスタとの照合は `matchCatalog`（品名・別名の部分一致）で行う。LLMに照合させると、別名にある品をマスタにないと判断したり、ない品を既存品目に当てはめたりした
 - 画像の書き起こし（GLM-5.3-Flash）は推論オフでも `</think>` までの思考を出すので捨てる。PDFの文字は NFKC で正規化する（部首の文字で出ることがある）
