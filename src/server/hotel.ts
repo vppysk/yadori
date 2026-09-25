@@ -2,10 +2,21 @@ import { query, queryOne } from "./db";
 
 export type Pattern = "info" | "order" | "external" | "reservation" | "complaint";
 
-export type Hotel = { id: string; name: string; timezone: string; fx_usd_jpy: string };
+export type Hotel = {
+  id: string;
+  name: string;
+  timezone: string;
+  fx_usd_jpy: string;
+  order_reassign_minutes: number;
+  order_bundle_enabled: boolean;
+  order_decline_reason_required: boolean;
+};
 
 export async function getHotel(hotelId: string): Promise<Hotel> {
-  const hotel = await queryOne<Hotel>("select id, name, timezone, fx_usd_jpy from hotels where id = $1", [hotelId]);
+  const hotel = await queryOne<Hotel>(
+    "select id, name, timezone, fx_usd_jpy, order_reassign_minutes, order_bundle_enabled, order_decline_reason_required from hotels where id = $1",
+    [hotelId],
+  );
   if (!hotel) throw new Error(`ホテルが見つかりません: ${hotelId}`);
   return hotel;
 }

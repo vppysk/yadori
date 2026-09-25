@@ -132,7 +132,7 @@ export async function pickAssignee(client: PoolClient, hotel: Hotel, slotId: str
   const workDate = localNow(hotel.timezone).date;
   const { rows } = await client.query<{ id: string; name: string; load: number; bundle: boolean }>(
     `select m.id, m.display_name name, l.done_points + l.open_points load,
-       exists (
+       $6::boolean and exists (
          select 1 from tickets t join rooms r on r.hotel_id = t.hotel_id and r.room_number = t.room_number
          where t.assignee_id = m.id and t.slot_id = $1 and t.status = 'new' and r.floor = $3
            and t.assigned_at > now() - make_interval(mins => $4)
@@ -142,7 +142,7 @@ export async function pickAssignee(client: PoolClient, hotel: Hotel, slotId: str
        and not (m.id = any ($5::uuid[]))
      order by bundle desc, load, l.last_assigned_at nulls first
      limit 1`,
-    [slotId, workDate, floor, BUNDLE_WINDOW_MINUTES, excludeIds],
+    [slotId, workDate, floor, BUNDLE_WINDOW_MINUTES, excludeIds, hotel.order_bundle_enabled],
   );
   const picked = rows[0];
   if (!picked) return undefined;

@@ -4,6 +4,7 @@ import { refresh } from "next/cache";
 import { audit, authorize, PermissionError } from "@/server/auth";
 import { queryOne } from "@/server/db";
 import { addNotice, deleteNotice, draftFromFile, saveFacility, saveFacilitySchema, type ImportedDraft } from "@/server/knowledge-admin";
+import { previewOrder, reassignManually, registerOrder, type OrderPreview } from "@/server/order-board";
 import { answerQuestion, dismissQuestion } from "@/server/questions";
 
 // 管理PCの操作。ログインと権限（範囲付きなら対象の施設）を確認し、監査ログに残す（plan 4.8）
@@ -84,6 +85,37 @@ export async function dismissQuestionAction(questionId: string): Promise<Result>
     const member = await authorize("knowledge.question.answer");
     await dismissQuestion(member, questionId);
     await audit(member, "knowledge.question.answer", "question.dismiss", { type: "question", id: questionId });
+    refresh();
+  });
+}
+
+export async function previewOrderAction(roomNumber: string, text: string): Promise<Result<OrderPreview>> {
+  return guard(async () => {
+    const member = await authorize("order.create");
+    if (!roomNumber.trim() || !text.trim()) throw new Error("部屋番号とご依頼内容を入力してください");
+    return previewOrder(member, roomNumber.trim(), text.trim().slice(0, 500));
+  });
+}
+
+export async function registerOrderAction(input: {
+  roomNumber: string;
+  text: string;
+  source: "phone" | "front_desk" | "other";
+  items: { item: string; label: string; quantity: number }[];
+}): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("order.create");
+    const tickets = await registerOrder(member, input);
+    await audit(member, "order.create", "order.register", undefined, { room: input.roomNumber, tickets: tickets.map((t) => t.id) });
+    refresh();
+  });
+}
+
+export async function reassignAction(ticketId: string, slotId: string, toMemberId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("order.reassign", slotId);
+    await reassignManually(member, ticketId, toMemberId);
+    await audit(member, "order.reassign", "ticket.reassign", { type: "ticket", id: ticketId }, { to: toMemberId });
     refresh();
   });
 }

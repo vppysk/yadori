@@ -148,6 +148,8 @@ export async function declineTicket(member: Member, ticketId: string, reason: st
   await transaction(async (client) => {
     const ticket = await lockOwnTicket(client, member, ticketId);
     if (ticket.status !== "new") throw new Error("着手済みのオーダーは返せません");
+    const settings = await getHotel(ticket.hotel_id);
+    if (settings.order_decline_reason_required && !reason.trim()) throw new Error("理由を選んでください");
     await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'declined', $2, $2, $3)", [
       ticketId, member.id, reason,
     ]);

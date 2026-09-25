@@ -15,7 +15,7 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
   ]);
   const items: AdminNavItem[] = [
     { href: "/admin", label: "ホーム", exact: true },
-    { href: "/admin/orders", label: "オーダー", ready: false, allowed: keys.has("order.board.view") },
+    { href: "/admin/orders", label: "オーダー", allowed: keys.has("order.board.view") },
     { href: "/admin/knowledge", label: "施設・営業情報", allowed: keys.has("knowledge.facility.edit") || keys.has("knowledge.notice.edit") },
     { href: "/admin/items", label: "品目・担当設定", ready: false, allowed: keys.has("settings.items") },
     { href: "/admin/documents", label: "館内案内・マニュアル", ready: false, allowed: keys.has("knowledge.document.register") },

@@ -6,19 +6,19 @@ import { getHotel } from "./hotel";
 import { recordLlmCall } from "./metrics";
 import { notifySupervisors, reassign } from "./staff-work";
 
-// 割り当てから着手されないまま過ぎたら枠内の次の人へ（plan 4.2「一定時間（設定可）」。設定画面ができるまでは定数）
-export const REASSIGN_AFTER_MINUTES = Number(process.env.REASSIGN_AFTER_MINUTES ?? 10);
 
 // 定期実行（1分ごと想定）: 放置チケットの付け替えと、期限切れのクレーム予兆への昇格（plan 3章 2→5 の自動昇格）
 export async function runTicketChecks(hotelId: string) {
   const hotel = await getHotel(hotelId);
+  // 割り当てから着手されないまま過ぎたら枠内の次の人へ（plan 4.2。分数は品目・担当設定の画面で変更）
+  const reassignAfter = hotel.order_reassign_minutes;
   const stale = await query<{ id: string }>(
     `select id from tickets where hotel_id = $1 and status = 'new' and assignee_id is not null
        and assigned_at < now() - make_interval(mins => $2)`,
-    [hotelId, REASSIGN_AFTER_MINUTES],
+    [hotelId, reassignAfter],
   );
   for (const { id } of stale) {
-    await transaction((client) => reassign(client, hotel, id, `${REASSIGN_AFTER_MINUTES}分間着手されなかった`));
+    await transaction((client) => reassign(client, hotel, id, `${reassignAfter}分間着手されなかった`));
   }
 
   const overdue = await query<{ id: string; room_number: string; conversation_id: string | null; items: string; minutes: number; assignee: string | null; status: string }>(
