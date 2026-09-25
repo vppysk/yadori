@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>経営ダッシュボード</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600&amp;family=Zen+Kaku+Gothic+New:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Zen Kaku Gothic New",sans-serif;background:#F5F3EE;color:#1D2528}
+a{color:#1F5C5A}a:hover{color:#153F3E}
+</style>
+</helmet>
+<div style="width: 1440px; height: 960px; box-sizing: border-box; padding: 28px 36px; display: flex; flex-direction: column; gap: 20px; background: #F5F3EE; font-family: 'Zen Kaku Gothic New', sans-serif; color: #1D2528; overflow: hidden">
+
+  <header style="display: flex; align-items: flex-end; justify-content: space-between">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <div style="font-family: 'Shippori Mincho B1', serif; font-size: 16px; font-weight: 600; color: #5B6468">[ホテル名]</div>
+      <h1 style="margin: 0; font-size: 26px; font-weight: 700">AIチームの運営</h1>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px; font-size: 13px">
+      <span style="padding: 6px 12px; background: #F7ECDC; color: #9A5B0B; border-radius: 14px; font-weight: 700">サンプル値（マスタ未入力）</span>
+      <label for="period" style="color: #5B6468">集計期間</label>
+      <select id="period" style="min-height: 40px; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 8px; background: #FFFFFF; font: inherit; color: #1D2528"><option>過去30日</option><option>過去7日</option></select>
+      <a href="#" style="display: flex; align-items: center; min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; border-radius: 8px; background: #FFFFFF; text-decoration: none; color: #1D2528">マスタ設定</a>
+      <a href="#" style="display: flex; align-items: center; min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; border-radius: 8px; background: #FFFFFF; text-decoration: none; color: #1D2528">実績を出力</a>
+    </div>
+  </header>
+
+  <section aria-label="主要指標" style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px">
+    <div style="padding: 18px 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 6px">
+      <span style="font-size: 13px; color: #5B6468">問い合わせ件数（月）</span>
+      <span style="font-size: 30px; font-weight: 700">{{kpi.volume}}<span style="font-size: 14px; font-weight: 400; color: #5B6468"> 件</span></span>
+    </div>
+    <div style="padding: 18px 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 6px">
+      <span style="font-size: 13px; color: #5B6468">AIで完結した割合</span>
+      <span style="font-size: 30px; font-weight: 700">{{kpi.aiRate}}<span style="font-size: 14px; font-weight: 400; color: #5B6468"> %</span></span>
+    </div>
+    <div style="padding: 18px 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 6px">
+      <span style="font-size: 13px; color: #5B6468">1件あたりの解決コスト</span>
+      <span style="font-size: 30px; font-weight: 700">{{kpi.perCase}}<span style="font-size: 14px; font-weight: 400; color: #5B6468"> 円</span></span>
+      <span style="font-size: 12px; color: #5B6468">すべて人が対応した場合 {{kpi.humanPerCase}} 円</span>
+    </div>
+    <div style="padding: 18px 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 6px">
+      <span style="font-size: 13px; color: #5B6468">満足度の代理指標</span>
+      <div style="display: flex; flex-direction: column; gap: 4px; font-size: 13px">
+        <div style="display: flex; justify-content: space-between"><span>聞き直し率</span><strong>6.1%</strong></div>
+        <div style="display: flex; justify-content: space-between"><span>「人と話したい」率</span><strong>3.4%</strong></div>
+        <div style="display: flex; justify-content: space-between"><span>オーダー期限内対応</span><strong>94%</strong></div>
+      </div>
+    </div>
+  </section>
+
+  <div style="display: flex; gap: 20px; flex-grow: 1; min-height: 0">
+    <section aria-label="AIの担当範囲" style="flex-grow: 1; padding: 22px 24px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 14px; min-width: 0">
+      <div style="display: flex; justify-content: space-between; align-items: flex-end">
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <h2 style="margin: 0; font-size: 18px">AIの担当範囲</h2>
+          <span style="font-size: 13px; color: #5B6468">セルを押すと担当が切り替わります（人 → Nano → Super → Ultra）</span>
+        </div>
+        <button type="button" onClick="{{reset}}" style="min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; background: #FFFFFF; border-radius: 8px; font: inherit; font-size: 13px; color: #1D2528">現在の設定に戻す</button>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 170px repeat(3, minmax(0, 1fr)); gap: 10px; font-size: 13px; color: #5B6468; font-weight: 700">
+        <span></span><span>日中 8–17時</span><span>夕方 17–23時</span><span>深夜 23–8時</span>
+      </div>
+      <sc-for list="{{rows}}" as="row" hint-placeholder-count="5">
+        <div style="display: grid; grid-template-columns: 170px repeat(3, minmax(0, 1fr)); gap: 10px; align-items: stretch">
+          <div style="display: flex; flex-direction: column; justify-content: center; gap: 2px">
+            <span style="font-size: 15px; font-weight: 700">{{row.label}}</span>
+            <span style="font-size: 12px; color: #5B6468">{{row.volume}} 件／月</span>
+          </div>
+          <sc-for list="{{row.cells}}" as="c" hint-placeholder-count="3">
+            <button type="button" onClick="{{c.cycle}}" disabled="{{c.locked}}" aria-label="{{c.aria}}" style="{{c.style}}">
+              <span style="font-size: 15px; font-weight: 700">{{c.model}}</span>
+              <span style="font-size: 11px; opacity: 0.85">{{c.sub}}</span>
+            </button>
+          </sc-for>
+        </div>
+      </sc-for>
+      <div style="display: flex; gap: 16px; font-size: 12px; color: #5B6468; flex-wrap: wrap">
+        <span>引き継ぎしきい値：確信度 0.7 未満で人へ</span>
+        <span>クレームは Ultra で一次対応し、必ず人へ引き継ぐ（固定）</span>
+      </div>
+    </section>
+
+    <section aria-label="コスト見積もり" style="width: 420px; flex-shrink: 0; padding: 22px 24px; background: #1D2528; color: #F5F3EE; border-radius: 14px; display: flex; flex-direction: column; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <h2 style="margin: 0; font-size: 18px">変更後の見積もり（月額）</h2>
+        <span style="font-size: 12px; color: #AEB6B9">簡易見積もり：過去30日の件数 × 新しい単価と引き継ぎ率</span>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 10px">
+        <span style="font-size: 36px; font-weight: 700">{{est.after}}</span><span style="font-size: 14px; color: #AEB6B9">円</span>
+      </div>
+      <div style="{{est.diffStyle}}">{{est.diffLabel}}</div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <div style="display: flex; justify-content: space-between; font-size: 13px"><span>AIの推論費</span><span>{{est.ai}} 円</span></div>
+          <div style="height: 8px; border-radius: 4px; background: #2F3B3F; overflow: hidden"><div style="{{est.aiBar}}"></div></div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <div style="display: flex; justify-content: space-between; font-size: 13px"><span>人の対応コスト（直接・引き継ぎ）</span><span>{{est.human}} 円</span></div>
+          <div style="height: 8px; border-radius: 4px; background: #2F3B3F; overflow: hidden"><div style="{{est.humanBar}}"></div></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 13px; color: #AEB6B9"><span>人への引き継ぎ（予測）</span><span>{{est.handoffs}} 件</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 13px; color: #AEB6B9"><span>現在の設定</span><span>{{est.before}} 円</span></div>
+      </div>
+
+      <div style="flex-grow: 1"></div>
+      <div style="padding: 12px 14px; border-radius: 10px; background: #2F3B3F; font-size: 12px; line-height: 1.7; color: #C9CFD1">精密見積もりでは、過去ログの一部を新しいモデルで再生し、回答品質と引き継ぎ率を実測してから総額を出します。</div>
+      <button type="button" style="min-height: 48px; border: none; border-radius: 10px; background: #F5F3EE; color: #1D2528; font: inherit; font-size: 15px; font-weight: 700">精密見積もりを実行</button>
+      <button type="button" style="min-height: 48px; border: 1px solid #5B6468; border-radius: 10px; background: transparent; color: #F5F3EE; font: inherit; font-size: 15px">この設定を適用</button>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.baseline = [
+      ['Nano', 'Nano', 'Super'],
+      ['Nano', 'Nano', 'Nano'],
+      ['Super', 'Super', '人'],
+      ['人', '人', '人'],
+      ['Ultra', 'Ultra', 'Ultra']
+    ];
+    this.state = { plan: this.baseline.map((r) => r.slice()) };
+  }
+  cycle(ri, bi) {
+    const order = ['人', 'Nano', 'Super', 'Ultra'];
+    const plan = this.state.plan.map((r) => r.slice());
+    plan[ri][bi] = order[(order.indexOf(plan[ri][bi]) + 1) % order.length];
+    this.setState({ plan });
+  }
+  compute(plan) {
+    const P = this.patterns();
+    const aiYen = { Nano: 0.3, Super: 1.2, Ultra: 4.5 };
+    const handoff = { Nano: 0.18, Super: 0.10, Ultra: 0.06 };
+    const bandMul = [1, 1.1, 1.25];
+    const wage = 1500;
+    let ai = 0, human = 0, handoffs = 0, aiDone = 0, volume = 0, allHuman = 0;
+    P.forEach((p, ri) => {
+      p.vols.forEach((v, bi) => {
+        const m = plan[ri][bi];
+        const humanCase = wage / 60 * p.minutes * bandMul[bi];
+        volume += v;
+        allHuman += v * humanCase;
+        if (m === '人') { human += v * humanCase; handoffs += v; return; }
+        const h = p.alwaysHuman ? 1 : handoff[m];
+        ai += v * aiYen[m];
+        human += v * h * humanCase;
+        handoffs += v * h;
+        aiDone += v * (1 - h);
+      });
+    });
+    return { ai, human, total: ai + human, handoffs, aiDone, volume, allHuman };
+  }
+  patterns() {
+    return [
+      { label: '案内', minutes: 3, vols: [2400, 1500, 600] },
+      { label: 'オーダー受付', minutes: 2, vols: [1800, 1600, 500] },
+      { label: '外部連携', minutes: 5, vols: [300, 200, 20] },
+      { label: '予約・客室', minutes: 8, vols: [120, 60, 15] },
+      { label: 'クレーム', minutes: 15, vols: [40, 30, 10], locked: true, alwaysHuman: true }
+    ];
+  }
+  renderVals() {
+    const fmt = (n) => Math.round(n).toLocaleString('ja-JP');
+    const plan = this.state.plan;
+    const colors = {
+      '人': 'background: #F7ECDC; color: #7A4708; border: 1px solid #E6C99E;',
+      'Nano': 'background: #E3EEEC; color: #1F5C5A; border: 1px solid #BFD8D4;',
+      'Super': 'background: #D5E3F0; color: #1F4E79; border: 1px solid #B3CBE2;',
+      'Ultra': 'background: #1F4E79; color: #FFFFFF; border: 1px solid #1F4E79;'
+    };
+    const subs = { '人': 'スタッフが直接対応', 'Nano': '軽量・高速', 'Super': '中型', 'Ultra': '高度な推論' };
+    const bands = ['日中', '夕方', '深夜'];
+    const rows = this.patterns().map((p, ri) => ({
+      label: p.label,
+      volume: fmt(p.vols.reduce((a, b) => a + b, 0)),
+      cells: plan[ri].map((m, bi) => {
+        const changed = m !== this.baseline[ri][bi];
+        return {
+          model: p.locked ? 'Ultra＋人' : m,
+          sub: p.locked ? '固定' : (changed ? '変更あり' : subs[m]),
+          locked: !!p.locked,
+          aria: p.label + ' ' + bands[bi] + ' の担当: ' + m,
+          cycle: () => { if (!p.locked) this.cycle(ri, bi); },
+          style: 'min-height: 56px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font: inherit; cursor: pointer; ' + colors[m] + (changed ? ' box-shadow: 0 0 0 2px #D98A2B;' : '') + (p.locked ? ' cursor: default; opacity: 0.9;' : '')
+        };
+      })
+    }));
+    const before = this.compute(this.baseline);
+    const after = this.compute(plan);
+    const diff = after.total - before.total;
+    const maxBar = Math.max(after.ai, after.human, 1);
+    return {
+      rows,
+      reset: () => this.setState({ plan: this.baseline.map((r) => r.slice()) }),
+      kpi: {
+        volume: fmt(after.volume),
+        aiRate: (after.aiDone / after.volume * 100).toFixed(1),
+        perCase: (after.total / after.volume).toFixed(1),
+        humanPerCase: (after.allHuman / after.volume).toFixed(1)
+      },
+      est: {
+        after: fmt(after.total),
+        before: fmt(before.total),
+        ai: fmt(after.ai),
+        human: fmt(after.human),
+        handoffs: fmt(after.handoffs),
+        diffLabel: diff === 0 ? '現在の設定と同じです' : (diff > 0 ? '現在より +' + fmt(diff) + ' 円／月' : '現在より −' + fmt(-diff) + ' 円／月'),
+        diffStyle: 'align-self: flex-start; padding: 6px 12px; border-radius: 14px; font-size: 14px; font-weight: 700; ' + (diff > 0 ? 'background: #F8E4E1; color: #A3261D;' : diff < 0 ? 'background: #E3EEEC; color: #1F5C5A;' : 'background: #2F3B3F; color: #C9CFD1;'),
+        aiBar: 'height: 100%; border-radius: 4px; background: #7FB5AF; width: ' + (after.ai / maxBar * 100) + '%;',
+        humanBar: 'height: 100%; border-radius: 4px; background: #D98A2B; width: ' + (after.human / maxBar * 100) + '%;'
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

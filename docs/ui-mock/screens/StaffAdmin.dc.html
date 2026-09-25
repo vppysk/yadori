@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>スタッフ（PC）｜管理ホーム</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600&amp;family=Zen+Kaku+Gothic+New:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Zen Kaku Gothic New",sans-serif;background:#F5F3EE;color:#1D2528}
+a{color:#1F5C5A}a:hover{color:#153F3E}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #F5F3EE; font-family: 'Zen Kaku Gothic New', sans-serif; color: #1D2528; overflow: hidden">
+
+  <nav aria-label="管理メニュー" style="width: 230px; flex-shrink: 0; box-sizing: border-box; padding: 24px 16px; background: #1D2528; color: #F5F3EE; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-family: 'Shippori Mincho B1', serif; font-size: 18px; font-weight: 600; padding: 0 10px 20px">[ホテル名]<span style="display: block; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 400; color: #AEB6B9; margin-top: 4px">管理</span></div>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; background: #2F3B3F; color: #FFFFFF; text-decoration: none; font-size: 14px; font-weight: 700">ホーム</a>
+    <a href="OrderBoard.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">オーダー</a>
+    <a href="Knowledge.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">施設・営業情報</a>
+    <a href="ItemMaster.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">品目・担当設定</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">館内案内・マニュアル</a>
+    <a href="#" style="display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">未回答の質問<span style="font-size: 12px; color: #AEB6B9">3</span></a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">引き継ぎ・クレーム履歴</a>
+  </nav>
+
+  <main style="flex-grow: 1; box-sizing: border-box; padding: 26px 30px; display: flex; flex-direction: column; gap: 18px; min-width: 0">
+    <h1 style="margin: 0; font-size: 22px; font-weight: 700">今日の要対応</h1>
+
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; flex-grow: 1; min-height: 0">
+      <section style="padding: 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 12px">
+        <h2 style="margin: 0; font-size: 16px; display: flex; justify-content: space-between">未回答の質問<span style="font-size: 12px; font-weight: 400; color: #5B6468">回答すると知識として蓄積</span></h2>
+        <div style="padding: 14px; background: #F7ECDC; border-radius: 10px; display: flex; flex-direction: column; gap: 10px">
+          <div style="display: flex; justify-content: space-between; font-size: 14px"><strong>小型犬の同伴はできますか？</strong><span style="font-size: 12px; color: #5B6468">4回</span></div>
+          <label for="ans1" style="font-size: 12px; color: #5B6468">回答</label>
+          <textarea id="ans1" rows="2" placeholder="例：ペット同伴は不可です。近隣のペットホテルは…" style="box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid #D8D3CA; border-radius: 8px; font: inherit; font-size: 14px; resize: none; background: #FFFFFF; color: #1D2528"></textarea>
+          <div style="display: flex; justify-content: flex-end; gap: 8px">
+            <button type="button" style="min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; background: #FFFFFF; border-radius: 8px; font: inherit; font-size: 13px; color: #1D2528">案内しない</button>
+            <button type="button" style="min-height: 40px; padding: 0 16px; border: none; background: #1D2528; color: #FFFFFF; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 700">回答して登録</button>
+          </div>
+        </div>
+        <a href="#" style="display: flex; justify-content: space-between; align-items: center; min-height: 44px; padding: 0 14px; border: 1px solid #E2DED6; border-radius: 10px; color: #1D2528; text-decoration: none; font-size: 14px">近くのコインランドリーは？<span style="font-size: 12px; color: #5B6468">2回</span></a>
+        <a href="#" style="display: flex; justify-content: space-between; align-items: center; min-height: 44px; padding: 0 14px; border: 1px solid #E2DED6; border-radius: 10px; color: #1D2528; text-decoration: none; font-size: 14px">送迎バスに自転車は載せられる？<span style="font-size: 12px; color: #5B6468">1回</span></a>
+      </section>
+
+      <div style="display: flex; flex-direction: column; gap: 18px; min-height: 0">
+        <section style="padding: 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 10px">
+          <h2 style="margin: 0; font-size: 16px">引き継ぎ・クレーム予兆</h2>
+          <div style="padding: 12px 14px; border: 2px solid #A3261D; border-radius: 10px; display: flex; flex-direction: column; gap: 4px">
+            <div style="display: flex; justify-content: space-between; font-size: 14px"><strong style="color: #A3261D">711号室 オーダー遅延</strong><span style="font-size: 12px; color: #5B6468">15:12</span></div>
+            <span style="font-size: 13px; color: #5B6468; line-height: 1.6">フェイスタオル×4 が期限を12分超過。ゲストから催促1回、口調にいら立ちあり。担当：佐藤</span>
+          </div>
+          <div style="padding: 12px 14px; border: 1px solid #E2DED6; border-radius: 10px; display: flex; flex-direction: column; gap: 4px">
+            <div style="display: flex; justify-content: space-between; font-size: 14px"><strong>1503号室 スタッフとの会話を希望</strong><span style="font-size: 12px; color: #5B6468">15:08</span></div>
+            <span style="font-size: 13px; color: #5B6468; line-height: 1.6">エアコンの効きが弱い。設定方法は案内済み。対応：佐藤が引き受け</span>
+          </div>
+        </section>
+
+        <section style="padding: 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 10px">
+          <h2 style="margin: 0; font-size: 16px">情報の点検</h2>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 14px"><span>スパ料金表 ・ 120日間更新なし</span><a href="Knowledge.dc.html" style="font-weight: 700">確認する</a></div>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 14px"><span>レストラン ・ 期間の重なり 1件</span><a href="Knowledge.dc.html" style="font-weight: 700">確認する</a></div>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 14px"><span>有効な特記事項 4件（本日中に期限切れ 2件）</span><a href="Knowledge.dc.html" style="font-weight: 700">一覧</a></div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

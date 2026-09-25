@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>スタッフ（スマホ）｜オーダー</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Zen Kaku Gothic New",sans-serif;background:#F5F3EE;color:#1D2528}
+a{color:#1F5C5A}a:hover{color:#153F3E}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; display: flex; flex-direction: column; background: #F5F3EE; font-family: 'Zen Kaku Gothic New', sans-serif; color: #1D2528; overflow: hidden">
+  <header style="padding: 20px 20px 12px; background: #1D2528; color: #F5F3EE; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; justify-content: space-between; align-items: center">
+      <h1 style="margin: 0; font-size: 20px; font-weight: 700">あなたの担当</h1>
+      <span style="font-size: 12px; color: #C9CFD1">佐藤 ・ ハウスキーピング 12〜15F</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <div style="display: flex; justify-content: space-between; font-size: 12px; color: #C9CFD1"><span>本日の担当量 {{todayPts}}pt</span><span>同じ枠の3名の平均 13pt</span></div>
+      <div style="height: 6px; border-radius: 3px; background: #2F3B3F; overflow: hidden"><div style="{{loadBar}}"></div></div>
+    </div>
+    <div role="tablist" style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 4px; background: #2F3B3F; border-radius: 12px">
+      <button type="button" role="tab" aria-selected="{{tabNewSel}}" onClick="{{showNew}}" style="{{tabNewStyle}}">未着手 {{newCount}}</button>
+      <button type="button" role="tab" aria-selected="{{tabDoingSel}}" onClick="{{showDoing}}" style="{{tabDoingStyle}}">対応中 {{doingCount}}</button>
+    </div>
+  </header>
+
+  <main style="flex-grow: 1; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; overflow: hidden">
+    <div style="padding: 12px 14px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; display: flex; align-items: center; gap: 10px">
+      <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px">
+        <strong style="font-size: 14px">1503号室 スタッフとの会話を希望</strong>
+        <span style="font-size: 12px; color: #5B6468; line-height: 1.5">AI要約：エアコンの効きが弱い。設定方法は案内済み</span>
+      </div>
+      <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 8px; background: #1D2528; color: #FFFFFF; text-decoration: none; font-size: 13px; font-weight: 700">対応する</a>
+    </div>
+
+    <sc-if value="{{isNew}}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 8px 12px; background: #E3EEEC; color: #1F5C5A; border-radius: 8px; font-size: 12px; line-height: 1.5">1203と1208は同じ12Fのため、まとめてあなたに割り当てました</div>
+    </sc-if>
+    <sc-for list="{{list}}" as="t" hint-placeholder-count="2">
+      <article style="{{t.cardStyle}}">
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <span style="display: flex; align-items: center; gap: 8px"><span style="font-size: 22px; font-weight: 700">{{t.room}}</span><span style="{{t.weightStyle}}">{{t.weightLabel}}</span></span>
+          <span style="{{t.agoStyle}}">{{t.ago}}</span>
+        </div>
+        <div style="font-size: 15px; line-height: 1.6">{{t.items}}</div>
+        <div style="display: flex; gap: 8px">
+          <button type="button" onClick="{{t.act}}" style="{{t.btnStyle}}">{{t.btnLabel}}</button>
+          <sc-if value="{{t.canReturn}}" hint-placeholder-val="{{ true }}">
+            <button type="button" style="min-height: 52px; padding: 0 12px; border: 1px solid #D8D3CA; background: #FFFFFF; border-radius: 10px; font: inherit; font-size: 13px; color: #5B6468">対応できない</button>
+          </sc-if>
+        </div>
+      </article>
+    </sc-for>
+    <sc-if value="{{isEmpty}}" hint-placeholder-val="{{ false }}">
+      <div style="padding: 24px; text-align: center; font-size: 14px; color: #5B6468">このタブのオーダーはありません</div>
+    </sc-if>
+  </main>
+
+  <nav aria-label="スタッフメニュー" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 6px 8px 24px; background: #FFFFFF; border-top: 1px solid #E2DED6">
+    <a href="#" style="min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-decoration: none; color: #1F5C5A; font-size: 11px; font-weight: 700">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8 9h8"></path><path d="M8 13h8"></path><path d="M8 17h5"></path></svg>オーダー</a>
+    <a href="StaffAsk.dc.html" style="min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-decoration: none; color: #5B6468; font-size: 11px">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>AIに相談</a>
+    <a href="#" style="min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-decoration: none; color: #5B6468; font-size: 11px">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"></path><path d="M10 21h4"></path></svg>通知</a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      tab: 'new',
+      donePts: 7,
+      tickets: [
+        { id: 't1', room: '1203', items: 'バスタオル × 2', ago: '3分前', status: 'new', overdue: false, w: 1 },
+        { id: 't2', room: '1208', items: '歯ブラシ × 2 ・ ハンガー × 3', ago: '2分前', status: 'new', overdue: false, w: 1 },
+        { id: 't6', room: '1411', items: 'ミネラルウォーター × 2', ago: '1分前', status: 'new', overdue: false, w: 1 },
+        { id: 't3', room: '1305', items: '加湿器 × 1（設置まで）', ago: '着手から6分', status: 'doing', overdue: false, w: 3 },
+        { id: 't4', room: '1310', items: '枕（低め）× 1', ago: '期限超過 5分', status: 'doing', overdue: true, w: 2 }
+      ]
+    };
+  }
+  advance(id) {
+    const next = { new: 'doing', doing: 'done', done: 'done' };
+    let add = 0;
+    const tickets = this.state.tickets.map((t) => {
+      if (t.id !== id) return t;
+      if (t.status === 'doing') add = t.w;
+      return { ...t, status: next[t.status], ago: next[t.status] === 'doing' ? '着手から0分' : t.ago };
+    });
+    this.setState({ tickets, donePts: this.state.donePts + add });
+  }
+  renderVals() {
+    const tab = this.state.tab;
+    const tabStyle = (on) => 'min-height: 44px; border: none; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 700; ' + (on ? 'background: #F5F3EE; color: #1D2528;' : 'background: transparent; color: #C9CFD1;');
+    const labels = { 1: '軽', 2: '中', 3: '重' };
+    const wColors = { 1: 'background: #E3EEEC; color: #1F5C5A;', 2: 'background: #D5E3F0; color: #1F4E79;', 3: 'background: #1F4E79; color: #FFFFFF;' };
+    const all = this.state.tickets;
+    const open = all.filter((t) => t.status !== 'done');
+    const todayPts = this.state.donePts + open.reduce((a, t) => a + t.w, 0);
+    const newCount = all.filter((t) => t.status === 'new').length;
+    const doingCount = all.filter((t) => t.status === 'doing').length;
+    const list = all.filter((t) => t.status === tab).map((t) => ({
+      ...t,
+      act: () => this.advance(t.id),
+      canReturn: t.status === 'new',
+      weightLabel: labels[t.w],
+      weightStyle: 'padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 700; ' + wColors[t.w],
+      btnLabel: t.status === 'new' ? '向かう' : '届けた',
+      btnStyle: 'flex-grow: 1; min-height: 52px; border-radius: 10px; font: inherit; font-size: 16px; font-weight: 700; ' + (t.status === 'new' ? 'border: none; background: #1F5C5A; color: #FFFFFF;' : 'border: 2px solid #1F5C5A; background: #FFFFFF; color: #1F5C5A;'),
+      cardStyle: 'box-sizing: border-box; padding: 14px; border-radius: 12px; background: #FFFFFF; display: flex; flex-direction: column; gap: 10px; ' + (t.overdue ? 'border: 2px solid #A3261D;' : 'border: 1px solid #E2DED6;'),
+      agoStyle: t.overdue ? 'font-size: 13px; font-weight: 700; color: #A3261D' : 'font-size: 13px; color: #5B6468'
+    }));
+    return {
+      list, newCount, doingCount, todayPts,
+      loadBar: 'height: 100%; border-radius: 3px; background: #7FB5AF; width: ' + Math.min(100, todayPts / 20 * 100) + '%;',
+      isNew: tab === 'new', isEmpty: list.length === 0,
+      tabNewSel: tab === 'new' ? 'true' : 'false', tabDoingSel: tab === 'doing' ? 'true' : 'false',
+      tabNewStyle: tabStyle(tab === 'new'), tabDoingStyle: tabStyle(tab === 'doing'),
+      showNew: () => this.setState({ tab: 'new' }), showDoing: () => this.setState({ tab: 'doing' })
+    };
+  }
+}
+</script>
+</body>
+</html>

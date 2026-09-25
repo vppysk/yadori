@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ゲストチャット（本日の滞在）</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600&amp;family=Zen+Kaku+Gothic+New:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Zen Kaku Gothic New",sans-serif;background:#F5F3EE;color:#1D2528}
+a{color:#1F5C5A}a:hover{color:#153F3E}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; display: flex; flex-direction: column; background: #F5F3EE; font-family: 'Zen Kaku Gothic New', sans-serif; color: #1D2528; overflow: hidden">
+  <header style="padding: 20px 20px 14px; background: #FFFFFF; border-bottom: 1px solid #E2DED6; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: center; justify-content: space-between">
+      <div style="font-family: 'Shippori Mincho B1', serif; font-size: 20px; font-weight: 600; letter-spacing: 0.04em">[ホテル名]</div>
+      <a href="#" style="display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border: 1px solid #E2DED6; border-radius: 22px; font-size: 13px; font-weight: 500; text-decoration: none; color: #1D2528">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 4-6 8-6s8 2 8 6"></path></svg>
+        スタッフと話す
+      </a>
+    </div>
+    <div style="display: flex; gap: 8px; font-size: 12px; color: #5B6468">
+      <span style="padding: 4px 10px; background: #E3EEEC; color: #1F5C5A; border-radius: 12px; font-weight: 500">1203号室</span>
+      <span style="padding: 4px 10px; background: #EFECE6; border-radius: 12px">9/24（木）〜 9/26（土）</span>
+    </div>
+  </header>
+
+  <main style="flex-grow: 1; padding: 20px 16px; display: flex; flex-direction: column; gap: 14px; overflow: hidden">
+    <div style="align-self: center; font-size: 11px; color: #5B6468">本日 14:02</div>
+
+    <div style="align-self: flex-end; max-width: 78%; padding: 12px 14px; background: #1F5C5A; color: #FFFFFF; border-radius: 16px 16px 4px 16px; font-size: 15px; line-height: 1.6">プールって何時まで使える？あとバスタオル2枚ほしいです</div>
+
+    <div style="align-self: flex-start; max-width: 86%; display: flex; flex-direction: column; gap: 8px">
+      <div style="padding: 12px 14px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 16px 16px 16px 4px; font-size: 15px; line-height: 1.7">本日のプールは点検のため、<strong>15:00まで</strong>のご利用となります（通常は21:00まで）。明日は通常どおり営業いたします。</div>
+      <div style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: #9A5B0B">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8v4l3 2"></path><circle cx="12" cy="12" r="9"></circle></svg>
+        屋外プールの特記事項を反映（13:40 更新）
+      </div>
+    </div>
+
+    <div style="align-self: flex-start; width: 86%; box-sizing: border-box; padding: 14px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 16px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; justify-content: space-between">
+        <div style="font-size: 14px; font-weight: 700">ご依頼を承りました</div>
+        <div style="font-size: 12px; color: #5B6468">目安 30分以内</div>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 14px; padding: 10px 12px; background: #F5F3EE; border-radius: 10px">
+        <span>バスタオル</span><span style="font-weight: 700">× 2</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px">
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 4px; flex-grow: 1">
+          <div style="width: 100%; height: 4px; border-radius: 2px; background: #1F5C5A"></div>
+          <span style="font-size: 11px; font-weight: 700; color: #1F5C5A">受付済み</span>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 4px; flex-grow: 1">
+          <div style="width: 100%; height: 4px; border-radius: 2px; background: #D8D3CA"></div>
+          <span style="font-size: 11px; color: #5B6468">準備中</span>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 4px; flex-grow: 1">
+          <div style="width: 100%; height: 4px; border-radius: 2px; background: #D8D3CA"></div>
+          <span style="font-size: 11px; color: #5B6468">お届け済み</span>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: #5B6468; line-height: 1.6">お届けしたらこちらでお知らせします。</div>
+    </div>
+  </main>
+
+  <div style="padding: 0 16px 10px; display: flex; gap: 8px; overflow: hidden">
+    <button type="button" style="flex-shrink: 0; min-height: 44px; padding: 0 14px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 22px; font: inherit; font-size: 13px; color: #1D2528">朝食の時間</button>
+    <button type="button" style="flex-shrink: 0; min-height: 44px; padding: 0 14px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 22px; font: inherit; font-size: 13px; color: #1D2528">レストラン予約</button>
+    <button type="button" style="flex-shrink: 0; min-height: 44px; padding: 0 14px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 22px; font: inherit; font-size: 13px; color: #1D2528">アメニティ追加</button>
+  </div>
+
+  <form style="margin: 0; padding: 10px 16px 28px; background: #FFFFFF; border-top: 1px solid #E2DED6; display: flex; gap: 8px; align-items: center">
+    <label for="guest-msg" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">メッセージ</label>
+    <input id="guest-msg" type="text" placeholder="ご質問・ご依頼をどうぞ" style="flex-grow: 1; min-height: 44px; box-sizing: border-box; padding: 0 16px; border: 1px solid #D8D3CA; border-radius: 22px; background: #F5F3EE; font: inherit; font-size: 15px; color: #1D2528">
+    <button type="button" aria-label="送信" style="width: 44px; height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border: none; border-radius: 22px; background: #1F5C5A; color: #FFFFFF">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg>
+    </button>
+  </form>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>AI設定｜外部連携の読み書きルール</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600&amp;family=Zen+Kaku+Gothic+New:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Zen Kaku Gothic New",sans-serif;background:#F5F3EE;color:#1D2528}
+a{color:#1F5C5A}a:hover{color:#153F3E}
+</style>
+</helmet>
+<div style="width: 1440px; height: 960px; box-sizing: border-box; padding: 28px 36px; display: flex; flex-direction: column; gap: 18px; background: #F5F3EE; font-family: 'Zen Kaku Gothic New', sans-serif; color: #1D2528; overflow: hidden">
+
+  <header style="display: flex; align-items: flex-end; justify-content: space-between">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <div style="font-family: 'Shippori Mincho B1', serif; font-size: 16px; font-weight: 600; color: #5B6468">[ホテル名]</div>
+      <h1 style="margin: 0; font-size: 26px; font-weight: 700">AIチームの運営</h1>
+    </div>
+    <div style="display: flex; gap: 10px">
+      <button type="button" style="min-height: 44px; padding: 0 16px; border: 1px solid #D8D3CA; background: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; color: #1D2528">過去の会話で試す</button>
+      <button type="button" style="min-height: 44px; padding: 0 20px; border: none; background: #1F5C5A; color: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 700">保存して適用</button>
+    </div>
+  </header>
+
+  <nav aria-label="AI設定" style="display: flex; gap: 4px; border-bottom: 1px solid #D8D3CA">
+    <a href="Dashboard.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 18px; color: #5B6468; text-decoration: none; font-size: 14px">担当範囲とコスト</a>
+    <a href="AiPolicy.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 18px; color: #5B6468; text-decoration: none; font-size: 14px">指示とガードレール</a>
+    <a href="#" aria-current="page" style="display: flex; align-items: center; min-height: 44px; padding: 0 18px; color: #1D2528; text-decoration: none; font-size: 14px; font-weight: 700; border-bottom: 3px solid #1F5C5A; margin-bottom: -1px">外部連携</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 18px; color: #5B6468; text-decoration: none; font-size: 14px">変更履歴</a>
+  </nav>
+
+  <div style="display: flex; gap: 20px; flex-grow: 1; min-height: 0">
+    <aside aria-label="連携先" style="width: 250px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px">
+      <div style="font-size: 12px; color: #5B6468; padding: 0 4px 4px">連携先</div>
+      <a href="#" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 10px; background: #FFFFFF; border: 2px solid #1F5C5A; text-decoration: none; color: #1D2528">
+        <strong style="font-size: 14px">予約・客室管理システム</strong>
+        <span style="font-size: 12px; color: #1F5C5A">MCP ・ 読み取り／書き込み</span>
+      </a>
+      <a href="#" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 10px; background: #FFFFFF; border: 1px solid #E2DED6; text-decoration: none; color: #1D2528">
+        <strong style="font-size: 14px">レストラン予約</strong>
+        <span style="font-size: 12px; color: #5B6468">MCP ・ 読み取り／予約作成</span>
+      </a>
+      <a href="#" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 10px; background: #FFFFFF; border: 1px solid #E2DED6; text-decoration: none; color: #1D2528">
+        <strong style="font-size: 14px">周辺情報の検索</strong>
+        <span style="font-size: 12px; color: #5B6468">Web検索 ・ 読み取りのみ</span>
+      </a>
+      <button type="button" style="min-height: 44px; border: 1px dashed #BDB6AA; background: transparent; border-radius: 10px; font: inherit; font-size: 13px; color: #5B6468">＋ 連携先を追加</button>
+    </aside>
+
+    <section aria-label="ルール" style="flex-grow: 1; display: flex; flex-direction: column; gap: 16px; min-width: 0">
+      <div style="padding: 18px 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 10px">
+        <div style="display: flex; justify-content: space-between; align-items: baseline">
+          <label for="read-rule" style="font-size: 16px; font-weight: 700">読み取りルール</label>
+          <span style="font-size: 12px; color: #5B6468">会話の開始時と、必要に応じて参照</span>
+        </div>
+        <textarea id="read-rule" rows="4" style="box-sizing: border-box; width: 100%; padding: 12px 14px; border: 1px solid #D8D3CA; border-radius: 10px; font: inherit; font-size: 14px; line-height: 1.7; resize: none; color: #1D2528">・予約内容（部屋番号、滞在日、人数、プラン）と滞在中の依頼履歴を参照する
+・お客様メモのうち「記念日」「お好み」の項目は、案内を個別に合わせるために使ってよい
+・お客様メモにある内容を、お客様本人に「記録されています」と伝えない</textarea>
+      </div>
+
+      <div style="padding: 18px 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 10px">
+        <div style="display: flex; justify-content: space-between; align-items: baseline">
+          <label for="write-rule" style="font-size: 16px; font-weight: 700">書き込みルール</label>
+          <span style="font-size: 12px; color: #5B6468">既存の運用ルールをそのまま書いてください</span>
+        </div>
+        <textarea id="write-rule" rows="7" style="box-sizing: border-box; width: 100%; padding: 12px 14px; border: 1px solid #D8D3CA; border-radius: 10px; font: inherit; font-size: 14px; line-height: 1.7; resize: none; color: #1D2528">・スタッフに引き継いだ案件は、お客様メモに次の形式で追記する
+　【AI引継】日時／ご要望の要約／AIが案内した内容／引き継ぎ先
+・次回以降のご滞在でも役立つ情報（記念日、枕や室温のお好みなど）は「お好み」欄に追記する
+・クレームは事実と経過のみを書き、スタッフ個人を評価する表現は使わない
+・既存の記載は書き換えず、必ず追記する</textarea>
+        <div style="padding: 10px 14px; background: #F5F3EE; border-radius: 10px; font-size: 13px; line-height: 1.7; color: #5B6468">書き込み例（711号室の遅延）：【AI引継】9/25 15:12／フェイスタオル4枚の依頼が期限を12分超過、催促あり／お詫びと手配中の旨を案内済み／上長 山本</div>
+      </div>
+    </section>
+
+    <aside aria-label="ガードレール" style="width: 420px; flex-shrink: 0; padding: 20px 22px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 14px">
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <h2 style="margin: 0; font-size: 16px">ガードレール</h2>
+        <span style="font-size: 12px; color: #5B6468">プロンプトより優先される固定の制限です</span>
+      </div>
+      <div style="display: flex; flex-direction: column; border: 1px solid #E2DED6; border-radius: 10px; overflow: hidden">
+        <div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 8px; padding: 10px 12px; background: #EFECE6; font-size: 12px; font-weight: 700; color: #5B6468"><span>項目</span><span>読み取り</span><span>書き込み</span></div>
+        <div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 8px; padding: 10px 12px; border-top: 1px solid #E2DED6; font-size: 13px"><span>予約内容</span><span style="color: #1F5C5A; font-weight: 700">可</span><span style="color: #A3261D; font-weight: 700">不可</span></div>
+        <div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 8px; padding: 10px 12px; border-top: 1px solid #E2DED6; font-size: 13px"><span>依頼履歴</span><span style="color: #1F5C5A; font-weight: 700">可</span><span style="color: #1F5C5A; font-weight: 700">追記のみ</span></div>
+        <div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 8px; padding: 10px 12px; border-top: 1px solid #E2DED6; font-size: 13px"><span>お客様メモ</span><span style="color: #1F5C5A; font-weight: 700">可</span><span style="color: #1F5C5A; font-weight: 700">追記のみ</span></div>
+        <div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 8px; padding: 10px 12px; border-top: 1px solid #E2DED6; font-size: 13px"><span>料金・支払い</span><span style="color: #A3261D; font-weight: 700">不可</span><span style="color: #A3261D; font-weight: 700">不可</span></div>
+      </div>
+      <label style="display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px"><input type="checkbox" checked style="width: 20px; height: 20px; accent-color: #1F5C5A">クレーム関連の書き込みはスタッフの確認後</label>
+      <label style="display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px"><input type="checkbox" checked style="width: 20px; height: 20px; accent-color: #1F5C5A">書き込み前に形式をチェックし、合わなければ保留</label>
+
+      <div style="height: 1px; background: #E2DED6"></div>
+      <h3 style="margin: 0; font-size: 14px">最近の書き込み</h3>
+      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px">
+        <div style="display: flex; justify-content: space-between; gap: 10px"><span>711号室 ・ お客様メモ</span><span style="color: #9A5B0B; font-weight: 700">確認待ち</span></div>
+        <div style="display: flex; justify-content: space-between; gap: 10px"><span>1503号室 ・ お客様メモ</span><span style="color: #5B6468">15:09 書き込み済み</span></div>
+        <div style="display: flex; justify-content: space-between; gap: 10px"><span>1203号室 ・ 依頼履歴</span><span style="color: #5B6468">14:03 書き込み済み</span></div>
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

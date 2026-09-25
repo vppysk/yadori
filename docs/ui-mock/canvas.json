@@ -1,0 +1,138 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-09-24T11:51:55Z"
+  },
+  "title": "ホテル運営AIエージェント UIモック",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "ゲスト｜本日の滞在（特記事項反映・オーダー）"
+    },
+    "GuestFuture.dc.html": {
+      "x": 470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "ゲスト｜来月の滞在（滞在日で答え分け）"
+    },
+    "StaffOrders.dc.html": {
+      "x": 0,
+      "y": 1244,
+      "w": 390,
+      "h": 844,
+      "title": "現場スマホ｜オーダー・引き継ぎ",
+      "is_interactive": true
+    },
+    "StaffAsk.dc.html": {
+      "x": 470,
+      "y": 1244,
+      "w": 390,
+      "h": 844,
+      "title": "現場スマホ｜AIに相談"
+    },
+    "StaffAdmin.dc.html": {
+      "x": 0,
+      "y": 2488,
+      "w": 1280,
+      "h": 800,
+      "title": "管理PC｜今日の要対応"
+    },
+    "Knowledge.dc.html": {
+      "x": 1360,
+      "y": 2488,
+      "w": 1280,
+      "h": 800,
+      "title": "管理PC｜施設・営業情報（マスタ編集）"
+    },
+    "Dashboard.dc.html": {
+      "x": 0,
+      "y": 3688,
+      "w": 1440,
+      "h": 960,
+      "title": "経営｜AIの担当範囲とコスト見積もり",
+      "is_interactive": true
+    },
+    "AiPolicy.dc.html": {
+      "x": 1520,
+      "y": 3688,
+      "w": 1440,
+      "h": 960,
+      "title": "経営｜AIの指示とガードレール"
+    },
+    "AiIntegration.dc.html": {
+      "x": 3040,
+      "y": 3688,
+      "w": 1440,
+      "h": 960,
+      "title": "経営｜外部連携の読み書きルール"
+    },
+    "OrderBoard.dc.html": {
+      "x": 2720,
+      "y": 2488,
+      "w": 1280,
+      "h": 800,
+      "title": "管理PC｜オーダーボード（フロント登録・付け替え）"
+    },
+    "ItemMaster.dc.html": {
+      "x": 4080,
+      "y": 2488,
+      "w": 1280,
+      "h": 800,
+      "title": "管理PC｜品目・担当設定（重みと割り当て）",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "GuestFuture.dc.html",
+    "StaffOrders.dc.html",
+    "StaffAsk.dc.html",
+    "StaffAdmin.dc.html",
+    "Knowledge.dc.html",
+    "Dashboard.dc.html",
+    "AiPolicy.dc.html",
+    "AiIntegration.dc.html",
+    "OrderBoard.dc.html",
+    "ItemMaster.dc.html"
+  ],
+  "notes": {
+    "guestTitle": {
+      "x": 0,
+      "y": -300,
+      "text": "ゲスト",
+      "kind": "title1",
+      "maxW": 860
+    },
+    "staffTitle": {
+      "x": 0,
+      "y": 944,
+      "text": "スタッフ（現場・スマホ）",
+      "kind": "title1",
+      "maxW": 860
+    },
+    "adminTitle": {
+      "x": 0,
+      "y": 2188,
+      "text": "スタッフ（管理・PC）",
+      "kind": "title1",
+      "maxW": 5360
+    },
+    "mgmtTitle": {
+      "x": 0,
+      "y": 3388,
+      "text": "経営（AIチームの運営）",
+      "kind": "title1",
+      "maxW": 4480
+    }
+  },
+  "designSystems": []
+}

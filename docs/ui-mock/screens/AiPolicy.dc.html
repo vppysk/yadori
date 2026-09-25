@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>AI設定｜指示とガードレール</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600&amp;family=Zen+Kaku+Gothic+New:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Zen Kaku Gothic New",sans-serif;background:#F5F3EE;color:#1D2528}
+a{color:#1F5C5A}a:hover{color:#153F3E}
+</style>
+</helmet>
+<div style="width: 1440px; height: 960px; box-sizing: border-box; padding: 28px 36px; display: flex; flex-direction: column; gap: 18px; background: #F5F3EE; font-family: 'Zen Kaku Gothic New', sans-serif; color: #1D2528; overflow: hidden">
+
+  <header style="display: flex; align-items: flex-end; justify-content: space-between">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <div style="font-family: 'Shippori Mincho B1', serif; font-size: 16px; font-weight: 600; color: #5B6468">[ホテル名]</div>
+      <h1 style="margin: 0; font-size: 26px; font-weight: 700">AIチームの運営</h1>
+    </div>
+    <div style="display: flex; gap: 10px">
+      <button type="button" style="min-height: 44px; padding: 0 16px; border: 1px solid #D8D3CA; background: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; color: #1D2528">過去の会話で試す</button>
+      <button type="button" style="min-height: 44px; padding: 0 20px; border: none; background: #1F5C5A; color: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 700">保存して適用</button>
+    </div>
+  </header>
+
+  <nav aria-label="AI設定" style="display: flex; gap: 4px; border-bottom: 1px solid #D8D3CA">
+    <a href="Dashboard.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 18px; color: #5B6468; text-decoration: none; font-size: 14px">担当範囲とコスト</a>
+    <a href="#" aria-current="page" style="display: flex; align-items: center; min-height: 44px; padding: 0 18px; color: #1D2528; text-decoration: none; font-size: 14px; font-weight: 700; border-bottom: 3px solid #1F5C5A; margin-bottom: -1px">指示とガードレール</a>
+    <a href="AiIntegration.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 18px; color: #5B6468; text-decoration: none; font-size: 14px">外部連携</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 18px; color: #5B6468; text-decoration: none; font-size: 14px">変更履歴</a>
+  </nav>
+
+  <div style="display: flex; gap: 20px; flex-grow: 1; min-height: 0">
+    <section aria-label="指示" style="flex-grow: 1; display: flex; flex-direction: column; gap: 16px; min-width: 0">
+      <div style="padding: 18px 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 10px">
+        <div style="display: flex; justify-content: space-between; align-items: baseline">
+          <label for="common" style="font-size: 16px; font-weight: 700">共通の指示</label>
+          <span style="font-size: 12px; color: #5B6468">すべての業務に適用</span>
+        </div>
+        <textarea id="common" rows="4" style="box-sizing: border-box; width: 100%; padding: 12px 14px; border: 1px solid #D8D3CA; border-radius: 10px; font: inherit; font-size: 14px; line-height: 1.7; resize: none; color: #1D2528">・丁寧だが堅すぎない言葉づかいで、結論から短く答える
+・お客様のご滞在日の情報で答える。わからないことは推測せず、スタッフに確認すると伝える
+・館内の施設は正式名称で呼ぶ（例：「大浴場 せせらぎ」）</textarea>
+      </div>
+
+      <div style="padding: 18px 20px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 12px; flex-grow: 1">
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <h2 style="margin: 0; font-size: 16px">業務ごとの指示</h2>
+          <div role="tablist" style="display: flex; gap: 6px">
+            <button type="button" role="tab" aria-selected="false" style="min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; background: #FFFFFF; border-radius: 20px; font: inherit; font-size: 13px; color: #1D2528">案内</button>
+            <button type="button" role="tab" aria-selected="false" style="min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; background: #FFFFFF; border-radius: 20px; font: inherit; font-size: 13px; color: #1D2528">オーダー</button>
+            <button type="button" role="tab" aria-selected="false" style="min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; background: #FFFFFF; border-radius: 20px; font: inherit; font-size: 13px; color: #1D2528">外部連携</button>
+            <button type="button" role="tab" aria-selected="false" style="min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; background: #FFFFFF; border-radius: 20px; font: inherit; font-size: 13px; color: #1D2528">予約・客室</button>
+            <button type="button" role="tab" aria-selected="true" style="min-height: 40px; padding: 0 14px; border: 1px solid #1F5C5A; background: #E3EEEC; border-radius: 20px; font: inherit; font-size: 13px; font-weight: 700; color: #1F5C5A">クレーム</button>
+          </div>
+        </div>
+        <label for="task" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">クレームの指示</label>
+        <textarea id="task" rows="7" style="box-sizing: border-box; width: 100%; padding: 12px 14px; border: 1px solid #D8D3CA; border-radius: 10px; font: inherit; font-size: 14px; line-height: 1.7; resize: none; color: #1D2528">・最初にお詫びし、ご不便の内容を具体的に言い換えて受け止める
+・事実（いつ、どこで、何が）を確認し、原因の推測や言い訳はしない
+・補償や返金については触れず、「担当者から改めてご連絡します」と伝える
+・確認した内容を要約して、すぐにスタッフへ引き継ぐ</textarea>
+        <div style="padding: 12px 14px; background: #F5F3EE; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.6">
+          <strong>過去の会話で試した結果（クレーム 20件）</strong>
+          <span style="color: #5B6468">指示に沿った応答 19件 ・ 補償に触れた応答 0件 ・ 引き継ぎまでの平均 3往復</span>
+        </div>
+      </div>
+    </section>
+
+    <aside aria-label="ガードレール" style="width: 440px; flex-shrink: 0; padding: 20px 22px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 14px; display: flex; flex-direction: column; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <h2 style="margin: 0; font-size: 16px">ガードレール</h2>
+        <span style="font-size: 12px; color: #5B6468">指示より優先され、応答の前後で自動チェックされます</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h3 style="margin: 0; font-size: 14px">してはいけないこと</h3>
+        <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px">
+          <div style="padding: 10px 12px; background: #F8E4E1; border-radius: 8px">値引き・補償・返金を約束しない</div>
+          <div style="padding: 10px 12px; background: #F8E4E1; border-radius: 8px">他のお客様の情報（部屋番号・氏名など）を話さない</div>
+          <div style="padding: 10px 12px; background: #F8E4E1; border-radius: 8px">体調に関する助言をせず、フロントへつなぐ</div>
+          <button type="button" style="min-height: 40px; border: 1px dashed #BDB6AA; background: transparent; border-radius: 8px; font: inherit; font-size: 13px; color: #5B6468">＋ 追加</button>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h3 style="margin: 0; font-size: 14px">必ず人に引き継ぐ条件</h3>
+        <label style="display: flex; align-items: center; gap: 10px; min-height: 40px; font-size: 13px"><input type="checkbox" checked style="width: 20px; height: 20px; accent-color: #1F5C5A">お客様が「スタッフと話したい」と言った</label>
+        <label style="display: flex; align-items: center; gap: 10px; min-height: 40px; font-size: 13px"><input type="checkbox" checked style="width: 20px; height: 20px; accent-color: #1F5C5A">強い不満や怒りを検知した</label>
+        <label style="display: flex; align-items: center; gap: 10px; min-height: 40px; font-size: 13px"><input type="checkbox" checked style="width: 20px; height: 20px; accent-color: #1F5C5A">同じ質問に2回答えられなかった</label>
+        <label style="display: flex; align-items: center; gap: 10px; min-height: 40px; font-size: 13px"><input type="checkbox" checked style="width: 20px; height: 20px; accent-color: #1F5C5A">急病・けが・安全に関わる内容</label>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h3 style="margin: 0; font-size: 14px">確定前に必ずお客様へ確認</h3>
+        <div style="font-size: 13px; color: #5B6468; line-height: 1.7">レストラン予約の作成 ・ 有料サービスの手配 ・ 部屋変更の候補提示</div>
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>スタッフ（PC）｜オーダーボード</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600&amp;family=Zen+Kaku+Gothic+New:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Zen Kaku Gothic New",sans-serif;background:#F5F3EE;color:#1D2528}
+a{color:#1F5C5A}a:hover{color:#153F3E}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #F5F3EE; font-family: 'Zen Kaku Gothic New', sans-serif; color: #1D2528; overflow: hidden">
+
+  <nav aria-label="管理メニュー" style="width: 230px; flex-shrink: 0; box-sizing: border-box; padding: 24px 16px; background: #1D2528; color: #F5F3EE; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-family: 'Shippori Mincho B1', serif; font-size: 18px; font-weight: 600; padding: 0 10px 20px">[ホテル名]<span style="display: block; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 400; color: #AEB6B9; margin-top: 4px">管理</span></div>
+    <a href="StaffAdmin.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">ホーム</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; background: #2F3B3F; color: #FFFFFF; text-decoration: none; font-size: 14px; font-weight: 700">オーダー</a>
+    <a href="Knowledge.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">施設・営業情報</a>
+    <a href="ItemMaster.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">品目・担当設定</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">館内案内・マニュアル</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">未回答の質問</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">引き継ぎ・クレーム履歴</a>
+  </nav>
+
+  <main style="flex-grow: 1; box-sizing: border-box; padding: 22px 26px; display: flex; flex-direction: column; gap: 14px; min-width: 0">
+    <div style="display: flex; align-items: center; justify-content: space-between">
+      <h1 style="margin: 0; font-size: 22px; font-weight: 700">オーダー</h1>
+      <div style="display: flex; gap: 6px; font-size: 13px">
+        <button type="button" aria-pressed="true" style="min-height: 40px; padding: 0 14px; border: 1px solid #1F5C5A; background: #E3EEEC; color: #1F5C5A; border-radius: 20px; font: inherit; font-weight: 700">ハウスキーピング 12〜15F</button>
+        <button type="button" aria-pressed="false" style="min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; background: #FFFFFF; color: #1D2528; border-radius: 20px; font: inherit">ハウスキーピング 7〜11F</button>
+        <button type="button" aria-pressed="false" style="min-height: 40px; padding: 0 14px; border: 1px solid #D8D3CA; background: #FFFFFF; color: #1D2528; border-radius: 20px; font: inherit">ルームサービス</button>
+      </div>
+    </div>
+
+    <form aria-label="オーダーを登録" style="margin: 0; padding: 14px 16px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; display: flex; flex-direction: column; gap: 10px">
+      <div style="display: flex; gap: 10px; align-items: flex-end">
+        <div style="display: flex; flex-direction: column; gap: 4px; width: 110px">
+          <label for="ob-room" style="font-size: 12px; color: #5B6468">部屋番号</label>
+          <input id="ob-room" value="1402" style="min-height: 44px; box-sizing: border-box; padding: 0 12px; border: 1px solid #D8D3CA; border-radius: 8px; font: inherit; font-size: 15px; color: #1D2528">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px; flex-grow: 1">
+          <label for="ob-text" style="font-size: 12px; color: #5B6468">ご依頼内容（そのまま入力）</label>
+          <input id="ob-text" value="加湿器ひとつ、あとバスタオル2枚" style="min-height: 44px; box-sizing: border-box; padding: 0 12px; border: 1px solid #D8D3CA; border-radius: 8px; font: inherit; font-size: 15px; color: #1D2528">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px; width: 130px">
+          <label for="ob-src" style="font-size: 12px; color: #5B6468">受付</label>
+          <select id="ob-src" style="min-height: 44px; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 8px; background: #FFFFFF; font: inherit; font-size: 14px; color: #1D2528"><option>電話</option><option>フロント来訪</option><option>その他</option></select>
+        </div>
+        <button type="button" style="min-height: 44px; padding: 0 22px; border: none; background: #1F5C5A; color: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 700">登録</button>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #5B6468; flex-wrap: wrap">
+        <span>AIの読み取り：</span>
+        <span style="padding: 2px 8px; border-radius: 6px; background: #1F4E79; color: #FFFFFF; font-size: 12px; font-weight: 700">重</span>加湿器 × 1
+        <span style="padding: 2px 8px; border-radius: 6px; background: #E3EEEC; color: #1F5C5A; font-size: 12px; font-weight: 700">軽</span>バスタオル × 2
+        <span style="margin-left: 8px">→ ハウスキーピング 12〜15F ・ 割り当て予定：<strong style="color: #1D2528">高橋</strong>（本日の担当量が最も少ない）</span>
+      </div>
+    </form>
+
+    <div style="flex-grow: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; min-height: 0">
+      <section style="padding: 12px; background: #F8E4E1; border-radius: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0">
+        <h2 style="margin: 0; font-size: 14px; color: #A3261D">要対応</h2>
+        <div style="padding: 12px; background: #FFFFFF; border: 2px solid #A3261D; border-radius: 10px; display: flex; flex-direction: column; gap: 6px">
+          <div style="display: flex; justify-content: space-between; align-items: baseline"><strong style="font-size: 16px">1310</strong><span style="font-size: 12px; font-weight: 700; color: #A3261D">期限超過 5分</span></div>
+          <span style="font-size: 13px">枕（低め）× 1</span>
+          <span style="font-size: 12px; color: #5B6468">担当：佐藤（対応中）</span>
+          <button type="button" style="min-height: 36px; border: 1px solid #A3261D; background: #FFFFFF; color: #A3261D; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 700">付け替える</button>
+        </div>
+        <div style="padding: 12px; background: #FFFFFF; border: 1px solid #E3B3AC; border-radius: 10px; display: flex; flex-direction: column; gap: 6px">
+          <div style="display: flex; justify-content: space-between; align-items: baseline"><strong style="font-size: 16px">1207</strong><span style="font-size: 12px; color: #A3261D">再割り当て中</span></div>
+          <span style="font-size: 13px">ベビーベッド × 1</span>
+          <span style="font-size: 12px; color: #5B6468">伊藤が「対応できない」（別件で手が離せない）</span>
+        </div>
+      </section>
+
+      <section style="padding: 12px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0">
+        <h2 style="margin: 0; font-size: 14px; display: flex; justify-content: space-between">佐藤<span style="font-weight: 400; color: #5B6468">本日 14pt</span></h2>
+        <div style="height: 6px; border-radius: 3px; background: #EFECE6; overflow: hidden"><div style="width: 70%; height: 100%; background: #7FB5AF"></div></div>
+        <div style="padding: 10px 12px; border: 1px solid #E2DED6; border-radius: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 13px">
+          <div style="display: flex; justify-content: space-between"><strong>1305</strong><span style="padding: 1px 6px; border-radius: 5px; background: #1F4E79; color: #FFFFFF; font-size: 11px">重</span></div>
+          <span>加湿器 × 1 ・ 対応中</span><span style="font-size: 11px; color: #5B6468">AIチャット</span>
+        </div>
+        <div style="padding: 10px 12px; border: 1px solid #E2DED6; border-radius: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 13px">
+          <div style="display: flex; justify-content: space-between"><strong>1203 ・ 1208</strong><span style="padding: 1px 6px; border-radius: 5px; background: #E3EEEC; color: #1F5C5A; font-size: 11px">軽</span></div>
+          <span>バスタオル、歯ブラシ ほか ・ 未着手</span><span style="font-size: 11px; color: #5B6468">AIチャット ・ 同フロアでまとめ</span>
+        </div>
+      </section>
+
+      <section style="padding: 12px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0">
+        <h2 style="margin: 0; font-size: 14px; display: flex; justify-content: space-between">高橋<span style="font-weight: 400; color: #5B6468">本日 12pt</span></h2>
+        <div style="height: 6px; border-radius: 3px; background: #EFECE6; overflow: hidden"><div style="width: 60%; height: 100%; background: #7FB5AF"></div></div>
+        <div style="padding: 10px 12px; border: 1px solid #E2DED6; border-radius: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 13px">
+          <div style="display: flex; justify-content: space-between"><strong>1411</strong><span style="padding: 1px 6px; border-radius: 5px; background: #E3EEEC; color: #1F5C5A; font-size: 11px">軽</span></div>
+          <span>ミネラルウォーター × 2 ・ 未着手</span><span style="font-size: 11px; color: #5B6468">電話（フロント 山本）</span>
+        </div>
+      </section>
+
+      <section style="padding: 12px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0">
+        <h2 style="margin: 0; font-size: 14px; display: flex; justify-content: space-between">伊藤<span style="font-weight: 400; color: #5B6468">本日 13pt</span></h2>
+        <div style="height: 6px; border-radius: 3px; background: #EFECE6; overflow: hidden"><div style="width: 65%; height: 100%; background: #7FB5AF"></div></div>
+        <div style="padding: 10px 12px; border: 1px solid #E2DED6; border-radius: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 13px">
+          <div style="display: flex; justify-content: space-between"><strong>1502</strong><span style="padding: 1px 6px; border-radius: 5px; background: #D5E3F0; color: #1F4E79; font-size: 11px">中</span></div>
+          <span>毛布 × 1 ・ 対応中</span><span style="font-size: 11px; color: #5B6468">フロント来訪</span>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>スタッフ（PC）｜施設・営業情報の編集</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600&amp;family=Zen+Kaku+Gothic+New:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Zen Kaku Gothic New",sans-serif;background:#F5F3EE;color:#1D2528}
+a{color:#1F5C5A}a:hover{color:#153F3E}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #F5F3EE; font-family: 'Zen Kaku Gothic New', sans-serif; color: #1D2528; overflow: hidden">
+
+  <nav aria-label="管理メニュー" style="width: 230px; flex-shrink: 0; box-sizing: border-box; padding: 24px 16px; background: #1D2528; color: #F5F3EE; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-family: 'Shippori Mincho B1', serif; font-size: 18px; font-weight: 600; padding: 0 10px 20px">[ホテル名]<span style="display: block; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 400; color: #AEB6B9; margin-top: 4px">管理</span></div>
+    <a href="StaffAdmin.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">ホーム</a>
+    <a href="OrderBoard.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">オーダー</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; background: #2F3B3F; color: #FFFFFF; text-decoration: none; font-size: 14px; font-weight: 700">施設・営業情報</a>
+    <a href="ItemMaster.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">品目・担当設定</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">館内案内・マニュアル</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">未回答の質問</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">引き継ぎ・クレーム履歴</a>
+  </nav>
+
+  <aside aria-label="施設" style="width: 200px; flex-shrink: 0; box-sizing: border-box; padding: 24px 12px; background: #FFFFFF; border-right: 1px solid #E2DED6; display: flex; flex-direction: column; gap: 4px">
+    <a href="#" style="display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 0 10px; border-radius: 8px; color: #1D2528; text-decoration: none; font-size: 14px; font-weight: 700">全体<span style="font-size: 11px; font-weight: 400; color: #9A5B0B">特記 1</span></a>
+    <div style="height: 1px; background: #E2DED6; margin: 6px 4px"></div>
+    <div style="font-size: 12px; color: #5B6468; padding: 0 10px 8px">施設</div>
+    <a href="#" style="display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 0 10px; border-radius: 8px; background: #E3EEEC; color: #1F5C5A; text-decoration: none; font-size: 14px; font-weight: 700">レストラン<span style="width: 8px; height: 8px; border-radius: 4px; background: #D98A2B" aria-label="要確認あり"></span></a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 10px; border-radius: 8px; color: #1D2528; text-decoration: none; font-size: 14px">朝食会場</a>
+    <a href="#" style="display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 0 10px; border-radius: 8px; color: #1D2528; text-decoration: none; font-size: 14px">屋外プール<span style="font-size: 11px; color: #9A5B0B">特記 1</span></a>
+    <a href="#" style="display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 0 10px; border-radius: 8px; color: #1D2528; text-decoration: none; font-size: 14px">大浴場<span style="font-size: 11px; color: #9A5B0B">特記 1</span></a>
+    <a href="#" style="display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 0 10px; border-radius: 8px; color: #1D2528; text-decoration: none; font-size: 14px">スパ<span style="width: 8px; height: 8px; border-radius: 4px; background: #D98A2B" aria-label="要確認あり"></span></a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 10px; border-radius: 8px; color: #1D2528; text-decoration: none; font-size: 14px">アクティビティ</a>
+    <button type="button" style="margin-top: 8px; min-height: 44px; border: 1px dashed #BDB6AA; background: transparent; border-radius: 8px; font: inherit; font-size: 13px; color: #5B6468">＋ 施設を追加</button>
+  </aside>
+
+  <main style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 16px; min-width: 0">
+    <div style="display: flex; align-items: flex-end; justify-content: space-between">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <div style="font-size: 12px; color: #5B6468">施設・営業情報 ／ 最終更新 9/24 田中</div>
+        <h1 style="margin: 0; font-size: 22px; font-weight: 700">レストラン</h1>
+      </div>
+      <div style="display: flex; gap: 8px">
+        <button type="button" style="display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 1px solid #D8D3CA; background: #FFFFFF; color: #1D2528; border-radius: 8px; font: inherit; font-size: 14px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><path d="M14 3v6h6"></path><path d="M12 18v-6"></path><path d="M9 15l3-3 3 3"></path></svg>
+          PDF・画像から読み込む
+        </button>
+        <button type="button" style="min-height: 44px; padding: 0 22px; border: none; background: #1F5C5A; color: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 700">保存</button>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #F7ECDC; border: 1px solid #E6C99E; border-radius: 10px; font-size: 13px; line-height: 1.6">
+      <span style="padding: 2px 8px; border-radius: 6px; background: #9A5B0B; color: #FFFFFF; font-size: 12px; font-weight: 700">下書き</span>
+      <span>「冬季営業のお知らせ.pdf」から読み込んだ内容を入力しました。内容を確認・修正して保存してください。</span>
+    </div>
+
+    <section style="background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; overflow: hidden">
+      <h2 style="margin: 0; padding: 14px 16px 10px; font-size: 15px">営業時間</h2>
+      <div style="display: grid; grid-template-columns: 1.6fr 1.3fr 1.5fr 1.3fr; gap: 12px; padding: 10px 16px; background: #EFECE6; font-size: 12px; font-weight: 700; color: #5B6468">
+        <span>適用期間</span><span>ランチ</span><span>ディナー</span><span>メモ</span>
+      </div>
+      <div style="display: grid; grid-template-columns: 1.6fr 1.3fr 1.5fr 1.3fr; gap: 12px; align-items: center; padding: 10px 16px; border-top: 1px solid #E2DED6">
+        <input aria-label="適用期間" value="4/1 〜 7/14（通常期）" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 6px; font: inherit; font-size: 14px; color: #1D2528">
+        <input aria-label="ランチ" value="11:30〜14:00" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 6px; font: inherit; font-size: 14px; color: #1D2528">
+        <input aria-label="ディナー" value="17:30〜21:30" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 6px; font: inherit; font-size: 14px; color: #1D2528">
+        <input aria-label="メモ" value="" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 6px; font: inherit; font-size: 14px; color: #1D2528">
+      </div>
+      <div style="display: grid; grid-template-columns: 1.6fr 1.3fr 1.5fr 1.3fr; gap: 12px; align-items: center; padding: 10px 16px; border-top: 1px solid #E2DED6">
+        <input aria-label="適用期間" value="7/15 〜 10/14（夏季）" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 6px; font: inherit; font-size: 14px; color: #1D2528">
+        <input aria-label="ランチ" value="11:30〜14:30" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 6px; font: inherit; font-size: 14px; color: #1D2528">
+        <input aria-label="ディナー" value="17:30〜21:30" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 6px; font: inherit; font-size: 14px; color: #1D2528">
+        <input aria-label="メモ" value="テラス席あり" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 6px; font: inherit; font-size: 14px; color: #1D2528">
+      </div>
+      <div style="display: grid; grid-template-columns: 1.6fr 1.3fr 1.5fr 1.3fr; gap: 12px; align-items: center; padding: 10px 16px; border-top: 1px solid #E2DED6; background: #FBF5EC">
+        <input aria-label="適用期間（下書き）" value="10/15 〜 3/31（冬季）" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #E6C99E; border-radius: 6px; font: inherit; font-size: 14px; background: #FFFFFF; color: #1D2528">
+        <input aria-label="ランチ（下書き）" value="休業" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #E6C99E; border-radius: 6px; font: inherit; font-size: 14px; background: #FFFFFF; color: #1D2528">
+        <input aria-label="ディナー（下書き）" value="17:30〜21:00（L.O. 20:30）" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #E6C99E; border-radius: 6px; font: inherit; font-size: 14px; background: #FFFFFF; color: #1D2528">
+        <input aria-label="メモ（下書き）" value="" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #E6C99E; border-radius: 6px; font: inherit; font-size: 14px; background: #FFFFFF; color: #1D2528">
+      </div>
+      <button type="button" style="margin: 10px 16px 14px; min-height: 40px; padding: 0 14px; border: 1px dashed #BDB6AA; background: transparent; border-radius: 8px; font: inherit; font-size: 13px; color: #5B6468">＋ 期間を追加</button>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; overflow: hidden">
+      <h2 style="margin: 0; padding: 14px 16px 10px; font-size: 15px">メニュー・プラン</h2>
+      <div style="display: grid; grid-template-columns: 1.6fr 2fr 1.2fr; gap: 12px; padding: 10px 16px; background: #EFECE6; font-size: 12px; font-weight: 700; color: #5B6468">
+        <span>名称</span><span>適用期間</span><span>料金</span>
+      </div>
+      <div style="display: grid; grid-template-columns: 1.6fr 2fr 1.2fr; gap: 12px; align-items: center; padding: 10px 16px; border-top: 1px solid #E2DED6; font-size: 14px">
+        <span>秋の特別ディナー</span>
+        <span style="display: flex; align-items: center; gap: 8px">9/1 〜 10/20<span style="padding: 2px 8px; border-radius: 6px; background: #F8E4E1; color: #A3261D; font-size: 12px; font-weight: 700">冬の鍋会席と期間が重複</span></span>
+        <span>[料金]</span>
+      </div>
+      <div style="display: grid; grid-template-columns: 1.6fr 2fr 1.2fr; gap: 12px; align-items: center; padding: 10px 16px; border-top: 1px solid #E2DED6; font-size: 14px; background: #FBF5EC">
+        <span style="display: flex; align-items: center; gap: 8px">冬の鍋会席<span style="padding: 2px 8px; border-radius: 6px; background: #9A5B0B; color: #FFFFFF; font-size: 11px; font-weight: 700">下書き</span></span>
+        <span>10/15 〜 3/31</span>
+        <span>[料金]</span>
+      </div>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; overflow: hidden">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 16px">
+        <h2 style="margin: 0; font-size: 15px">特記事項<span style="margin-left: 10px; font-size: 12px; font-weight: 400; color: #5B6468">期間中は上の営業情報より優先して案内</span></h2>
+        <button type="button" style="min-height: 36px; padding: 0 12px; border: 1px dashed #BDB6AA; background: transparent; border-radius: 8px; font: inherit; font-size: 13px; color: #5B6468">＋ 追加</button>
+      </div>
+      <div style="display: grid; grid-template-columns: 1.6fr 2.6fr 1.4fr; gap: 12px; align-items: center; padding: 10px 16px; border-top: 1px solid #E2DED6; font-size: 14px; background: #F7ECDC">
+        <span style="font-weight: 700">9/27（土）17:00〜</span>
+        <span>貸切のためディナー営業休止</span>
+        <span style="font-size: 12px; color: #5B6468">田中 ・ 期限で自動消去</span>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

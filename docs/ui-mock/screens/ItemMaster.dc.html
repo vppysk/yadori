@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>スタッフ（PC）｜品目・担当設定</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600&amp;family=Zen+Kaku+Gothic+New:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Zen Kaku Gothic New",sans-serif;background:#F5F3EE;color:#1D2528}
+a{color:#1F5C5A}a:hover{color:#153F3E}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #F5F3EE; font-family: 'Zen Kaku Gothic New', sans-serif; color: #1D2528; overflow: hidden">
+
+  <nav aria-label="管理メニュー" style="width: 230px; flex-shrink: 0; box-sizing: border-box; padding: 24px 16px; background: #1D2528; color: #F5F3EE; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-family: 'Shippori Mincho B1', serif; font-size: 18px; font-weight: 600; padding: 0 10px 20px">[ホテル名]<span style="display: block; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 400; color: #AEB6B9; margin-top: 4px">管理</span></div>
+    <a href="StaffAdmin.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">ホーム</a>
+    <a href="OrderBoard.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">オーダー</a>
+    <a href="Knowledge.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">施設・営業情報</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; background: #2F3B3F; color: #FFFFFF; text-decoration: none; font-size: 14px; font-weight: 700">品目・担当設定</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">館内案内・マニュアル</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">未回答の質問</a>
+    <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #E4E1DA; text-decoration: none; font-size: 14px">引き継ぎ・クレーム履歴</a>
+  </nav>
+
+  <main style="flex-grow: 1; box-sizing: border-box; padding: 22px 26px; display: flex; gap: 18px; min-width: 0">
+    <section style="flex-grow: 1; display: flex; flex-direction: column; gap: 14px; min-width: 0">
+      <div style="display: flex; align-items: center; justify-content: space-between">
+        <h1 style="margin: 0; font-size: 22px; font-weight: 700">品目</h1>
+        <div style="display: flex; gap: 8px">
+          <button type="button" style="min-height: 44px; padding: 0 14px; border: 1px dashed #BDB6AA; background: transparent; border-radius: 8px; font: inherit; font-size: 13px; color: #5B6468">＋ 品目を追加</button>
+          <button type="button" style="min-height: 44px; padding: 0 20px; border: none; background: #1F5C5A; color: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 700">保存</button>
+        </div>
+      </div>
+
+      <div style="background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; overflow: hidden">
+        <div style="display: grid; grid-template-columns: 1.5fr 1.3fr 1.5fr 0.8fr 1.1fr; gap: 10px; padding: 10px 14px; background: #EFECE6; font-size: 12px; font-weight: 700; color: #5B6468">
+          <span>品目</span><span>担当の役割</span><span>重み</span><span>期限</span><span>実測の平均</span>
+        </div>
+        <sc-for list="{{items}}" as="it" hint-placeholder-count="6">
+          <div style="{{it.rowStyle}}">
+            <span style="font-weight: 500">{{it.name}}</span>
+            <span>{{it.role}}</span>
+            <div role="radiogroup" aria-label="{{it.name}} の重み" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px">
+              <sc-for list="{{it.levels}}" as="lv" hint-placeholder-count="3">
+                <button type="button" role="radio" aria-checked="{{lv.on}}" onClick="{{lv.pick}}" style="{{lv.style}}">{{lv.label}}</button>
+              </sc-for>
+            </div>
+            <span>{{it.limit}}</span>
+            <span style="{{it.actualStyle}}">{{it.actual}}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="padding: 12px 14px; background: #F7ECDC; border: 1px solid #E6C99E; border-radius: 10px; font-size: 13px; line-height: 1.6">
+        <strong style="color: #9A5B0B">見直しの提案：</strong>空気清浄機は実測の平均が「重」の品目と同程度です。「重」に変更すると割り当てがより均等になります。
+      </div>
+    </section>
+
+    <aside aria-label="割り当ての設定" style="width: 300px; flex-shrink: 0; padding: 18px; background: #FFFFFF; border: 1px solid #E2DED6; border-radius: 12px; display: flex; flex-direction: column; gap: 14px">
+      <h2 style="margin: 0; font-size: 16px">割り当ての設定</h2>
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px">
+        <span style="color: #5B6468">重みのポイント</span>
+        <div style="display: flex; justify-content: space-between"><span>軽</span><strong>1pt</strong></div>
+        <div style="display: flex; justify-content: space-between"><span>中</span><strong>2pt</strong></div>
+        <div style="display: flex; justify-content: space-between"><span>重</span><strong>3pt</strong></div>
+      </div>
+      <div style="height: 1px; background: #E2DED6"></div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <label for="im-wait" style="font-size: 13px; color: #5B6468">未着手のまま次の人へ回すまで</label>
+        <select id="im-wait" style="min-height: 44px; padding: 0 10px; border: 1px solid #D8D3CA; border-radius: 8px; background: #FFFFFF; font: inherit; font-size: 14px; color: #1D2528"><option>5分</option><option>10分</option><option>15分</option></select>
+      </div>
+      <label style="display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 13px"><input type="checkbox" checked style="width: 20px; height: 20px; accent-color: #1F5C5A">同じフロアの近い時間の依頼はまとめる</label>
+      <label style="display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 13px"><input type="checkbox" checked style="width: 20px; height: 20px; accent-color: #1F5C5A">「対応できない」は理由の入力を必須にする</label>
+      <div style="height: 1px; background: #E2DED6"></div>
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px">
+        <span style="color: #5B6468">担当の枠（役割 × エリア）</span>
+        <div style="display: flex; justify-content: space-between"><span>ハウスキーピング 12〜15F</span><span>3名</span></div>
+        <div style="display: flex; justify-content: space-between"><span>ハウスキーピング 7〜11F</span><span>2名</span></div>
+        <div style="display: flex; justify-content: space-between"><span>ルームサービス（全館）</span><span>2名</span></div>
+        <a href="#" style="font-weight: 700; margin-top: 4px">枠を編集</a>
+      </div>
+    </aside>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { w: { towel: 1, amenity: 1, pillow: 2, purifier: 2, humid: 3, baby: 3, water: 1 } };
+  }
+  renderVals() {
+    const data = [
+      { id: 'towel', name: 'タオル類', role: 'ハウスキーピング', limit: '30分', actual: '6分' },
+      { id: 'amenity', name: 'アメニティ', role: 'ハウスキーピング', limit: '30分', actual: '5分' },
+      { id: 'pillow', name: '枕・毛布', role: 'ハウスキーピング', limit: '30分', actual: '11分' },
+      { id: 'purifier', name: '空気清浄機', role: 'ハウスキーピング', limit: '45分', actual: '17分', flag: true },
+      { id: 'humid', name: '加湿器', role: 'ハウスキーピング', limit: '45分', actual: '18分' },
+      { id: 'baby', name: 'ベビーベッド', role: 'ハウスキーピング', limit: '60分', actual: '26分' },
+      { id: 'water', name: 'ミネラルウォーター', role: 'ルームサービス', limit: '20分', actual: '7分' }
+    ];
+    const names = ['軽', '中', '重'];
+    const colors = ['background: #E3EEEC; color: #1F5C5A; border: 1px solid #1F5C5A;', 'background: #D5E3F0; color: #1F4E79; border: 1px solid #1F4E79;', 'background: #1F4E79; color: #FFFFFF; border: 1px solid #1F4E79;'];
+    const w = this.state.w;
+    const items = data.map((d) => ({
+      ...d,
+      rowStyle: 'display: grid; grid-template-columns: 1.5fr 1.3fr 1.5fr 0.8fr 1.1fr; gap: 10px; align-items: center; padding: 8px 14px; border-top: 1px solid #E2DED6; font-size: 14px;' + (d.flag && w[d.id] !== 3 ? ' background: #FBF5EC;' : ''),
+      actualStyle: d.flag && w[d.id] !== 3 ? 'font-weight: 700; color: #9A5B0B' : 'color: #5B6468',
+      levels: names.map((label, i) => ({
+        label,
+        on: w[d.id] === i + 1 ? 'true' : 'false',
+        pick: () => this.setState({ w: { ...w, [d.id]: i + 1 } }),
+        style: 'min-height: 36px; border-radius: 6px; font: inherit; font-size: 13px; font-weight: 700; ' + (w[d.id] === i + 1 ? colors[i] : 'background: #FFFFFF; color: #5B6468; border: 1px solid #D8D3CA;')
+      }))
+    }));
+    return { items };
+  }
+}
+</script>
+</body>
+</html>
