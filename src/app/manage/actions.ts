@@ -7,7 +7,9 @@ import { decideWrite, saveIntegration, type FieldRuleRow } from "@/server/integr
 import { saveMasters, type Masters } from "@/server/masters";
 import { grantPermission, revokeGrant, saveGroup, setMemberGroup } from "@/server/members";
 import { savePolicy, type PolicyInput } from "@/server/policy";
-import { replay, type ReplayRequest, type ReplayResult } from "@/server/replay";
+import type { InstructionOverrides } from "@/server/guest-chat";
+import type { Pattern } from "@/server/hotel";
+import { replay, tryInstructions, type InstructionTrial, type ReplayRequest, type ReplayResult } from "@/server/replay";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -121,4 +123,16 @@ export async function saveGroupAction(groupId: string | null, input: { name: str
     await audit(member, "settings.members", groupId ? "group.save" : "group.create", groupId ? { type: "group", id: groupId } : undefined, { name: input.name });
     refresh();
   });
+}
+
+export async function tryInstructionsAction(pattern: Pattern, draft: InstructionOverrides): Promise<{ ok: true; trial: InstructionTrial } | { ok: false; error: string }> {
+  try {
+    const member = await authorize("settings.ai_policy");
+    const trial = await tryInstructions(member.hotel_id, pattern, draft);
+    await audit(member, "settings.ai_policy", "ai_policy.try", undefined, { pattern });
+    return { ok: true, trial };
+  } catch (error) {
+    console.error("[tryInstructionsAction]", error);
+    return { ok: false, error: error instanceof Error ? error.message : "試せませんでした" };
+  }
 }

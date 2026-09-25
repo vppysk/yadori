@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import type { Pattern } from "@/server/hotel";
 import type { GuardrailRow, Policy } from "@/server/policy";
-import { savePolicyAction } from "../actions";
+import type { InstructionTrial } from "@/server/replay";
+import { savePolicyAction, tryInstructionsAction } from "../actions";
 
 const PATTERN_TABS: { key: Pattern; label: string }[] = [
   { key: "info", label: "案内" },
@@ -25,6 +26,8 @@ export function PolicyEditor({ policy }: { policy: Policy }) {
   const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
+  const [trial, setTrial] = useState<InstructionTrial | null>(null);
+  const [trying, setTrying] = useState(false);
   const touch = () => {
     setDirty(true);
     setMessage(null);
@@ -58,6 +61,21 @@ export function PolicyEditor({ policy }: { policy: Policy }) {
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex items-center justify-end gap-3">
         {message && <span className={`text-sm ${message.kind === "ok" ? "text-primary" : "text-danger"}`}>{message.text}</span>}
+        <button
+          type="button"
+          disabled={trying}
+          onClick={async () => {
+            setTrying(true);
+            setMessage(null);
+            const r = await tryInstructionsAction(tab, { common, patterns });
+            setTrying(false);
+            if (r.ok) setTrial(r.trial);
+            else setMessage({ kind: "error", text: r.error });
+          }}
+          className="min-h-11 rounded-[10px] border border-line-input bg-surface px-4 text-sm font-bold disabled:opacity-40"
+        >
+          {trying ? "試しています…" : `過去の会話で試す（${PATTERN_TABS.find((t) => t.key === tab)?.label}）`}
+        </button>
         <button type="button" disabled={!dirty || pending} onClick={save} className="min-h-11 rounded-[10px] bg-primary px-5 text-sm font-bold text-white disabled:opacity-40">
           保存して適用
         </button>
@@ -102,6 +120,33 @@ export function PolicyEditor({ policy }: { policy: Policy }) {
               onChange={(e) => (setPatterns((prev) => ({ ...prev, [tab]: e.target.value })), touch())}
               className="w-full flex-1 rounded-[10px] border border-line-input px-3.5 py-3 text-sm leading-relaxed outline-none focus:border-primary"
             />
+            {trial && (
+              <div className="flex flex-col gap-2 rounded-[10px] bg-canvas px-3.5 py-3 text-[13px]">
+                <div>
+                  <strong>
+                    過去の会話で試した結果（{PATTERN_TABS.find((t) => t.key === trial.pattern)?.label} {trial.cases.length}件
+                    {trial.source === "sample_questions" ? "・サンプル質問" : ""}）
+                  </strong>
+                  <span className="ml-2 text-ink-sub">
+                    指示に沿った応答 {trial.followsCount}件 ・ 決まりに反した応答 {trial.violationCount}件
+                  </span>
+                </div>
+                {trial.cases.map((c) => (
+                  <details key={c.question} className="rounded-lg bg-surface px-3 py-2">
+                    <summary className="cursor-pointer">
+                      <span className={c.follows ? "text-primary" : "text-danger"}>{c.follows ? "沿っている" : "沿っていない"}</span>
+                      {c.violation && <span className="ml-2 text-danger">決まり「{c.violation}」に反する</span>}
+                      <span className="ml-2">{c.question}</span>
+                    </summary>
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      <p className="leading-relaxed"><span className="block text-[11px] text-ink-sub">いまの指示</span>{c.before}</p>
+                      <p className="leading-relaxed"><span className="block text-[11px] text-ink-sub">変更後の指示</span>{c.after}</p>
+                    </div>
+                    <p className="mt-1 text-[11px] text-ink-sub">判定の理由: {c.reason}</p>
+                  </details>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 

@@ -24,6 +24,7 @@ export const ISO_TIMESTAMP = (column: string) => `to_char(${column} at time zone
 const PATTERN_PRIORITY: Pattern[] = ["complaint", "reservation", "external", "info", "order"];
 
 export type { Citation };
+export type InstructionOverrides = { common: string; patterns: Partial<Record<Pattern, string>> };
 
 export type GuestChatMessage = {
   id: string;
@@ -235,6 +236,8 @@ export async function draftAnswer(params: {
   hasComplaint: boolean;
   tier: ModelTier;
   thinking: boolean;
+  // 保存前の指示で試すとき（「過去の会話で試す」）に、DBの指示の代わりに使う
+  instructionOverrides?: InstructionOverrides;
 }): Promise<{ answer: Answer | undefined; facilities: FacilityInfo[] }> {
   const { hotel, guest, text, history, routed, tier, thinking } = params;
   const intents = routed.intents;
@@ -248,6 +251,7 @@ export async function draftAnswer(params: {
 
   const instructions = await buildInstructions({
     hotel, guest, intents, tickets: params.tickets, unsupportedItems: params.unsupportedItems, hasComplaint: params.hasComplaint,
+    overrides: params.instructionOverrides,
   });
   const requestContext = new RequestContext<ConciergeContext>();
   requestContext.set("tier", tier);
@@ -283,14 +287,20 @@ async function buildInstructions(params: {
   tickets: CreatedTicket[];
   unsupportedItems: string[];
   hasComplaint: boolean;
+  overrides?: InstructionOverrides;
 }): Promise<string> {
-  const { hotel, guest, intents, tickets, unsupportedItems, hasComplaint } = params;
+  const { hotel, guest, intents, tickets, unsupportedItems, hasComplaint, overrides } = params;
   const patterns = [...new Set(intents.map((i) => i.pattern))];
   const [instructions, guardrails, readRule] = await Promise.all([
-    query<{ scope: string; body: string }>(
-      "select scope, body from ai_instructions where hotel_id = $1 and (scope = 'common' or (scope = 'pattern' and pattern = any ($2))) order by scope",
-      [hotel.id, patterns],
-    ),
+    overrides
+      ? Promise.resolve([
+          { scope: "common", body: overrides.common },
+          ...patterns.map((p) => ({ scope: "pattern", body: overrides.patterns[p] ?? "" })),
+        ].filter((i) => i.body.trim()))
+      : query<{ scope: string; body: string }>(
+          "select scope, body from ai_instructions where hotel_id = $1 and (scope = 'common' or (scope = 'pattern' and pattern = any ($2))) order by scope",
+          [hotel.id, patterns],
+        ),
     query<{ kind: string; body: string }>(
       "select kind, body from guardrails where hotel_id = $1 and enabled and kind in ('forbidden', 'confirm_before') order by kind, sort",
       [hotel.id],
