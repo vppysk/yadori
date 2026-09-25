@@ -14,7 +14,9 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "dev:shifts": "tsx --env-file=.env.local scripts/dev-start-shifts.ts",
-    "try:guest": "tsx --env-file=.env.local scripts/try-guest-chat.ts"
+    "try:guest": "tsx --env-file=.env.local scripts/try-guest-chat.ts",
+    "dev:cron": "tsx --env-file=.env.local scripts/dev-cron.ts",
+    "dev:reset-activity": "tsx --env-file=.env.local scripts/dev-reset-activity.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.55",

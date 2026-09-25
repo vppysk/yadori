@@ -86,6 +86,15 @@ export async function createTickets(client: PoolClient, params: CreateParams): P
         [assignee.id, `${roomNumber}号室のオーダー`, entries.map((e) => `${e.line.label || e.item.name} × ${e.line.quantity}`).join("・"), ticketId],
       );
     }
+    if (!assignee) {
+      // 枠に出勤者がいない。上長（付け替えの権限を持つ人）に知らせて手動で割り当ててもらう
+      await client.query(
+        `insert into notifications (member_id, kind, title, body, ref_type, ref_id)
+         select m.id, 'ticket_supervisor', $2, $3, 'ticket', $4
+         from members m where m.hotel_id = $1 and m.kind = 'human' and m.active and has_permission(m.id, 'order.reassign')`,
+        [hotel.id, `${roomNumber}号室のオーダーに担当者がいません`, entries.map((e) => `${e.line.label || e.item.name} × ${e.line.quantity}`).join("・"), ticketId],
+      );
+    }
     created.push({
       id: ticketId,
       lines: entries.map((e) => ({ item: e.line.label || e.item.name, quantity: e.line.quantity, note: e.line.note })),
@@ -96,7 +105,7 @@ export async function createTickets(client: PoolClient, params: CreateParams): P
   return created;
 }
 
-async function roomFloor(client: PoolClient, hotelId: string, roomNumber: string): Promise<number | null> {
+export async function roomFloor(client: PoolClient, hotelId: string, roomNumber: string): Promise<number | null> {
   const { rows } = await client.query<{ floor: number }>("select floor from rooms where hotel_id = $1 and room_number = $2", [hotelId, roomNumber]);
   if (rows[0]) return rows[0].floor;
   // 部屋マスタにない場合は部屋番号の下2桁より上をフロアとみなす
@@ -119,7 +128,7 @@ async function findSlot(client: PoolClient, hotelId: string, jobRoleId: string, 
 
 // plan 4.2: 同じフロアの直近の未着手チケットを持つ人にまとめる。なければ「本日の累計pt＋未完了pt」が最小の人、
 // 同点なら最後の割り当てから時間が空いている人
-async function pickAssignee(client: PoolClient, hotel: Hotel, slotId: string, floor: number | null) {
+export async function pickAssignee(client: PoolClient, hotel: Hotel, slotId: string, floor: number | null, excludeIds: string[] = []) {
   const workDate = localNow(hotel.timezone).date;
   const { rows } = await client.query<{ id: string; name: string; load: number; bundle: boolean }>(
     `select m.id, m.display_name name, l.done_points + l.open_points load,
@@ -130,9 +139,10 @@ async function pickAssignee(client: PoolClient, hotel: Hotel, slotId: string, fl
        ) bundle
      from member_daily_load l join members m on m.id = l.member_id
      where l.slot_id = $1 and l.work_date = $2 and m.active and has_permission(m.id, 'order.assignable', $1)
+       and not (m.id = any ($5::uuid[]))
      order by bundle desc, load, l.last_assigned_at nulls first
      limit 1`,
-    [slotId, workDate, floor, BUNDLE_WINDOW_MINUTES],
+    [slotId, workDate, floor, BUNDLE_WINDOW_MINUTES, excludeIds],
   );
   const picked = rows[0];
   if (!picked) return undefined;
