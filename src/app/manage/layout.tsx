@@ -14,6 +14,7 @@ export default async function ManageLayout({ children }: LayoutProps<"/manage">)
     { href: "/manage/integrations", label: "外部連携", allowed: keys.has("settings.integrations") },
     { href: "/manage/history", label: "変更履歴", allowed: keys.has("settings.ai_assignment") || keys.has("settings.ai_policy") },
     { href: "/manage/masters", label: "マスタ", allowed: keys.has("settings.masters") },
+    { href: "/manage/members", label: "メンバーと権限", allowed: keys.has("settings.members") },
   ].filter((t) => t.allowed);
   if (tabs.length === 0) {
     return <main className="p-8 text-sm text-ink-sub">この画面の権限がありません（AIの担当範囲・指示とガードレール・外部連携のいずれか）</main>;

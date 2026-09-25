@@ -1,10 +1,11 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { audit, authorize, PermissionError } from "@/server/auth";
+import { audit, authorize, can, PermissionError } from "@/server/auth";
 import { applyAssignments, type Handler } from "@/server/dashboard";
 import { decideWrite, saveIntegration, type FieldRuleRow } from "@/server/integrations-admin";
 import { saveMasters, type Masters } from "@/server/masters";
+import { grantPermission, revokeGrant, saveGroup, setMemberGroup } from "@/server/members";
 import { savePolicy, type PolicyInput } from "@/server/policy";
 import { replay, type ReplayRequest, type ReplayResult } from "@/server/replay";
 
@@ -76,6 +77,48 @@ export async function saveMastersAction(input: Omit<Masters, "jobTitles" | "actu
     const member = await authorize("settings.masters");
     await saveMasters(member, input);
     await audit(member, "settings.masters", "masters.save");
+    refresh();
+  });
+}
+
+export async function setMemberGroupAction(memberId: string, groupId: string, on: boolean): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.members");
+    await setMemberGroup(member, memberId, groupId, on);
+    // 自分の管理権限を外してしまった場合は元に戻す
+    if (!(await can(member.id, "settings.members"))) {
+      await setMemberGroup(member, memberId, groupId, !on);
+      throw new Error("自分の「メンバーと権限の管理」がなくなるため変更できません");
+    }
+    await audit(member, "settings.members", on ? "member.group.add" : "member.group.remove", { type: "member", id: memberId }, { groupId });
+    refresh();
+  });
+}
+
+export async function grantPermissionAction(input: { memberId: string; permissionKey: string; scopeIds: string[] | null; expiresAt: string | null }): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.members");
+    await grantPermission(member, input);
+    await audit(member, "settings.members", "member.permission.grant", { type: "member", id: input.memberId }, input);
+    refresh();
+  });
+}
+
+export async function revokeGrantAction(grantId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.members");
+    await revokeGrant(member, grantId);
+    await audit(member, "settings.members", "member.permission.revoke", undefined, { grantId });
+    refresh();
+  });
+}
+
+export async function saveGroupAction(groupId: string | null, input: { name: string; permissions: { key: string; scope_ids: string[] | null }[] }): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.members");
+    if (!input.name.trim()) throw new Error("グループ名を入力してください");
+    await saveGroup(member, groupId, input);
+    await audit(member, "settings.members", groupId ? "group.save" : "group.create", groupId ? { type: "group", id: groupId } : undefined, { name: input.name });
     refresh();
   });
 }
