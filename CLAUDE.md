@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 現状
 
 ホテル運営AIエージェント（Nebius x NVIDIA Global AI Hackathon 応募作品、締切 2026-10-30 10:00 PDT）。
-W1の初期構築（Next.js＋Mastra＋LLM層）のみ。業務機能・DBスキーマは未実装。
+W1の初期構築（Next.js＋Mastra＋LLM層）とDBスキーマまで。業務機能は未実装。
 
 ## コマンド
 
@@ -22,6 +22,15 @@ W1の初期構築（Next.js＋Mastra＋LLM層）のみ。業務機能・DBスキ
 - `src/lib/llm/structured.ts`: 構造化出力は `generateStructured`（強制ツール呼び出し＋Zod検証＋再試行）を使う。Token Factoryの`json_schema`はNemotronでスキーマを保証しないため、MastraやAI SDKの`output`／`structuredOutput`は使わない
 - `src/mastra/`: Mastraのエージェント・ツール。`src/app/api/mastra/[...mastra]/route.ts` でMastraのHTTP APIを `/api/mastra/*` に公開（`prefix` とフォルダ位置を一致させる）
 - `scripts/verify-llm.ts`: LLM層の確認スクリプト。`registerMockToolFixture` でモック時の強制ツール呼び出しの戻り値を登録する
+- `supabase/migrations/`: DBスキーマ（SQLが正）。設計の理由は `docs/001_db_schema.md`。`supabase/seed.sql` はデモ用データ
+
+## DBの注意
+
+- DBへはサーバー側からのみ接続する。全テーブルRLS有効・ポリシーなしで、ブラウザからの直接アクセスは拒否。ビューを追加するときは `with (security_invoker = true)` を付ける
+- 権限はRLSではなく `has_permission(member_id, key, target_id)` でアプリ側で判定する（人・AI・外部システム共通）
+- 有効期間は `daterange` で持ち、`valid @> 滞在日` で引く。期間の重なりは禁止せず `facility_period_overlaps` で警告する
+- 予約・客室管理のデータは `mock_pms` スキーマ（既存システムの代わり）。アプリから直接読まず、モックMCP経由で触る
+- 時給・対応時間のデモ値は本人が入力する。シードに勝手に入れない
 
 ## LLM（Nemotron）の注意
 
