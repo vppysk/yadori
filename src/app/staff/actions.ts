@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { audit, authorize, getCurrentMember, MEMBER_COOKIE } from "@/server/auth";
+import { askAi } from "@/server/staff-ask";
 import {
   acceptHandoff,
   closeHandoff,
@@ -87,4 +88,18 @@ export async function markNotificationsReadAction() {
 export async function logoutAction() {
   (await cookies()).delete(MEMBER_COOKIE);
   redirect("/staff/login");
+}
+
+export async function askAiAction(text: string): Promise<{ ok: boolean; error?: string }> {
+  const member = await authorize("handling.consult");
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: false, error: "質問を入力してください" };
+  try {
+    await askAi(member, trimmed.slice(0, 1000));
+    refresh();
+    return { ok: true };
+  } catch (error) {
+    console.error("[askAiAction]", error);
+    return { ok: false, error: "いま答えられません。時間をおいてお試しください。" };
+  }
 }

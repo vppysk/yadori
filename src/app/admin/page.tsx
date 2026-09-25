@@ -29,7 +29,7 @@ export default async function AdminHome() {
   return (
     <main className="flex flex-1 flex-col gap-4.5 px-7.5 py-6.5">
       <h1 className="text-[22px] font-bold">今日の要対応</h1>
-      <div className="grid flex-1 grid-cols-1 gap-4.5 xl:grid-cols-2">
+      <div className="grid flex-1 grid-cols-1 gap-4.5 lg:grid-cols-2">
         {keys.has("knowledge.question.answer") && (
           <section id="questions" className="flex flex-col gap-3 rounded-[14px] border border-line bg-surface p-5">
             <h2 className="flex justify-between text-base font-bold">

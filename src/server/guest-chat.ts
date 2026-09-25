@@ -2,12 +2,12 @@ import { RequestContext } from "@mastra/core/request-context";
 import type { ModelMessage } from "ai";
 import { modelIdFor, type ModelTier } from "@/lib/llm/models";
 import type { LlmUsage } from "@/lib/llm/structured";
-import { mastra } from "@/mastra";
-import type { ConciergeContext } from "@/mastra/agents/concierge";
+import { generateAnswer, type Answer, type ConciergeContext } from "@/mastra/agents/concierge";
 import { query, queryOne, transaction } from "./db";
 import { getGuestContext, type GuestContext } from "./guest-context";
 import { createHandoff } from "./handoffs";
 import { currentTimeBand, getAiAgentMemberId, getAssignment, getHotel, localNow, type Hotel, type Pattern } from "./hotel";
+import { fmtDate, noticeCitations, renderFacilities, type Citation } from "./answer-context";
 import { getFacilityInfo, listFacilityNames, searchDocuments, type FacilityInfo } from "./knowledge";
 import { recordLlmCall, recordWorkEvent } from "./metrics";
 import { createTickets, getCatalog, listConversationTickets, type CreatedTicket, type GuestTicket } from "./orders";
@@ -15,12 +15,13 @@ import { recordUnanswered } from "./questions";
 import { route, type RouteResult } from "./router";
 
 const HISTORY_LIMIT = 12;
+export const GUEST_MESSAGE_HEADING = "【ゲストのメッセージ】";
 // クライアントに渡す時刻はISO文字列（UTC）に揃える。文字列のまま比較・並べ替えできる
 export const ISO_TIMESTAMP = (column: string) => `to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 // 回答の主担当を決める優先順（重いものを優先）
 const PATTERN_PRIORITY: Pattern[] = ["complaint", "reservation", "external", "info", "order"];
 
-export type Citation = { kind: "notice" | "stay_date"; label: string };
+export type { Citation };
 
 export type GuestChatMessage = {
   id: string;
@@ -131,40 +132,42 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   requestContext.set("thinking", assignment.thinking);
   requestContext.set(
     "instructions",
-    await buildInstructions({
-      hotel, guest, intents, tickets, unsupportedItems, hasComplaint: complaints.length > 0,
-      needsKnowledge, facilities, facilityNames: routed.result.facilities.length ? routed.result.facilities : facilityNames, documents,
-    }),
+    await buildInstructions({ hotel, guest, intents, tickets, unsupportedItems, hasComplaint: complaints.length > 0 }),
   );
 
-  const startedAt = performance.now();
-  const result = await mastra.getAgent("concierge").generate(
-    [
-      ...history.map((m): ModelMessage => (m.role === "user" ? { role: "user", content: m.content } : { role: "assistant", content: m.content })),
-      { role: "user", content: text } satisfies ModelMessage,
-    ],
-    { requestContext, maxSteps: 1 },
-  );
-  const usage: LlmUsage = {
-    modelId: modelIdFor(tier),
-    inputTokens: result.usage?.inputTokens ?? 0,
-    outputTokens: result.usage?.outputTokens ?? 0,
-    reasoningTokens: result.usage?.reasoningTokens ?? 0,
-    ms: Math.round(performance.now() - startedAt),
-  };
-
-  // 答えられなかった質問の印（ゲストには見せずに未回答の一覧へ）。指示してもマークダウンを出すことがあるため取り除く
-  const unansweredMarks = [...result.text.matchAll(/\[\[未回答[:：]\s*(.+?)\]\]/g)].map((m) => m[1].trim());
-  const generated = result.text.replace(/\[\[未回答[:：].*?\]\]/g, "").replace(/\*\*|__|^#+\s*/gm, "").trim();
-  for (const question of unansweredMarks) await recordUnanswered(hotel.id, question);
-  // 空の回答や、ツール呼び出しを文字で書いた回答はゲストに出さず、スタッフに引き継ぐ
-  const failed = generated === "" || /\[TOOL_CALL\]|<tool_call>|<function=/.test(generated);
+  let answer: Answer | undefined;
+  try {
+    answer = await generateAnswer(
+      { tier, thinking: assignment.thinking, instructions: requestContext.get("instructions") as string },
+      [
+        ...history.map((m): ModelMessage => (m.role === "user" ? { role: "user", content: m.content } : { role: "assistant", content: m.content })),
+        {
+          role: "user",
+          content: withLatestKnowledge({
+            text, needsKnowledge, facilities, documents,
+            // ルーターが選んだ施設（空なら全施設）。情報が1件もない施設も「情報なし」と明示する
+            facilityNames: routed.result.facilities.length ? routed.result.facilities : facilityNames,
+          }),
+        } satisfies ModelMessage,
+      ],
+      requestContext,
+    );
+  } catch (error) {
+    console.warn("[guest-chat] 回答を作れなかった", { modelId: modelIdFor(tier), error });
+  }
+  const usage: LlmUsage = answer?.usage ?? { modelId: modelIdFor(tier), inputTokens: 0, outputTokens: 0, reasoningTokens: 0, ms: 0 };
+  // 答えられなかった質問は未回答の一覧へ（管理PCで回答すると知識に蓄積）
+  // モデルが「確認します」と答えたのに一覧を空で返すことがあるため、そのときはゲストの文をそのまま記録する
+  const unanswered = answer?.unanswered_questions.length
+    ? answer.unanswered_questions
+    : answer && /スタッフに確認|確認して(ご連絡|お知らせ)/.test(answer.reply)
+      ? [text]
+      : [];
+  for (const question of unanswered) await recordUnanswered(hotel.id, question);
+  // 指示してもマークダウンの強調・見出しを出すことがあるため取り除く
+  const generated = (answer?.reply ?? "").replace(/\*\*|__|^#+\s*/gm, "").trim();
+  const failed = generated === "";
   if (failed) {
-    console.warn("[guest-chat] 回答を作れなかった", {
-      modelId: modelIdFor(tier),
-      generated,
-      steps: result.steps?.map((step) => ({ text: step.text, toolCalls: step.toolCalls?.length ?? 0, finishReason: step.finishReason })),
-    });
     await createHandoff({ hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: `AIが回答を作れなかった質問: ${text}` });
   }
   const reply = failed ? "確認してすぐにご連絡いたします。少々お待ちください。" : generated;
@@ -223,13 +226,8 @@ async function buildInstructions(params: {
   tickets: CreatedTicket[];
   unsupportedItems: string[];
   hasComplaint: boolean;
-  needsKnowledge: boolean;
-  facilities: FacilityInfo[];
-  // ルーターが選んだ施設（空なら全施設）。情報が1件もない施設も「情報なし」と明示する
-  facilityNames: string[];
-  documents: { title: string; content: string }[];
 }): Promise<string> {
-  const { hotel, guest, intents, tickets, unsupportedItems, hasComplaint, needsKnowledge, facilities, facilityNames, documents } = params;
+  const { hotel, guest, intents, tickets, unsupportedItems, hasComplaint } = params;
   const patterns = [...new Set(intents.map((i) => i.pattern))];
   const [instructions, guardrails] = await Promise.all([
     query<{ scope: string; body: string }>(
@@ -246,7 +244,7 @@ async function buildInstructions(params: {
 
   return [
     `あなたは「${hotel.name}」のゲスト向けアシスタント。日本語だけで、ゲストに直接話しかける文章だけを書く。`,
-    "施設の営業時間・メニュー・特記事項は、下の「館内の情報」だけを根拠に答える。書かれていないことは推測せず、スタッフに確認してご連絡すると伝える。",
+    "施設の営業時間・メニュー・特記事項は、ゲストの発言の前に付いている【最新の館内情報】だけを根拠に答える。書かれていないことは推測せず、スタッフに確認してご連絡すると伝える。",
     "日付の指定がなければ、ご滞在中なら今日、ご到着前ならご滞在の期間の情報で答える。期間によって違う場合は、どの日がどうなるかを分けて伝える。",
     "【特記事項】は通常の営業情報より優先する。特記事項がある日は、特記事項の内容で答え、通常との違いも伝える。",
     "「情報なし」の施設・項目について聞かれたら、時間などを推測せず、スタッフに確認してご連絡すると伝える。「情報なし」「特記事項」などの内部の表記はそのまま言わない。",
@@ -254,9 +252,9 @@ async function buildInstructions(params: {
     "ご到着前のゲストには「現在」「本日」ではなく「ご滞在中（10/20〜10/23）は」のように滞在日を主語にして答える。",
     "館内の情報に書かれていないサービス（ルームサービスなど）を勧めない。",
     "答えられた質問には「スタッフに確認します」を付けない。",
-    "営業時間などは、会話の中の過去の回答ではなく、必ず今回の「館内の情報」で答える（情報は更新されていることがある）。",
+    "営業時間などは、会話の中の過去の回答ではなく、必ず【最新の館内情報】で答える（情報は更新されていることがある）。",
     "ゲストの状況に書かれていない事実（到着からの経過時間など）を付け足さない。",
-    "情報がなくて答えられなかった質問があれば、回答の最後に [[未回答: 質問を短くまとめたもの]] と書く（ゲストには表示されない）。答えられた質問には書かない。",
+    "館内の情報・抜粋に書かれていないことは、あるともないとも断定しない（「ございません」「お断りしています」も言わない）。スタッフに確認してご連絡すると伝え、その質問を unanswered_questions に入れる。",
     "マークダウン記法（**や#）は使わない。",
     "",
     "## ホテルの指示",
@@ -273,51 +271,38 @@ async function buildInstructions(params: {
       : []),
     ...(unsupportedItems.length ? [`・品目マスタにない依頼（${unsupportedItems.join("、")}）は、スタッフが確認してご連絡すると伝える`] : []),
     ...(hasComplaint ? ["・不満の内容はスタッフに引き継ぎ済み。お詫びし、担当者から改めて連絡すると伝える"] : []),
-    ...(needsKnowledge ? ["", "## 館内の情報（ゲストの滞在日にかかる期間のもの）", renderFacilities(facilities, facilityNames)] : []),
-    ...(documents.length
-      ? ["", "## 館内案内・マニュアルからの抜粋", ...documents.map((d) => `【${d.title}】${d.content}`)]
-      : []),
   ].join("\n");
 }
 
-// 特記事項の表示は、質問に関係する施設（ルーターが選んだ施設・回答に名前が出た施設・館内全体）のものだけ
-function buildCitations(facilities: FacilityInfo[], requested: string[], reply: string, guest: GuestContext, today: string): Citation[] {
-  const citations: Citation[] = [];
-  const related = (f: FacilityInfo) => requested.includes(f.facility) || reply.includes(f.facility) || f.facility === "館内全体のお知らせ";
-  for (const f of facilities.filter(related)) {
-    for (const n of f.notices) {
-      citations.push({ kind: "notice", label: `${f.facility}の特記事項を反映（${fmt(n.updated_at.slice(0, 10))} ${n.updated_at.slice(11)} 更新）` });
-    }
-  }
-  if (guest.checkIn > today && facilities.some((f) => f.hours.length + f.offerings.length > 0)) {
-    const periods = [...new Set(facilities.flatMap((f) => f.hours.map((h) => `${fmt(h.from)}〜${fmt(h.to)}`)))];
-    citations.push({ kind: "stay_date", label: `ご滞在日の情報で回答${periods.length ? `・適用期間 ${periods.join("、")}` : ""}` });
-  }
-  return [...new Map(citations.map((c) => [c.label, c])).values()];
+// 館内の情報は最後のゲストの発言と一緒に渡す。システム指示に置くと、情報を更新したあとも
+// 会話の中の過去の回答（更新前の営業時間など）を繰り返すことがあったため（2026-09-26 検証）
+function withLatestKnowledge(params: {
+  text: string;
+  needsKnowledge: boolean;
+  facilities: FacilityInfo[];
+  facilityNames: string[];
+  documents: { title: string; content: string }[];
+}): string {
+  const { text, needsKnowledge, facilities, facilityNames, documents } = params;
+  if (!needsKnowledge) return text;
+  return [
+    "【最新の館内情報】（ゲストの滞在日にかかる期間のもの。会話の中の過去の回答より、必ずこちらを優先する）",
+    renderFacilities(facilities, facilityNames),
+    ...(documents.length ? ["", "【館内案内・マニュアルからの抜粋】", ...documents.map((d) => `・${d.title}: ${d.content}`)] : []),
+    "",
+    GUEST_MESSAGE_HEADING,
+    text,
+  ].join("\n");
 }
 
-const fmt = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
-
-// 小型モデルでも取り違えないよう、施設ごとに「特記事項（優先）→ 通常の営業情報」の順の文章にする
-function renderFacilities(facilities: FacilityInfo[], requested: string[]): string {
-  const lines: string[] = [];
-  for (const f of facilities) {
-    lines.push(`■${f.facility}`);
-    for (const n of f.notices) lines.push(`  【特記事項・最優先】${n.body}（${n.starts_at}〜${n.ends_at} の間有効）`);
-    for (const h of f.hours) {
-      const time = h.closed ? "休業" : `${h.opens ?? "?"}〜${h.closes ?? "?"}`;
-      lines.push(`  ${h.label}: ${time}（適用期間 ${h.from}〜${h.to}）${h.note ? ` ${h.note}` : ""}`);
-    }
-    for (const o of f.offerings) {
-      const price = o.price_jpy ? ` ${o.price_jpy.toLocaleString("ja-JP")}円` : "";
-      lines.push(`  メニュー「${o.name}」${price}（提供期間 ${o.from}〜${o.to}）${o.description ? ` ${o.description}` : ""}`);
-    }
-    if (f.hours.length === 0 && f.notices.length === 0) lines.push("  営業時間: 情報なし");
+// ゲスト向けの根拠表示: 関係する施設の特記事項と、ご到着前なら滞在日で答えたこと
+function buildCitations(facilities: FacilityInfo[], requested: string[], reply: string, guest: GuestContext, today: string): Citation[] {
+  const citations: Citation[] = noticeCitations(facilities, requested, reply);
+  if (guest.checkIn > today && facilities.some((f) => f.hours.length + f.offerings.length > 0)) {
+    const periods = [...new Set(facilities.flatMap((f) => f.hours.map((h) => `${fmtDate(h.from)}〜${fmtDate(h.to)}`)))];
+    citations.push({ kind: "stay_date", label: `ご滞在日の情報で回答${periods.length ? `・適用期間 ${periods.join("、")}` : ""}` });
   }
-  for (const name of requested) {
-    if (!facilities.some((f) => f.facility === name)) lines.push(`■${name}`, "  情報なし");
-  }
-  return lines.length ? lines.join("\n") : "情報なし";
+  return citations;
 }
 
 async function findOrCreateConversation(hotel: Hotel, guest: GuestContext): Promise<string> {

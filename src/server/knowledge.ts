@@ -83,8 +83,8 @@ export async function searchDocuments(hotelId: string, text: string, limit = 4) 
   const [{ count }] = await query<{ count: number }>("select count(*)::int count from documents where hotel_id = $1", [hotelId]);
   if (count === 0) return [];
   const { embedding, model } = await embed(text);
-  return query<{ title: string; content: string; similarity: number }>(
-    `select d.title, c.content, 1 - (c.embedding <=> $2::extensions.vector) similarity
+  return query<{ title: string; content: string; similarity: number; updated_at: string }>(
+    `select d.title, c.content, 1 - (c.embedding <=> $2::extensions.vector) similarity, d.created_at::date::text updated_at
      from document_chunks c join documents d on d.id = c.document_id
      where d.hotel_id = $1 and c.embedding_model = $3
      order by c.embedding <=> $2::extensions.vector

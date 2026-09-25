@@ -11,6 +11,8 @@ export function QuestionList({ questions }: { questions: OpenQuestion[] }) {
   const [pending, startTransition] = useTransition();
 
   if (questions.length === 0) return <p className="text-sm text-ink-sub">未回答の質問はありません</p>;
+  // 回答・案内しないで一覧から消えたら、次の質問を開く
+  const currentId = questions.some((q) => q.id === openId) ? openId : questions[0].id;
 
   function submit(id: string, kind: "answer" | "dismiss") {
     setError(null);
@@ -24,7 +26,7 @@ export function QuestionList({ questions }: { questions: OpenQuestion[] }) {
   return (
     <div className="flex flex-col gap-2">
       {questions.map((q) =>
-        q.id === openId ? (
+        q.id === currentId ? (
           <div key={q.id} className="flex flex-col gap-2 rounded-[10px] bg-caution-soft p-3.5">
             <div className="flex justify-between text-sm">
               <strong>{q.question}</strong>

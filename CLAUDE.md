@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 現状
 
 ホテル運営AIエージェント（Nebius x NVIDIA Global AI Hackathon 応募作品、締切 2026-10-30 10:00 PDT）。
-W1（初期構築・DBスキーマ）完了。W2のゲスト対応（ルーター・滞在日での案内・オーダーの自動割り当て・ゲストチャット画面 `/guest/[予約番号]`）まで実装済み。
+W1（初期構築・DBスキーマ）とW2（ゲスト対応）完了。W3は現場スマホ（`/staff/*`: オーダー・AI相談・通知・引き継ぎ）、管理PC（`/admin`: 今日の要対応・施設・営業情報の編集とPDF/画像からの下書き）、期限切れの昇格まで実装済み。管理PCのオーダーボード・品目設定・マニュアル登録・引き継ぎ履歴は未実装（メニューに「準備中」）。
+スタッフ画面は `/staff/login` でメンバーを選ぶデモ用ログイン（パスワードなし）。
 
 ## コマンド
 
@@ -16,6 +17,9 @@ W1（初期構築・DBスキーマ）完了。W2のゲスト対応（ルータ�
 - `npm run db:start` / `db:stop` / `db:reset`: ローカルSupabase（Docker必須）。クラウドへの適用は `npx supabase db push --db-url "$DATABASE_URL"`
 - `npm run dev:shifts`: デモのスタッフを今日の枠に出勤させる（割り当ての確認に必要）
 - `npm run try:guest -- R-1203 "プール何時まで？"`: ゲストの1通を画面なしで処理する（`.env.local` の `LLM_MODE` に従う）
+- `npm run dev:cron`: 期限の監視（未着手の付け替え・期限切れの昇格）を1分ごとに実行（`npm run dev` と並行して起動）
+- `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
+- デモ用の文書は `docs/demo/`（冬季営業のお知らせのPDF・画像）
 - テストランナーは未導入
 
 ## コード構成
@@ -24,6 +28,9 @@ W1（初期構築・DBスキーマ）完了。W2のゲスト対応（ルータ�
 - `src/lib/llm/structured.ts`: 構造化出力は `generateStructured`（強制ツール呼び出し＋Zod検証＋再試行）を使う。Token Factoryの`json_schema`はNemotronでスキーマを保証しないため、MastraやAI SDKの`output`／`structuredOutput`は使わない
 - `src/server/`: 業務ロジック（DBは `db.ts` の `pg` で直接SQL）。`guest-chat.ts` がゲスト1通の処理の流れ（ルーター → チケット発行 → 知識の取得 → 回答 → 計測の記録）
 - `src/server/orders.ts`: チケットの割り当ては機械ロジック（同フロアのまとめ → 担当量最小 → 最後の割り当てが古い順）。LLMは使わない
+- `src/server/auth.ts`: `requireMember`（画面）と `authorize(権限キー, 対象ID)`（サーバーアクション）。操作は必ず `authorize` → 処理 → `audit` の順
+- `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`questions.ts`（未回答→回答でRAGへ）、`staff-ask.ts`（スタッフのAI相談）
+- サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）と `src/app/admin/actions.ts`（管理PC）
 - `src/mastra/`: Mastraのエージェント。`src/app/api/mastra/[...mastra]/route.ts` でMastraのHTTP APIを `/api/mastra/*` に公開（`prefix` とフォルダ位置を一致させる）
 - `scripts/verify-llm.ts`: LLM層の確認スクリプト。`registerMockToolFixture` でモック時の強制ツール呼び出しの戻り値を登録する
 - `supabase/migrations/`: DBスキーマ（SQLが正）。設計の理由は `docs/001_db_schema.md`。`supabase/seed.sql` はデモ用データ
@@ -41,9 +48,13 @@ W1（初期構築・DBスキーマ）完了。W2のゲスト対応（ルータ�
 - thinkingは `chat_template_kwargs.enable_thinking` で切り替え（`getModel`が注入）。ルーター・抽出はオフが基本（オンは遅く、Nanoでは10秒超）
 - Superはthinkingオフだとツール呼び出しの前に英語の独り言を本文に出すことがある
 - 日付はモデルに推測させない。滞在日・今日の日付は必ずプロンプトかツール引数で渡す
-- ゲスト向けの回答係（`concierge`）にはツールを持たせない。営業情報・特記事項はサーバーが滞在日で取得し、文章にして指示に入れる。Nemotronがツール呼び出しを文字で書く・同じ呼び出しを216回繰り返す事象があったため
+- 回答係（`concierge`）には館内情報を調べるツールを持たせない。営業情報・特記事項はサーバーが滞在日で取得して文章にする。Nemotronがツール呼び出しを文字で書く・同じ呼び出しを216回繰り返す事象があったため
+- 回答は `generateAnswer`（`answer` ツールの強制呼び出し）で、回答文と答えられなかった質問を分けて受け取る
+- 館内情報はシステム指示ではなく、最後のユーザー発言の前に【最新の館内情報】として付ける。システム指示に置くと、マスタ更新後も会話中の古い回答を繰り返した
+- 情報にないことを「ございません」と断定しやすいので、指示で禁止している（未回答として記録させる）
 - 案内の回答は中型（Super）が既定。小型（Lightning）はデータのない項目（朝食時間など）を推測で答えた。ルーターは小型で可
-- ルーターの品目は、ゲストの言い方が品目名・別名と重なるときだけ採用する（`acceptKnownItems`）。LLMは「充電器」を既存品目に当てはめることがあった
+- ルーターのLLMは品名と数量の読み取りだけ。品目マスタとの照合は `matchCatalog`（品名・別名の部分一致）で行う。LLMに照合させると、別名にある品をマスタにないと判断したり、ない品を既存品目に当てはめたりした
+- 画像の書き起こし（GLM-5.3-Flash）は推論オフでも `</think>` までの思考を出すので捨てる。PDFの文字は NFKC で正規化する（部首の文字で出ることがある）
 
 ## 仕様の正
 
