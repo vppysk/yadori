@@ -31,7 +31,9 @@ function routeSchema(facilityNames: string[]) {
         }),
       )
       .min(1),
-    wants_staff: z.boolean().describe("スタッフと直接話したいと言っているか"),
+    wants_staff: z
+      .boolean()
+      .describe("「スタッフと話したい」「人に代わって」のように、人との会話をはっきり求めているときだけ true。不満や苦情だけなら false（complaint にする）"),
   });
 }
 

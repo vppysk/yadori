@@ -11,6 +11,7 @@ import { fmtDate, noticeCitations, renderFacilities, type Citation } from "./ans
 import { getFacilityInfo, listFacilityNames, searchDocuments, type FacilityInfo } from "./knowledge";
 import { recordLlmCall, recordWorkEvent } from "./metrics";
 import { createTickets, getCatalog, listConversationTickets, type CreatedTicket, type GuestTicket } from "./orders";
+import { readRuleText } from "./integrations/pms";
 import { recordUnanswered } from "./questions";
 import { route, type RouteResult } from "./router";
 
@@ -229,7 +230,7 @@ async function buildInstructions(params: {
 }): Promise<string> {
   const { hotel, guest, intents, tickets, unsupportedItems, hasComplaint } = params;
   const patterns = [...new Set(intents.map((i) => i.pattern))];
-  const [instructions, guardrails] = await Promise.all([
+  const [instructions, guardrails, readRule] = await Promise.all([
     query<{ scope: string; body: string }>(
       "select scope, body from ai_instructions where hotel_id = $1 and (scope = 'common' or (scope = 'pattern' and pattern = any ($2))) order by scope",
       [hotel.id, patterns],
@@ -238,6 +239,7 @@ async function buildInstructions(params: {
       "select kind, body from guardrails where hotel_id = $1 and enabled and kind in ('forbidden', 'confirm_before') order by kind, sort",
       [hotel.id],
     ),
+    readRuleText(),
   ]);
   const now = localNow(hotel.timezone);
   const stayStatus = now.date < guest.checkIn ? "ご到着前" : now.date >= guest.checkOut ? "ご出発後" : "ご滞在中";
@@ -271,6 +273,10 @@ async function buildInstructions(params: {
       : []),
     ...(unsupportedItems.length ? [`・品目マスタにない依頼（${unsupportedItems.join("、")}）は、スタッフが確認してご連絡すると伝える`] : []),
     ...(hasComplaint ? ["・不満の内容はスタッフに引き継ぎ済み。お詫びし、担当者から改めて連絡すると伝える"] : []),
+    // 予約・客室管理システムのお客様メモ（読み取りが許可されている場合のみ）と、その読み取りルール
+    ...(guest.guestNotes?.length
+      ? ["", "## お客様メモ（予約・客室管理システム）", ...guest.guestNotes.map((n) => `・${n.category}: ${n.body}`), ...(readRule ? ["", "### お客様メモの使い方", readRule] : [])]
+      : []),
   ].join("\n");
 }
 
