@@ -25,6 +25,11 @@ export function llmMode(): "mock" | "nebius" {
   return process.env.LLM_MODE === "nebius" ? "nebius" : "mock";
 }
 
+// 設定上のモデルID（モックのときも本番のIDを返す）。コスト見積もりの単価引き当てに使う
+export function configuredModelId(tier: ModelTier): string {
+  return MODEL_IDS[tier];
+}
+
 export function modelIdFor(tier: ModelTier): string {
   return llmMode() === "mock" ? `mock-${tier}` : MODEL_IDS[tier];
 }
