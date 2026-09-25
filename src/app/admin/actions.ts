@@ -2,8 +2,9 @@
 
 import { refresh } from "next/cache";
 import { audit, authorize, PermissionError } from "@/server/auth";
-import { queryOne } from "@/server/db";
-import { addNotice, deleteNotice, draftFromFile, saveFacility, saveFacilitySchema, type ImportedDraft } from "@/server/knowledge-admin";
+import { queryOne, transaction } from "@/server/db";
+import { deleteDocument, insertDocument } from "@/server/documents";
+import { addNotice, deleteNotice, draftFromFile, readDocument, saveFacility, saveFacilitySchema, type ImportedDraft } from "@/server/knowledge-admin";
 import { addSlot, deleteSlot, saveItemSettings, type SaveItemsInput } from "@/server/items";
 import { previewOrder, reassignManually, registerOrder, type OrderPreview } from "@/server/order-board";
 import { answerQuestion, dismissQuestion } from "@/server/questions";
@@ -144,6 +145,35 @@ export async function deleteSlotAction(slotId: string): Promise<Result> {
     const member = await authorize("settings.items");
     await deleteSlot(member, slotId);
     await audit(member, "settings.items", "slot.delete", { type: "slot", id: slotId });
+    refresh();
+  });
+}
+
+export async function registerDocumentAction(formData: FormData): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("knowledge.document.register");
+    const title = String(formData.get("title") ?? "").trim().slice(0, 120);
+    const file = formData.get("file");
+    let text = String(formData.get("text") ?? "").trim();
+    if (file instanceof File && file.size > 0) {
+      text = file.type.startsWith("text/") || file.name.endsWith(".txt") || file.name.endsWith(".md")
+        ? (await file.text()).normalize("NFKC")
+        : await readDocument(member.hotel_id, file);
+    }
+    if (!title) throw new Error("タイトルを入力してください");
+    if (!text) throw new Error("本文を入力するか、ファイルを選んでください");
+    // 登録時の確認はしない（plan 4.1）。回答精度は定期評価で見る
+    const id = await transaction((client) => insertDocument(client, { hotelId: member.hotel_id, title, source: "upload", text: text.slice(0, 50_000), createdBy: member.id }));
+    await audit(member, "knowledge.document.register", "document.register", { type: "document", id }, { title });
+    refresh();
+  });
+}
+
+export async function deleteDocumentAction(documentId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("knowledge.document.register");
+    await deleteDocument(member.hotel_id, documentId);
+    await audit(member, "knowledge.document.register", "document.delete", { type: "document", id: documentId });
     refresh();
   });
 }

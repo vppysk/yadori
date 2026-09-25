@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { embed } from "@/lib/llm/embeddings";
+import { query } from "./db";
 
 // RAG（日付で変わらない説明文）への登録。段落ごとに、おおよそ CHUNK_CHARS 文字の塊に分けて埋め込む
 const CHUNK_CHARS = 500;
@@ -45,4 +46,20 @@ export async function insertDocument(
     );
   }
   return documentId;
+}
+
+export type DocumentRow = { id: string; title: string; source: "upload" | "answered_question"; chunks: number; created_by: string | null; created_at: string; preview: string };
+
+export async function listDocuments(hotelId: string): Promise<DocumentRow[]> {
+  return query<DocumentRow>(
+    `select d.id, d.title, d.source, count(c.id)::int chunks, m.display_name created_by, d.created_at,
+       left(coalesce(min(c.content) filter (where c.chunk_index = 0), ''), 120) preview
+     from documents d left join document_chunks c on c.document_id = d.id left join members m on m.id = d.created_by
+     where d.hotel_id = $1 group by d.id, m.display_name order by d.created_at desc`,
+    [hotelId],
+  );
+}
+
+export async function deleteDocument(hotelId: string, documentId: string) {
+  await query("delete from documents where id = $1 and hotel_id = $2", [documentId, hotelId]);
 }

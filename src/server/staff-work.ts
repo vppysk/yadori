@@ -264,3 +264,35 @@ export async function unreadCount(memberId: string): Promise<number> {
 export async function markNotificationsRead(memberId: string) {
   await query("update notifications set read_at = now() where member_id = $1 and read_at is null", [memberId]);
 }
+
+// ---------- 引き継ぎ・クレーム履歴（管理PC） ----------
+
+export type HandoffHistoryRow = {
+  id: string;
+  kind: string;
+  status: string;
+  room_number: string | null;
+  summary: string;
+  accepted_by_name: string | null;
+  created_at: string;
+  accepted_at: string | null;
+  closed_at: string | null;
+  write_status: string | null;
+  messages: { role: string; content: string }[];
+};
+
+export async function listHandoffHistory(hotelId: string, filters: { kind?: string; status?: string }, limit = 100): Promise<HandoffHistoryRow[]> {
+  return query<HandoffHistoryRow>(
+    `select h.id, h.kind, h.status, h.room_number, h.summary, m.display_name accepted_by_name, h.created_at, h.accepted_at, h.closed_at,
+       (select w.status from integration_writes w where w.handoff_id = h.id order by w.created_at desc limit 1) write_status,
+       coalesce((
+         select json_agg(json_build_object('role', x.role, 'content', x.content) order by x.created_at)
+         from (select role, content, created_at from messages where conversation_id = h.conversation_id and role in ('user', 'assistant', 'staff')
+               order by created_at desc limit 8) x
+       ), '[]') messages
+     from handoffs h left join members m on m.id = h.accepted_by
+     where h.hotel_id = $1 and ($2::text is null or h.kind = $2) and ($3::text is null or h.status = $3)
+     order by h.created_at desc limit $4`,
+    [hotelId, filters.kind ?? null, filters.status ?? null, limit],
+  );
+}

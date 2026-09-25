@@ -221,7 +221,7 @@ export async function draftFromFile(member: Member, facilityId: string, file: Fi
 }
 
 // PDFは埋め込みの文字を取り出す。画像は画像対応モデルで書き起こす（Nemotronに画像対応モデルがないため）
-async function readDocument(hotelId: string, file: File): Promise<string> {
+export async function readDocument(hotelId: string, file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
     const { text } = await extractText(await getDocumentProxy(bytes), { mergePages: true });
