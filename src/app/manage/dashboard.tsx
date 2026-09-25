@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import type { DashboardData, Handler } from "@/server/dashboard";
-import { applyAssignmentsAction } from "./actions";
+import type { ReplayRequest, ReplayResult } from "@/server/replay";
+import { applyAssignmentsAction, runReplayAction } from "./actions";
 
 const CYCLE: Handler[] = ["human", "small", "medium", "large"];
 const HANDLER_LABEL: Record<Handler, { name: string; sub: string; className: string }> = {
@@ -17,7 +18,10 @@ const yen = (n: number) => Math.round(n).toLocaleString("ja-JP");
 const pct = (n: number | null) => (n === null ? "—" : `${(n * 100).toFixed(1)}`);
 
 // 簡易見積もり（plan 4.3）: 過去の件数 × 新しい担当の単価と引き継ぎ率。引き継いだ分と人が直接受けた分は、時給×対応時間で人のコストに入れる
-function estimate(data: DashboardData, plan: Record<string, Handler>) {
+// 精密見積もりの実測値。`${pattern}:${tier}` → 1件あたりのAIコスト（円）と引き継ぎ率（答えられなかった率）
+type Measured = Record<string, { aiCaseJpy: number; handoffRate: number }>;
+
+function estimate(data: DashboardData, plan: Record<string, Handler>, measured: Measured = {}) {
   const month = 30 / data.days;
   let ai = 0;
   let human = 0;
@@ -37,9 +41,10 @@ function estimate(data: DashboardData, plan: Record<string, Handler>) {
         return;
       }
       const tier = data.tiers[handler];
-      const aiCase = ((p.tokens.input * tier.inputUsdPerMtok + p.tokens.output * tier.outputUsdPerMtok) / 1_000_000) * data.fxUsdJpy;
+      const m = measured[`${p.key}:${handler}`];
+      const aiCase = m?.aiCaseJpy ?? ((p.tokens.input * tier.inputUsdPerMtok + p.tokens.output * tier.outputUsdPerMtok) / 1_000_000) * data.fxUsdJpy;
       // クレームは一次対応のあと必ず人へ引き継ぐ
-      const h = p.key === "complaint" ? 1 : tier.handoffRate;
+      const h = p.key === "complaint" ? 1 : (m?.handoffRate ?? tier.handoffRate);
       ai += v * aiCase;
       human += v * h * humanCase;
       handoffs += v * h;
@@ -51,6 +56,8 @@ function estimate(data: DashboardData, plan: Record<string, Handler>) {
 export function Dashboard({ data }: { data: DashboardData }) {
   const [plan, setPlan] = useState<Record<string, Handler>>(data.assignments);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [replayResults, setReplayResults] = useState<ReplayResult[] | null>(null);
+  const [replaying, setReplaying] = useState(false);
   const [pending, startTransition] = useTransition();
   const before = useMemo(() => estimate(data, data.assignments), [data]);
   const after = useMemo(() => estimate(data, plan), [data, plan]);
@@ -58,8 +65,29 @@ export function Dashboard({ data }: { data: DashboardData }) {
   const diff = after.total - before.total;
   const maxBar = Math.max(after.ai, after.human, 1);
 
+  // 変更したセルのうち、AIのモデル同士の変更（人が絡まないもの）を業務ごとに1つずつ再生の対象にする
+  const replayRequests: ReplayRequest[] = [];
+  for (const p of data.patterns) {
+    for (const b of data.bands) {
+      const key = `${p.key}:${b.id}`;
+      const from = data.assignments[key];
+      const to = plan[key];
+      if (from && to && from !== to && from !== "human" && to !== "human" && !replayRequests.some((r) => r.pattern === p.key)) {
+        replayRequests.push({ pattern: p.key, from, to });
+      }
+    }
+  }
+  const measured: Measured = Object.fromEntries(
+    (replayResults ?? []).flatMap((r) => [
+      [`${r.pattern}:${r.from.tier}`, { aiCaseJpy: r.from.avgCostJpy, handoffRate: r.from.unansweredRate }],
+      [`${r.pattern}:${r.to.tier}`, { aiCaseJpy: r.to.avgCostJpy, handoffRate: r.to.unansweredRate }],
+    ]),
+  );
+  const precise = replayResults ? { before: estimate(data, data.assignments, measured), after: estimate(data, plan, measured) } : null;
+
   function cycle(key: string) {
     setMessage(null);
+    setReplayResults(null);
     setPlan((prev) => ({ ...prev, [key]: CYCLE[(CYCLE.indexOf(prev[key] ?? "human") + 1) % CYCLE.length] }));
   }
 
@@ -189,9 +217,62 @@ export function Dashboard({ data }: { data: DashboardData }) {
             </div>
           </div>
           <div className="flex-1" />
-          <p className="rounded-[10px] bg-dark-2 px-3.5 py-3 text-xs leading-relaxed text-[#C9CFD1]">
-            精密見積もりでは、過去ログの一部を新しいモデルで再生し、回答品質と引き継ぎ率を実測してから総額を出します。
-          </p>
+          {precise && replayResults ? (
+            <div className="flex flex-col gap-2.5 rounded-[10px] bg-dark-2 px-3.5 py-3 text-xs text-[#C9CFD1]">
+              <div className="flex items-baseline justify-between text-sm text-canvas">
+                <strong>精密見積もり</strong>
+                <span>
+                  <strong className="text-lg">{yen(precise.after.total)}</strong> 円／月（現在 {yen(precise.before.total)} 円）
+                </span>
+              </div>
+              {replayResults.map((r) => (
+                <table key={r.pattern} className="w-full text-left">
+                  <caption className="pb-1 text-left text-[#AEB6B9]">
+                    {data.patterns.find((p) => p.key === r.pattern)?.label}：{r.source === "past_questions" ? "過去の質問" : "サンプル質問"} {r.questions.length}件を再生
+                  </caption>
+                  <thead>
+                    <tr className="text-[#AEB6B9]">
+                      <th className="font-normal" />
+                      <th className="font-normal">1件のAI費</th>
+                      <th className="font-normal">答えられない率</th>
+                      <th className="font-normal">品質</th>
+                      <th className="font-normal">応答</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[r.from, r.to].map((s, i) => (
+                      <tr key={i}>
+                        <td>{i === 0 ? "現在" : "変更後"} {HANDLER_LABEL[s.tier].name}</td>
+                        <td>{s.avgCostJpy.toFixed(2)}円</td>
+                        <td>{(s.unansweredRate * 100).toFixed(0)}%</td>
+                        <td>{s.avgScore?.toFixed(1) ?? "—"} / 5</td>
+                        <td>{(s.avgMs / 1000).toFixed(1)}秒</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-[10px] bg-dark-2 px-3.5 py-3 text-xs leading-relaxed text-[#C9CFD1]">
+              精密見積もりでは、過去ログの一部を新しいモデルで再生し、回答品質と引き継ぎ率を実測してから総額を出します。
+            </p>
+          )}
+          <button
+            type="button"
+            disabled={replayRequests.length === 0 || replaying}
+            onClick={async () => {
+              setReplaying(true);
+              setMessage(null);
+              const result = await runReplayAction(replayRequests);
+              setReplaying(false);
+              if (result.ok) setReplayResults(result.results);
+              else setMessage({ kind: "error", text: result.error });
+            }}
+            className="min-h-12 rounded-[10px] border border-[#5B6468] text-[15px] font-bold text-canvas disabled:opacity-40"
+          >
+            {replaying ? "再生して計測中…（1分ほどかかります）" : replayRequests.length ? "精密見積もりを実行" : "モデルを変更すると精密見積もりができます"}
+          </button>
           {message && <p className={`text-sm ${message.kind === "ok" ? "text-[#9FD8C9]" : "text-[#F2A99F]"}`}>{message.text}</p>}
           <button
             type="button"

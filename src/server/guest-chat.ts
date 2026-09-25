@@ -114,48 +114,12 @@ export async function handleGuestMessage(reservationId: string, text: string) {
     return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
   }
 
-  // 回答に使う知識をゲストの滞在日で取得する（ご滞在中は今日から、ご到着前は滞在期間。チェックアウト日の朝食なども含める）
-  const today = localNow(hotel.timezone).date;
-  const needsKnowledge = intents.some((i) => i.pattern === "info" || i.pattern === "external");
-  const facilities = needsKnowledge
-    ? await getFacilityInfo(hotel.id, {
-        facilities: routed.result.facilities,
-        from: today > guest.checkIn ? today : guest.checkIn,
-        to: guest.checkOut,
-        timezone: hotel.timezone,
-      })
-    : [];
-  const documents = needsKnowledge ? await searchDocuments(hotel.id, text) : [];
-
   const tier: ModelTier = assignment.handler === "human" ? "small" : assignment.handler;
-  const requestContext = new RequestContext<ConciergeContext>();
-  requestContext.set("tier", tier);
-  requestContext.set("thinking", assignment.thinking);
-  requestContext.set(
-    "instructions",
-    await buildInstructions({ hotel, guest, intents, tickets, unsupportedItems, hasComplaint: complaints.length > 0 }),
-  );
-
-  let answer: Answer | undefined;
-  try {
-    answer = await generateAnswer(
-      { tier, thinking: assignment.thinking, instructions: requestContext.get("instructions") as string },
-      [
-        ...history.map((m): ModelMessage => (m.role === "user" ? { role: "user", content: m.content } : { role: "assistant", content: m.content })),
-        {
-          role: "user",
-          content: withLatestKnowledge({
-            text, needsKnowledge, facilities, documents,
-            // ルーターが選んだ施設（空なら全施設）。情報が1件もない施設も「情報なし」と明示する
-            facilityNames: routed.result.facilities.length ? routed.result.facilities : facilityNames,
-          }),
-        } satisfies ModelMessage,
-      ],
-      requestContext,
-    );
-  } catch (error) {
-    console.warn("[guest-chat] 回答を作れなかった", { modelId: modelIdFor(tier), error });
-  }
+  const { answer, facilities } = await draftAnswer({
+    hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, tickets, unsupportedItems,
+    hasComplaint: complaints.length > 0, tier, thinking: assignment.thinking,
+  });
+  const today = localNow(hotel.timezone).date;
   const usage: LlmUsage = answer?.usage ?? { modelId: modelIdFor(tier), inputTokens: 0, outputTokens: 0, reasoningTokens: 0, ms: 0 };
   // 答えられなかった質問は未回答の一覧へ（管理PCで回答すると知識に蓄積）
   // モデルが「確認します」と答えたのに一覧を空で返すことがあるため、そのときはゲストの文をそのまま記録する
@@ -218,6 +182,61 @@ async function issueOrders(
     });
   }
   return tickets;
+}
+
+// 回答の下書き（DBには書かない）: 滞在日で館内情報を取り、指示を組み立てて回答係に答えさせる。
+// ゲスト対応と、精密見積もりの再生（replay.ts）で共通に使う
+export async function draftAnswer(params: {
+  hotel: Hotel;
+  guest: GuestContext;
+  text: string;
+  history: { role: string; content: string }[];
+  routed: RouteResult;
+  allFacilityNames: string[];
+  tickets: CreatedTicket[];
+  unsupportedItems: string[];
+  hasComplaint: boolean;
+  tier: ModelTier;
+  thinking: boolean;
+}): Promise<{ answer: Answer | undefined; facilities: FacilityInfo[] }> {
+  const { hotel, guest, text, history, routed, tier, thinking } = params;
+  const intents = routed.intents;
+  // 回答に使う知識をゲストの滞在日で取得する（ご滞在中は今日から、ご到着前は滞在期間。チェックアウト日の朝食なども含める）
+  const today = localNow(hotel.timezone).date;
+  const needsKnowledge = intents.some((i) => i.pattern === "info" || i.pattern === "external");
+  const facilities = needsKnowledge
+    ? await getFacilityInfo(hotel.id, { facilities: routed.facilities, from: today > guest.checkIn ? today : guest.checkIn, to: guest.checkOut, timezone: hotel.timezone })
+    : [];
+  const documents = needsKnowledge ? await searchDocuments(hotel.id, text) : [];
+
+  const instructions = await buildInstructions({
+    hotel, guest, intents, tickets: params.tickets, unsupportedItems: params.unsupportedItems, hasComplaint: params.hasComplaint,
+  });
+  const requestContext = new RequestContext<ConciergeContext>();
+  requestContext.set("tier", tier);
+  requestContext.set("thinking", thinking);
+  requestContext.set("instructions", instructions);
+  try {
+    const answer = await generateAnswer(
+      { tier, thinking, instructions },
+      [
+        ...history.map((m): ModelMessage => (m.role === "user" ? { role: "user", content: m.content } : { role: "assistant", content: m.content })),
+        {
+          role: "user",
+          content: withLatestKnowledge({
+            text, needsKnowledge, facilities, documents,
+            // ルーターが選んだ施設（空なら全施設）。情報が1件もない施設も「情報なし」と明示する
+            facilityNames: routed.facilities.length ? routed.facilities : params.allFacilityNames,
+          }),
+        } satisfies ModelMessage,
+      ],
+      requestContext,
+    );
+    return { answer, facilities };
+  } catch (error) {
+    console.warn("[guest-chat] 回答を作れなかった", { modelId: modelIdFor(tier), error });
+    return { answer: undefined, facilities };
+  }
 }
 
 async function buildInstructions(params: {
