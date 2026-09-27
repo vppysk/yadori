@@ -21,7 +21,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `npm run dev:cron`: 期限の監視（`/api/cron/tickets`）と外部の情報源の取得（`/api/cron/sources`）を1分ごとに呼ぶ（`npm run dev` と並行して起動）
 - `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績を生成（`signals.demo=true`）／ `npm run dev:seed-alerts`: 対応アラートに分類ごとの未対応・対応中を入れる（予約番号 `DEMO-*` の架空の会話）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
 - DBのマイグレーション追加後は `npx supabase db push --db-url "$DATABASE_URL"`（`.env.local` を読み込んでから）
-- デモ用の文書は `docs/demo/`（冬季営業のお知らせのPDF・画像）
+- デモ・検証用の資料は `docs/demo/`（冬季営業のお知らせのPDF・画像、施設の取り違えと新しい施設の確認用の文章。使い方と期待する読み取りは `docs/demo/README.md`）
 - テストランナーは未導入
 
 ## コード構成
