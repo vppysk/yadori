@@ -28,7 +28,7 @@ export default async function IntegrationPage({ params }: PageProps<"/manage/int
             className={`flex min-h-14 flex-col justify-center rounded-xl border px-3.5 ${i.id === integrationId ? "border-primary bg-primary-soft" : "border-line bg-surface"}`}
           >
             <strong className="text-sm">{i.name}</strong>
-            <span className="text-xs text-ink-sub">{i.kind === "mcp" ? "MCP ・ 読み取り／書き込み" : "読み取りのみ"}</span>
+            <span className="text-xs text-ink-sub">{i.kind === "mcp" ? "MCP ・ 読み取り／書き込み" : "URLの定期取得（Tavily） ・ 読み取りのみ"}</span>
           </Link>
         ))}
       </aside>

@@ -202,8 +202,16 @@ function UserBubble({ text }: { text: string }) {
   );
 }
 
-// 回答の根拠。特記事項は注意色、滞在日での答え分けは主色
+// 回答の根拠。特記事項は注意色、滞在日での答え分けは主色、Webの情報は出典へのリンク
 function CitationBadge({ citation }: { citation: Citation }) {
+  if (citation.kind === "web" && citation.url) {
+    return (
+      <a href={citation.url} target="_blank" rel="noopener noreferrer" className="flex min-h-11 items-center gap-1.5 text-[11px] text-ink-sub underline underline-offset-2">
+        <GlobeIcon />
+        <span className="line-clamp-1">{citation.label}</span>
+      </a>
+    );
+  }
   const notice = citation.kind === "notice";
   return (
     <div className={`flex items-center gap-1.5 text-[11px] ${notice ? "text-caution" : "text-primary"}`}>
@@ -340,6 +348,15 @@ function CalendarIcon() {
     <svg width="13" height="13" viewBox="0 0 24 24" strokeWidth="2" {...iconProps}>
       <rect x="3" y="5" width="18" height="16" rx="2" />
       <path d="M3 10h18M8 3v4M16 3v4" />
+    </svg>
+  );
+}
+
+function GlobeIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" strokeWidth="2" className="shrink-0" {...iconProps}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z" />
     </svg>
   );
 }

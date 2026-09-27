@@ -69,7 +69,7 @@ export async function route(
       "あなたはホテルの問い合わせルーター。ゲストの発言を要望ごとに分け、次のどれかに分類する。",
       "- info: 館内施設・営業時間・サービスなどの案内",
       "- order: 客室への備品・飲み物のお届け",
-      "- external: レストラン予約や周辺情報など外部サービス",
+      "- external: ホテルの外のこと（交通・運行状況・天気・周辺のイベントや施設）や、館外のレストラン予約など外部サービス",
       "- reservation: 予約内容・部屋の変更",
       "- complaint: 不満・苦情（騒音、対応の遅れなど）",
       "部屋番号や挨拶だけの文は要望にしない。1つの要望は1回だけ書く。",
@@ -115,7 +115,9 @@ function mockRoute(text: string, catalog: CatalogItem[], facilityNames: string[]
     return [{ label: word, quantity: qty ? Number(qty) : 1 }];
   });
   const intents: RawRoute["intents"] = [];
-  if (/時|営業|何時|どこ|ある/.test(text) || requested.length === 0) intents.push({ pattern: "info", summary: text });
+  const external = /近く|周辺|観光|天気|駅|電車|運休|試合/.test(text);
+  if (external) intents.push({ pattern: "external", summary: text });
+  if ((!external && /時|営業|何時|どこ|ある/.test(text)) || (!external && requested.length === 0)) intents.push({ pattern: "info", summary: text });
   if (requested.length > 0) intents.push({ pattern: "order", summary: text, requested });
   if (/うるさい|遅い|ひどい/.test(text)) intents.push({ pattern: "complaint", summary: text });
   return { facilities, intents, wants_staff: /スタッフと話/.test(text), safety: /けが|怪我|具合|救急|火事/.test(text), strong_emotion: /最悪|ふざけ/.test(text) };

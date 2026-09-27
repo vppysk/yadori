@@ -9,10 +9,12 @@ import { checkReply, enabledHandoffCodes, unansweredCount } from "./guardrails";
 import { createHandoff, type HandoffKind } from "./handoffs";
 import { currentTimeBand, getAiAgentMemberId, getAssignment, getHotel, localNow, type Hotel, type Pattern } from "./hotel";
 import { fmtDate, noticeCitations, renderFacilities, type Citation } from "./answer-context";
+import { externalCitations, getExternalUpdates, renderExternalUpdates, type ExternalUpdate } from "./external-sources";
 import { getFacilityInfo, listFacilityNames, searchDocuments, type FacilityInfo } from "./knowledge";
 import { recordLlmCall, recordWorkEvent } from "./metrics";
 import { createTickets, getCatalog, listConversationTickets, type CreatedTicket, type GuestTicket } from "./orders";
 import { readRuleText } from "./integrations/pms";
+import { externalReadRule } from "./integrations/web-fetch";
 import { recordUnanswered } from "./questions";
 import { route, type RouteResult } from "./router";
 
@@ -138,7 +140,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   }
 
   const tier: ModelTier = assignment.handler === "human" ? "small" : assignment.handler;
-  const { answer, facilities } = await draftAnswer({
+  const { answer, facilities, externalUpdates } = await draftAnswer({
     hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, tickets, unsupportedItems,
     hasComplaint: complaints.length > 0, tier, thinking: assignment.thinking,
   });
@@ -173,7 +175,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
     await createHandoff({ hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: `同じ会話で2回答えられなかった。直近の質問: ${text}` });
   }
   const reply = failed ? "確認してすぐにご連絡いたします。少々お待ちください。" : !check.ok ? "担当のスタッフから改めてご案内いたします。少々お待ちください。" : generated;
-  const citations = failed ? [] : buildCitations(facilities, routed.result.facilities, reply, guest, today);
+  const citations = failed ? [] : [...buildCitations(facilities, routed.result.facilities, reply, guest, today), ...externalCitations(externalUpdates, answer?.used_sources)];
 
   const assistantMessageId = await insertMessage(conversationId, "assistant", reply, citations);
   const costUsd = await recordLlmCall({
@@ -238,20 +240,24 @@ export async function draftAnswer(params: {
   thinking: boolean;
   // 保存前の指示で試すとき（「過去の会話で試す」）に、DBの指示の代わりに使う
   instructionOverrides?: InstructionOverrides;
-}): Promise<{ answer: Answer | undefined; facilities: FacilityInfo[] }> {
+}): Promise<{ answer: Answer | undefined; facilities: FacilityInfo[]; externalUpdates: ExternalUpdate[] }> {
   const { hotel, guest, text, history, routed, tier, thinking } = params;
   const intents = routed.intents;
   // 回答に使う知識をゲストの滞在日で取得する（ご滞在中は今日から、ご到着前は滞在期間。チェックアウト日の朝食なども含める）
   const today = localNow(hotel.timezone).date;
   const needsKnowledge = intents.some((i) => i.pattern === "info" || i.pattern === "external");
-  const facilities = needsKnowledge
-    ? await getFacilityInfo(hotel.id, { facilities: routed.facilities, from: today > guest.checkIn ? today : guest.checkIn, to: guest.checkOut, timezone: hotel.timezone })
-    : [];
-  const documents = needsKnowledge ? await searchDocuments(hotel.id, text) : [];
+  // 外部の最新情報（運行情報・天気など）は定期取得済みの要約を渡す（その場で検索・取得はしない）
+  const [facilities, documents, externalUpdates] = await Promise.all([
+    needsKnowledge
+      ? getFacilityInfo(hotel.id, { facilities: routed.facilities, from: today > guest.checkIn ? today : guest.checkIn, to: guest.checkOut, timezone: hotel.timezone })
+      : [],
+    needsKnowledge ? searchDocuments(hotel.id, text) : [],
+    needsKnowledge ? getExternalUpdates(hotel.id) : [],
+  ]);
 
   const instructions = await buildInstructions({
     hotel, guest, intents, tickets: params.tickets, unsupportedItems: params.unsupportedItems, hasComplaint: params.hasComplaint,
-    overrides: params.instructionOverrides,
+    overrides: params.instructionOverrides, externalUpdates,
   });
   const requestContext = new RequestContext<ConciergeContext>();
   requestContext.set("tier", tier);
@@ -265,7 +271,7 @@ export async function draftAnswer(params: {
         {
           role: "user",
           content: withLatestKnowledge({
-            text, needsKnowledge, facilities, documents,
+            text, needsKnowledge, facilities, documents, externalUpdates,
             // ルーターが選んだ施設（空なら全施設）。情報が1件もない施設も「情報なし」と明示する
             facilityNames: routed.facilities.length ? routed.facilities : params.allFacilityNames,
           }),
@@ -273,10 +279,10 @@ export async function draftAnswer(params: {
       ],
       requestContext,
     );
-    return { answer, facilities };
+    return { answer, facilities, externalUpdates };
   } catch (error) {
     console.warn("[guest-chat] 回答を作れなかった", { modelId: modelIdFor(tier), error });
-    return { answer: undefined, facilities };
+    return { answer: undefined, facilities, externalUpdates };
   }
 }
 
@@ -288,10 +294,11 @@ async function buildInstructions(params: {
   unsupportedItems: string[];
   hasComplaint: boolean;
   overrides?: InstructionOverrides;
+  externalUpdates: ExternalUpdate[];
 }): Promise<string> {
-  const { hotel, guest, intents, tickets, unsupportedItems, hasComplaint, overrides } = params;
+  const { hotel, guest, intents, tickets, unsupportedItems, hasComplaint, overrides, externalUpdates } = params;
   const patterns = [...new Set(intents.map((i) => i.pattern))];
-  const [instructions, guardrails, readRule] = await Promise.all([
+  const [instructions, guardrails, readRule, externalRule] = await Promise.all([
     overrides
       ? Promise.resolve([
           { scope: "common", body: overrides.common },
@@ -306,6 +313,7 @@ async function buildInstructions(params: {
       [hotel.id],
     ),
     readRuleText(),
+    externalUpdates.length ? externalReadRule(hotel.id) : undefined,
   ]);
   const now = localNow(hotel.timezone);
   const stayStatus = now.date < guest.checkIn ? "ご到着前" : now.date >= guest.checkOut ? "ご出発後" : "ご滞在中";
@@ -343,6 +351,16 @@ async function buildInstructions(params: {
     ...(guest.guestNotes?.length
       ? ["", "## お客様メモ（予約・客室管理システム）", ...guest.guestNotes.map((n) => `・${n.category}: ${n.body}`), ...(readRule ? ["", "### お客様メモの使い方", readRule] : [])]
       : []),
+    // 外部の最新情報の使い方（外部連携の読み取りルール）
+    ...(externalUpdates.length
+      ? [
+          "",
+          "## 外部の最新情報の使い方",
+          "・【外部の最新情報】は、ゲストの質問に関係するときだけ使う。書かれていないこと（運転再開の見込みなど）は推測しない",
+          "・使った情報源の名前を used_sources に入れる",
+          ...(externalRule ? [externalRule] : []),
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -354,13 +372,15 @@ function withLatestKnowledge(params: {
   facilities: FacilityInfo[];
   facilityNames: string[];
   documents: { title: string; content: string }[];
+  externalUpdates: ExternalUpdate[];
 }): string {
-  const { text, needsKnowledge, facilities, facilityNames, documents } = params;
+  const { text, needsKnowledge, facilities, facilityNames, documents, externalUpdates } = params;
   if (!needsKnowledge) return text;
   return [
     "【最新の館内情報】（ゲストの滞在日にかかる期間のもの。会話の中の過去の回答より、必ずこちらを優先する）",
     renderFacilities(facilities, facilityNames),
     ...(documents.length ? ["", "【館内案内・マニュアルからの抜粋】", ...documents.map((d) => `・${d.title}: ${d.content}`)] : []),
+    ...renderExternalUpdates(externalUpdates),
     "",
     GUEST_MESSAGE_HEADING,
     text,

@@ -53,7 +53,7 @@ async function fieldRules(integrationId: string): Promise<Map<string, FieldRule>
   return new Map(rows.map((r) => [r.field, r]));
 }
 
-async function aiMayUse(hotelId: string, permissionKey: string): Promise<boolean> {
+export async function aiMayUse(hotelId: string, permissionKey: string): Promise<boolean> {
   const ai = await getAiAgentMemberId(hotelId);
   if (!ai) return false;
   const row = await queryOne<{ ok: boolean }>("select has_permission($1, $2) ok", [ai, permissionKey]);

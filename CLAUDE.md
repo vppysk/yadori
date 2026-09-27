@@ -18,7 +18,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `npm run db:start` / `db:stop` / `db:reset`: ローカルSupabase（Docker必須）。クラウドへの適用は `npx supabase db push --db-url "$DATABASE_URL"`
 - `npm run dev:shifts`: デモのスタッフを今日の枠に出勤させる（割り当ての確認に必要）
 - `npm run try:guest -- R-1203 "プール何時まで？"`: ゲストの1通を画面なしで処理する（`.env.local` の `LLM_MODE` に従う）
-- `npm run dev:cron`: 期限の監視（未着手の付け替え・期限切れの昇格）を1分ごとに実行（`npm run dev` と並行して起動）
+- `npm run dev:cron`: 期限の監視（`/api/cron/tickets`）と外部の情報源の取得（`/api/cron/sources`）を1分ごとに呼ぶ（`npm run dev` と並行して起動）
 - `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績を生成（`signals.demo=true`）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
 - DBのマイグレーション追加後は `npx supabase db push --db-url "$DATABASE_URL"`（`.env.local` を読み込んでから）
 - デモ用の文書は `docs/demo/`（冬季営業のお知らせのPDF・画像）
@@ -34,6 +34,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`questions.ts`（未回答→回答でRAGへ）、`staff-ask.ts`（スタッフのAI相談）
 - サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）、`src/app/manage/actions.ts`（経営）
 - MCP: `src/mcp/pms-server.ts`（予約・客室管理のモック、`/api/mcp/pms`）と `src/mcp/work-events-server.ts`（実績の出力口、`/api/mcp/work-events`）。どちらもBearerトークン必須。予約情報の読み書きは必ず `src/server/integrations/pms.ts`（変換層）を通し、項目ルールとAIの権限を確認する
+- `src/server/external-sources.ts`: 外部の情報源（管理PC `/admin/sources`）。登録したURLだけを `integrations/web-fetch.ts`（Tavily Extract）で定期取得し（`/api/cron/sources`、検索はしない）、本文が変わったときだけ中型で要約・影響判定。要約はゲストの回答とAI相談に【外部の最新情報】として渡し、回答係が `used_sources` で返した情報源を根拠に出す。要注意はスタッフに通知。期間限定で頻度を上げられる（`external_source_boosts`）。AIの権限 `integration.web_fetch.read` と項目 `external_updates` の読み取りを確認する
 - `src/server/guardrails.ts`: 応答前の引き継ぎ条件（`guardrails.code`）と応答後の禁止事項チェック。`dashboard.ts`／`replay.ts`: 簡易・精密見積もり
 - Mastraの全HTTP API（`/api/mastra/*`）は公開しない（誰でもエージェントを呼べてしまうため削除済み）
 - `src/mastra/`: Mastraのエージェント。`src/app/api/mastra/[...mastra]/route.ts` でMastraのHTTP APIを `/api/mastra/*` に公開（`prefix` とフォルダ位置を一致させる）
@@ -62,6 +63,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - 実績の記録（`recordWorkEvent`）のたびにWebhookを `after()` で送る。本文のHMAC-SHA256を `X-Hotel-Agent-Signature` に付ける
 - 案内の回答は中型（Super）が既定。小型（Lightning）はデータのない項目（朝食時間など）を推測で答えた。ルーターは小型で可
 - ルーターのLLMは品名と数量の読み取りだけ。品目マスタとの照合は `matchCatalog`（品名・別名の部分一致）で行う。LLMに照合させると、別名にある品をマスタにないと判断したり、ない品を既存品目に当てはめたりした
+- Tavily Extract は古い版を返すことがある（気象庁の予報JSONが5日前の版だった）。要約の指示で発表日時を確認させ、古ければ「最新の情報を取得できませんでした」にしている。JavaScriptで中身を読み込むページ（JR北海道の運行情報など）は本文が取れないので、元のJSONのURLを登録する
 - 画像の書き起こし（GLM-5.3-Flash）は推論オフでも `</think>` までの思考を出すので捨てる。PDFの文字は NFKC で正規化する（部首の文字で出ることがある）
 
 ## 仕様の正

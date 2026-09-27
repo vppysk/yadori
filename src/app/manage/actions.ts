@@ -3,7 +3,7 @@
 import { refresh } from "next/cache";
 import { audit, authorize, can, PermissionError } from "@/server/auth";
 import { applyAssignments, type Handler } from "@/server/dashboard";
-import { decideWrite, saveIntegration, type FieldRuleRow } from "@/server/integrations-admin";
+import { decideWrite, saveIntegration, type IntegrationInput } from "@/server/integrations-admin";
 import { saveMasters, type Masters } from "@/server/masters";
 import { grantPermission, revokeGrant, saveGroup, setMemberGroup } from "@/server/members";
 import { savePolicy, type PolicyInput } from "@/server/policy";
@@ -57,7 +57,7 @@ export async function savePolicyAction(input: PolicyInput): Promise<Result> {
   });
 }
 
-export async function saveIntegrationAction(integrationId: string, input: { readRule: string; writeRule: string; fields: FieldRuleRow[] }): Promise<Result> {
+export async function saveIntegrationAction(integrationId: string, input: IntegrationInput): Promise<Result> {
   return guard(async () => {
     const member = await authorize("settings.integrations");
     await saveIntegration(member, integrationId, input);

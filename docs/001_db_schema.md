@@ -102,3 +102,4 @@
 ## 追加のマイグレーション
 - `20260926000000_guardrail_codes.sql`: `guardrails.code`。必ず人に引き継ぐ条件のうち、アプリが判定を実装している組み込みの条件（`wants_staff`・`strong_complaint`・`unanswered_twice`・`safety`）を識別する。オン・オフは `enabled`
 - `20260926010000_order_settings.sql`: `hotels` にオーダーの割り当て設定（未着手のまま次の人へ回すまでの分数、同じフロアのまとめ、「対応できない」の理由必須）。品目・担当設定の画面で編集する
+- `20260927000000_external_sources.sql`: 外部の情報源。`external_sources`（管理者が登録したURL・見る内容・基本の取得間隔・最終取得／最終成功）、`external_source_boosts`（期間を限定して頻度を上げる。`tstzrange`、重なるときは短い間隔が有効）、`external_snapshots`（本文のハッシュと、変化したときのAIの要約・影響・スタッフへの配信文）。`integrations.kind` を `mcp`／`web_fetch` にし、Tavilyの取得を外部連携の1つ（項目 `external_updates`、読み取りのみ）として扱う。権限 `knowledge.source.edit`（登録）と `integration.web_fetch.read`（AIエージェントの取得）

@@ -27,7 +27,7 @@ export default async function NotificationsPage() {
             className={`flex flex-col gap-1 rounded-xl border bg-surface px-3.5 py-3 ${n.read_at ? "border-line" : "border-primary"}`}
           >
             <div className="flex justify-between gap-2 text-sm">
-              <strong className={n.kind === "ticket_supervisor" && n.title.includes("遅延") ? "text-danger" : ""}>{n.title}</strong>
+              <strong className={(n.kind === "ticket_supervisor" && n.title.includes("遅延")) || (n.kind === "external_update" && n.title.startsWith("【要注意】")) ? "text-danger" : ""}>{n.title}</strong>
               <time className="shrink-0 text-xs text-ink-sub">
                 {new Date(n.created_at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" })}
               </time>

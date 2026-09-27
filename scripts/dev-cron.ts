@@ -1,14 +1,17 @@
-// 開発用: 期限の監視を1分ごとに実行する（本番はホスティング先の cron から /api/cron/tickets を呼ぶ）
-const url = process.env.CRON_URL ?? "http://localhost:3000/api/cron/tickets";
+// 開発用: 定期実行を1分ごとに呼ぶ（本番はホスティング先の cron から同じURLを呼ぶ）
+// /api/cron/tickets: 期限の監視 ／ /api/cron/sources: 外部の情報源の取得
+const base = process.env.CRON_BASE_URL ?? "http://localhost:3000";
+const paths = ["/api/cron/tickets", "/api/cron/sources"];
 
-async function tick() {
+async function call(path: string) {
   try {
-    const res = await fetch(url, { headers: process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {} });
-    console.log(new Date().toLocaleTimeString("ja-JP"), res.status, await res.text());
+    const res = await fetch(`${base}${path}`, { headers: process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {} });
+    console.log(new Date().toLocaleTimeString("ja-JP"), path, res.status, await res.text());
   } catch (error) {
-    console.error("cron 呼び出しに失敗", error);
+    console.error(`${path} の呼び出しに失敗`, error);
   }
 }
 
+const tick = () => Promise.all(paths.map(call));
 void tick();
 setInterval(tick, 60_000);

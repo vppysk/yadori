@@ -1,6 +1,7 @@
 import type { Member } from "./auth";
 import { query, queryOne, transaction } from "./db";
 import { sendWrite } from "./integrations/pms";
+import { listRecentFetches, tavilyConfigured, type FetchLogRow } from "./integrations/web-fetch";
 
 // 外部連携の設定（plan 4.7）: 読み取り・書き込みルール（自然文）と、項目ごとの読み書き権限（固定の制限）
 
@@ -9,12 +10,20 @@ export const FIELD_LABELS: Record<string, string> = {
   request_history: "依頼履歴",
   guest_notes: "お客様メモ",
   billing: "料金・支払い",
+  external_updates: "外部の最新情報",
 };
 
 export type IntegrationSummary = { id: string; name: string; kind: string };
 export type FieldRuleRow = { field: string; can_read: boolean; write_mode: "none" | "append" | "write"; require_staff_confirm: boolean };
 export type WriteRow = { id: string; room_number: string | null; field: string; content: string; status: string; hold_reason: string | null; created_at: string };
-export type IntegrationDetail = IntegrationSummary & { readRule: string; writeRule: string; fields: FieldRuleRow[]; writes: WriteRow[] };
+export type IntegrationDetail = IntegrationSummary & {
+  readRule: string;
+  writeRule: string;
+  fields: FieldRuleRow[];
+  writes: WriteRow[];
+  // kind = 'web_fetch'（外部の情報源の取得）のときだけ
+  webFetch?: { sourceCount: number; fetches: FetchLogRow[]; apiKeyConfigured: boolean };
+};
 
 export async function listIntegrations(hotelId: string): Promise<IntegrationSummary[]> {
   return query<IntegrationSummary>("select id, name, kind from integrations where hotel_id = $1 and active order by name", [hotelId]);
@@ -38,13 +47,26 @@ export async function getIntegration(hotelId: string, integrationId: string): Pr
     writeRule: rules.find((r) => r.scope === "integration_write")?.body ?? "",
     fields: fields.sort((a, b) => order.indexOf(a.field) - order.indexOf(b.field)),
     writes,
+    ...(base.kind === "web_fetch"
+      ? {
+          webFetch: {
+            sourceCount: (await queryOne<{ count: number }>("select count(*)::int count from external_sources where hotel_id = $1 and active", [hotelId]))?.count ?? 0,
+            fetches: await listRecentFetches(integrationId),
+            apiKeyConfigured: tavilyConfigured(),
+          },
+        }
+      : {}),
   };
 }
 
-export async function saveIntegration(member: Member, integrationId: string, input: { readRule: string; writeRule: string; fields: FieldRuleRow[] }) {
+export type IntegrationInput = { readRule: string; writeRule: string; fields: FieldRuleRow[] };
+
+export async function saveIntegration(member: Member, integrationId: string, input: IntegrationInput) {
   await transaction(async (client) => {
     const before = await getIntegration(member.hotel_id, integrationId);
     if (!before) throw new Error("連携先が見つかりません");
+    // 外部の情報源の取得は読み取りのみ（書き込みルール・書き込み権限は持たない）
+    if (before.webFetch) input = { ...input, writeRule: "", fields: input.fields.map((f) => ({ ...f, write_mode: "none", require_staff_confirm: false })) };
     for (const [scope, body] of [["integration_read", input.readRule], ["integration_write", input.writeRule]] as const) {
       await client.query("delete from ai_instructions where integration_id = $1 and scope = $2", [integrationId, scope]);
       if (body.trim()) {
@@ -63,7 +85,10 @@ export async function saveIntegration(member: Member, integrationId: string, inp
     }
     await client.query("insert into config_revisions (hotel_id, kind, snapshot, note, created_by) values ($1, 'integrations', $2, $3, $4)", [
       member.hotel_id,
-      JSON.stringify({ before: { readRule: before.readRule, writeRule: before.writeRule, fields: before.fields }, after: input }),
+      JSON.stringify({
+        before: { readRule: before.readRule, writeRule: before.writeRule, fields: before.fields },
+        after: input,
+      }),
       `外部連携「${before.name}」の変更`,
       member.id,
     ]);

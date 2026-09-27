@@ -1,9 +1,13 @@
 "use server";
 
 import { refresh } from "next/cache";
+import type { z } from "zod";
 import { audit, authorize, PermissionError } from "@/server/auth";
 import { queryOne, transaction } from "@/server/db";
 import { deleteDocument, insertDocument } from "@/server/documents";
+import {
+  addBoost, addSource, boostInputSchema, deleteBoost, deleteSource, runSourceChecks, sourceInputSchema, updateSource,
+} from "@/server/external-sources";
 import { addNotice, deleteNotice, draftFromFile, readDocument, saveFacility, saveFacilitySchema, type ImportedDraft } from "@/server/knowledge-admin";
 import { addSlot, deleteSlot, saveItemSettings, type SaveItemsInput } from "@/server/items";
 import { previewOrder, reassignManually, registerOrder, type OrderPreview } from "@/server/order-board";
@@ -174,6 +178,72 @@ export async function deleteDocumentAction(documentId: string): Promise<Result> 
     const member = await authorize("knowledge.document.register");
     await deleteDocument(member.hotel_id, documentId);
     await audit(member, "knowledge.document.register", "document.delete", { type: "document", id: documentId });
+    refresh();
+  });
+}
+
+// ---------- 外部の情報源 ----------
+
+function parseOrThrow<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
+  const parsed = schema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "入力内容を確認してください");
+  return parsed.data;
+}
+
+export async function addSourceAction(input: unknown): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("knowledge.source.edit");
+    const data = parseOrThrow(sourceInputSchema, input);
+    const id = await addSource(member, data);
+    await audit(member, "knowledge.source.edit", "external_source.add", { type: "external_source", id }, { name: data.name, url: data.url });
+    // 登録直後に1回取得して、取れるページかをすぐ確認できるようにする
+    await runSourceChecks(member.hotel_id, [id]);
+    refresh();
+  });
+}
+
+export async function updateSourceAction(sourceId: string, patch: { active?: boolean; interval_minutes?: number }): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("knowledge.source.edit");
+    await updateSource(member, sourceId, patch);
+    await audit(member, "knowledge.source.edit", "external_source.update", { type: "external_source", id: sourceId }, patch);
+    refresh();
+  });
+}
+
+export async function deleteSourceAction(sourceId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("knowledge.source.edit");
+    await deleteSource(member, sourceId);
+    await audit(member, "knowledge.source.edit", "external_source.delete", { type: "external_source", id: sourceId });
+    refresh();
+  });
+}
+
+export async function fetchSourceNowAction(sourceId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("knowledge.source.edit");
+    await audit(member, "knowledge.source.edit", "external_source.fetch_now", { type: "external_source", id: sourceId });
+    await runSourceChecks(member.hotel_id, [sourceId]);
+    refresh();
+  });
+}
+
+export async function addBoostAction(input: unknown): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("knowledge.source.edit");
+    const data = parseOrThrow(boostInputSchema, input);
+    await addBoost(member, data);
+    await audit(member, "knowledge.source.edit", "external_source.boost_add", undefined, data);
+    refresh();
+  });
+}
+
+export async function deleteBoostAction(boostId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("knowledge.source.edit");
+    await deleteBoost(member, boostId);
+    await audit(member, "knowledge.source.edit", "external_source.boost_delete", { type: "external_source_boost", id: boostId });
     refresh();
   });
 }

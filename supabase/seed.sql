@@ -42,13 +42,13 @@ union all
 select '00000000-0000-0000-0000-00000000b003', k
 from unnest(array[
   'order.create', 'order.board.view', 'knowledge.question.answer', 'handling.handoff.accept', 'handling.complaint.view',
-  'order.reassign', 'knowledge.facility.edit', 'knowledge.notice.edit', 'knowledge.document.register', 'settings.items'
+  'order.reassign', 'knowledge.facility.edit', 'knowledge.notice.edit', 'knowledge.document.register', 'knowledge.source.edit', 'settings.items'
 ]) k
 union all
 select '00000000-0000-0000-0000-00000000b004', key from permissions where category <> 'integration'
 union all
 select '00000000-0000-0000-0000-00000000b005', k
-from unnest(array['order.create', 'handling.handoff.create', 'integration.pms.read', 'integration.pms.append']) k
+from unnest(array['order.create', 'handling.handoff.create', 'integration.pms.read', 'integration.pms.append', 'integration.web_fetch.read']) k
 union all
 select '00000000-0000-0000-0000-00000000b006', 'integration.work_events.read';
 
@@ -164,6 +164,19 @@ insert into ai_instructions (hotel_id, scope, integration_id, body) values
    E'・予約内容（部屋番号、滞在日、人数、プラン）と滞在中の依頼履歴を参照する\n・お客様メモのうち「記念日」「お好み」の項目は、案内を個別に合わせるために使ってよい\n・お客様メモにある内容を、お客様本人に「記録されています」と伝えない'),
   ('00000000-0000-0000-0000-000000000001', 'integration_write', '00000000-0000-0000-0000-000000009001',
    E'・スタッフに引き継いだ案件は、お客様メモに次の形式で追記する 【AI引継】日時／ご要望の要約／AIが案内した内容／引き継ぎ先\n・次回以降のご滞在でも役立つ情報（記念日、枕や室温のお好みなど）は「お好み」欄に追記する\n・クレームは事実と経過のみを書き、スタッフ個人を評価する表現は使わない\n・既存の記載は書き換えず、必ず追記する');
+
+-- ---------- 外部連携（外部の情報源の取得・Tavily） ----------
+-- 監視するURL（external_sources）は管理者が管理PCで登録する（情報源の信頼性の確認は登録者の責務）
+
+insert into integrations (id, hotel_id, name, kind) values
+  ('00000000-0000-0000-0000-000000009002', '00000000-0000-0000-0000-000000000001', '外部の情報源（Tavily）', 'web_fetch');
+
+insert into integration_field_rules (integration_id, field, can_read, write_mode, require_staff_confirm) values
+  ('00000000-0000-0000-0000-000000009002', 'external_updates', true, 'none', false);
+
+insert into ai_instructions (hotel_id, scope, integration_id, body) values
+  ('00000000-0000-0000-0000-000000000001', 'integration_read', '00000000-0000-0000-0000-000000009002',
+   E'・運行情報・天気・イベントなど、ご案内に関係するときだけ使う\n・「○時○分時点の○○の情報では」のように、取得した時刻と情報源を添える\n・運休や荒天のときは、代わりの手段や時間に余裕を持つことを提案し、詳しくはフロントにおつなぎすると伝える');
 
 insert into mock_pms.reservations (id, hotel_id, guest_name, room_number, check_in, check_out, adults, plan_name, total_amount_jpy) values
   ('R-1203', '00000000-0000-0000-0000-000000000001', 'サンプル 太郎', '1203', '2026-09-24', '2026-09-27', 2, '朝食付き', 72000),

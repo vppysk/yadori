@@ -2,7 +2,7 @@ import type { FacilityInfo } from "./knowledge";
 
 // ゲスト向けの回答とスタッフのAI相談で共通の、回答に渡す館内情報の組み立てと根拠の表示
 
-export type Citation = { kind: "notice" | "stay_date" | "document"; label: string };
+export type Citation = { kind: "notice" | "stay_date" | "document" | "web"; label: string; url?: string };
 
 export const fmtDate = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 
