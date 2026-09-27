@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { facilityRef, fieldKey, findConflicts, parseFacilityRef, periodText, toCandidates } from "@/server/facility-fields";
 import type { DraftRow, SourceReview } from "@/server/info-sources";
-import { approveInfoSourceAction } from "../../../actions";
+import type { UrlSettings } from "@/server/source-fetch";
+import { approveInfoSourceAction, dismissUpdateAction, setExternalAction } from "../../../actions";
+import { UrlPanel } from "./url-panel";
 
 let keySeq = 0;
 const newKey = () => `new-${++keySeq}`;
@@ -16,7 +18,7 @@ const noticeCard = "overflow-hidden rounded-xl border border-[#E6C99E] bg-[#FFFB
 
 // 資料の確認画面（docs/002_facility_master_design.md）:
 // 1. 新しい施設・新しい項目を「新しく作る／既存と同じ」で確かめる 2. 読み取った内容を直す 3. 期間の重なりで優先する方を選ぶ → 承認
-export function SourceReviewView({ review }: { review: SourceReview }) {
+export function SourceReviewView({ review, urlSettings }: { review: SourceReview; urlSettings?: UrlSettings }) {
   const router = useRouter();
   const [rows, setRows] = useState<DraftRow[]>(review.rows);
   const [winner, setWinner] = useState<Record<string, string>>({});
@@ -79,14 +81,49 @@ export function SourceReviewView({ review }: { review: SourceReview }) {
               資料
             </Link>
             {" ／ "}
-            {review.status === "pending" ? "確認待ち" : "承認済み"}
+            {review.status === "pending" ? "確認待ち" : review.status === "update_pending" ? "更新の確認待ち" : "承認済み"}
           </div>
           <h1 className="text-[22px] font-bold">{review.title}</h1>
+          <label className="flex min-h-9 items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={review.isExternal}
+              disabled={pending}
+              onChange={(e) =>
+                startTransition(async () => {
+                  const r = await setExternalAction(review.id, e.target.checked);
+                  if (!r.ok) setMessage({ kind: "error", text: r.error });
+                })
+              }
+              className="size-4"
+            />
+            外部情報（ホテル以外が管理している資料）。案内では出どころを添えます
+          </label>
         </div>
         <button type="button" disabled={pending || unresolved.length > 0} onClick={onApprove} className="min-h-11 rounded-[10px] bg-primary px-5.5 text-sm font-bold text-white disabled:opacity-40">
-          {pending ? "承認中…" : review.status === "pending" ? "この内容で承認" : "修正して承認"}
+          {pending ? "承認中…" : review.status === "approved" ? "修正して承認" : "この内容で承認"}
         </button>
       </div>
+      {review.status === "update_pending" && (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-lg bg-caution-soft px-3.5 py-2.5 text-sm">
+          <span className="flex-1">Webページが更新されました。下は新しい版から読み取った内容です。承認するまでは、前の版の内容で案内します。</span>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() =>
+              startTransition(async () => {
+                const r = await dismissUpdateAction(review.id);
+                if (!r.ok) return setMessage({ kind: "error", text: r.error });
+                router.refresh();
+              })
+            }
+            className="min-h-10 rounded-lg border border-line-input bg-surface px-3"
+          >
+            この更新を見送る
+          </button>
+        </div>
+      )}
+      {urlSettings && <UrlPanel sourceId={review.id} settings={urlSettings} />}
 
       <p className="text-sm text-ink-sub">
         AIが資料から読み取った内容です。施設・項目・期間・内容が正しいかを確認してください。直すところは直し、不要な行は×で消してから承認します。
@@ -236,7 +273,7 @@ export function SourceReviewView({ review }: { review: SourceReview }) {
 
       <details className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">
         <summary className="cursor-pointer font-bold">資料の本文（読み取りの元）</summary>
-        <pre className="mt-2 font-sans text-sm leading-relaxed whitespace-pre-wrap text-ink-sub">{review.body}</pre>
+        <pre className="mt-2 max-h-96 overflow-y-auto font-sans text-sm leading-relaxed break-all whitespace-pre-wrap text-ink-sub">{review.body}</pre>
       </details>
     </main>
   );

@@ -11,11 +11,12 @@ import {
   declineTicketAction,
   endShiftAction,
   logoutAction,
+  replyCheckAction,
   startShiftAction,
   startTicketAction,
 } from "../../actions";
 
-// 新しい割り当てや付け替えを拾うための再読み込み間隔
+// 新しい割り当てや再割り当てを拾うための再読み込み間隔
 const REFRESH_MS = 20_000;
 
 const WEIGHT = {
@@ -170,6 +171,7 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
                 <div className="text-[13px] font-bold text-primary">{fmtTime(t.requested_for, timezone)} にお届け（時間指定）</div>
               )}
               {t.note && <div className="rounded-lg bg-canvas px-3 py-2 text-[13px] leading-normal">備考：{t.note}</div>}
+              {t.check_pending && <CheckPanel ticket={t} pending={pending} run={run} />}
               {declining === t.id ? (
                 <div className="flex flex-col gap-2">
                   <span className="text-xs text-ink-sub">理由を選ぶと、枠内の次の人に割り当てます</span>
@@ -231,6 +233,56 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
         </div>
       </main>
     </>
+  );
+}
+
+const CHECK_SOURCE: Record<string, string> = {
+  overdue: "お届けの期限を過ぎました",
+  guest: "ゲストから状況の確認がありました",
+  supervisor: "上長から状況の確認です",
+};
+const ETA_CHOICES = [5, 10, 15];
+
+// 状況の確認への返事（docs/005_order.md 6章）。定型の返事＋任意の一言。一言は上長だけに見え、ゲストには出ない
+function CheckPanel({ ticket: t, pending, run }: { ticket: MyTicket; pending: boolean; run: (fn: () => Promise<void>) => void }) {
+  const [note, setNote] = useState("");
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-caution bg-caution-soft p-3">
+      <strong className="text-[13px] text-caution">
+        状況を教えてください：{CHECK_SOURCE[t.check_source ?? ""] ?? ""}
+        {t.check_message ? `「${t.check_message}」` : ""}
+      </strong>
+      <input
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        maxLength={200}
+        placeholder="一言（任意・上長に届きます）"
+        aria-label="上長への一言"
+        className="min-h-11 rounded-lg border border-line-input bg-surface px-3 text-sm"
+      />
+      <span className="text-xs text-ink-sub">向かっています（到着まで）</span>
+      <div className="grid grid-cols-3 gap-1.5">
+        {ETA_CHOICES.map((m) => (
+          <button
+            key={m}
+            type="button"
+            disabled={pending}
+            onClick={() => run(() => replyCheckAction(t.id, "on_the_way", m, note))}
+            className="min-h-11 rounded-lg bg-primary text-[13px] font-bold text-white disabled:opacity-50"
+          >
+            {m}分
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => run(() => replyCheckAction(t.id, "cannot", null, note))}
+        className="min-h-11 rounded-lg border border-line-input bg-surface text-[13px] disabled:opacity-50"
+      >
+        対応できない（ほかの人に回す）
+      </button>
+    </div>
   );
 }
 

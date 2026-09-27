@@ -135,7 +135,7 @@ export async function createTickets(client: PoolClient, params: CreateParams): P
   return created;
 }
 
-// 割り当て: 枠の中で次の人を選ぶ。枠に出勤者がいなければ上長（付け替えの権限を持つ人）に知らせて手動で割り当ててもらう
+// 割り当て: 枠の中で次の人を選ぶ。枠に出勤者がいなければ上長（手動割り当ての権限を持つ人）に知らせて手動で割り当ててもらう
 export async function dispatchTicket(client: PoolClient, hotel: Hotel, ticketId: string, actorId?: string) {
   const { rows } = await client.query<{ slot_id: string | null; room_id: string; room_number: string; items: string }>(
     `update tickets t set dispatched_at = now() where t.id = $1 and t.dispatched_at is null and t.status = 'new'
@@ -178,6 +178,46 @@ export async function dispatchScheduled(hotel: Hotel, actorId?: string) {
   );
   for (const { id } of due) await transaction((client) => dispatchTicket(client, hotel, id, actorId));
   return due.length;
+}
+
+// 担当者なしのチケットを拾い直す（定期実行と、枠に出勤したとき）。出勤者が出たら自動で割り当てる（docs/005_order.md 5章）
+export async function assignUnassigned(hotel: Hotel, slotId?: string, actorId?: string) {
+  const targets = await query<{ id: string; slot_id: string }>(
+    `select t.id, t.slot_id from tickets t
+     where t.hotel_id = $1 and t.status = 'new' and t.dispatched_at is not null and t.assignee_id is null and t.slot_id is not null
+       and ($2::uuid is null or t.slot_id = $2)
+       and exists (select 1 from slot_shifts ss where ss.slot_id = t.slot_id and ss.work_date = $3 and ss.ended_at is null)
+     order by t.due_at`,
+    [hotel.id, slotId ?? null, localNow(hotel.timezone).date],
+  );
+  let assigned = 0;
+  for (const target of targets) {
+    const ok = await transaction(async (client) => {
+      await client.query("select pg_advisory_xact_lock(hashtext($1))", [target.slot_id]);
+      const { rows } = await client.query<{ room_id: string; room_number: string; items: string }>(
+        `select t.room_id, t.room_number,
+           (select string_agg(l.item_name || ' × ' || l.quantity, '・' order by l.id) from ticket_lines l where l.ticket_id = t.id) items
+         from tickets t where t.id = $1 and t.assignee_id is null and t.status = 'new' for update`,
+        [target.id],
+      );
+      const ticket = rows[0];
+      if (!ticket) return false;
+      const room = await getRoom(client, hotel.id, ticket.room_id);
+      const assignee = await pickAssignee(client, hotel, target.slot_id, room);
+      if (!assignee) return false;
+      await client.query("update tickets set assignee_id = $2, assigned_at = now(), assignment_mode = 'auto' where id = $1", [target.id, assignee.id]);
+      await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'assigned', $2, $3, $4)", [
+        target.id, assignee.id, actorId ?? null, `担当者なしだったため、出勤者に割り当て（${assignee.reason}）`,
+      ]);
+      await client.query(
+        "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_assigned', $2, $3, 'ticket', $4)",
+        [assignee.id, `${ticket.room_number}号室のオーダー`, ticket.items, target.id],
+      );
+      return true;
+    });
+    if (ok) assigned++;
+  }
+  return assigned;
 }
 
 // 役割 × エリア（部屋のエリア）の枠。エリアを持たない全館担当の枠も候補にし、エリアの枠を優先する
@@ -233,12 +273,22 @@ export type GuestTicket = {
   note: string | null;
   created_at: string;
   lines: { item: string; quantity: number }[];
+  // 状況（docs/005_order.md 6章）。dispatched=false は時間指定で割り当て前
+  dispatched: boolean;
+  check_pending: boolean;
+  check_reply: "on_the_way" | "cannot" | null;
+  check_eta_at: string | null;
+  // 「状況を確認する」を続けて押せない間
+  nudge_cooling: boolean;
 };
 
 export async function listConversationTickets(conversationId: string): Promise<GuestTicket[]> {
   return query<GuestTicket>(
     `select t.id, t.status, ${ISO_TIMESTAMP("t.created_at")} created_at,
        case when t.requested_for is null then null else ${ISO_TIMESTAMP("t.requested_for")} end requested_for, t.note,
+       t.dispatched_at is not null dispatched, t.check_requested_at is not null and t.check_replied_at is null check_pending, t.check_reply,
+       case when t.check_eta_at is null then null else ${ISO_TIMESTAMP("t.check_eta_at")} end check_eta_at,
+       coalesce(t.last_nudged_at > now() - interval '3 minutes', false) nudge_cooling,
        round(extract(epoch from (t.due_at - t.created_at)) / 60)::int due_minutes_total,
        coalesce(json_agg(json_build_object('item', l.item_name, 'quantity', l.quantity) order by l.id), '[]') lines
      from tickets t left join ticket_lines l on l.ticket_id = t.id

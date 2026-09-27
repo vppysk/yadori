@@ -6,13 +6,14 @@ import { audit, authorize, PermissionError } from "@/server/auth";
 import { queryOne, transaction } from "@/server/db";
 import { deleteDocument, insertDocument } from "@/server/documents";
 import {
-  addBoost, addSource, boostInputSchema, deleteBoost, deleteSource, runSourceChecks, sourceInputSchema, updateSource,
-} from "@/server/external-sources";
+  addBoost, boostInputSchema, createUrlSource, deleteBoost, dismissUpdate, runUrlSourceChecks, setReflectMode, updateUrlSettings, urlSourceSchema,
+} from "@/server/source-fetch";
 import { parseFacilityRef } from "@/server/facility-fields";
-import { approveSchema, approveSource, createSource, deleteSource as deleteInfoSource, sourceFacilityIds } from "@/server/info-sources";
+import { approveSchema, approveSource, createSource, deleteSource as deleteInfoSource, setExternal, sourceFacilityIds } from "@/server/info-sources";
 import { addNotice, deleteNotice, previewNotice, readDocument } from "@/server/knowledge-admin";
 import { addArea, addSlot, deleteArea, deleteSlot, saveItemSettings, setFloorArea, setSeats, type SaveItemsInput } from "@/server/items";
-import { previewAssignment, reassignManually, registerOrder, type AssignmentPreview, type RegisterOrderInput } from "@/server/order-board";
+import { requestCheckBySupervisor } from "@/server/order-checks";
+import { assignManually, previewAssignment, registerOrder, type AssignmentPreview, type RegisterOrderInput } from "@/server/order-board";
 import { answerGap, dismissGap, getConversationMessages, type AnswerResult, type ConversationMessage } from "@/server/questions";
 import { acceptHandoff, closeHandoff, replyToGuest } from "@/server/staff-work";
 
@@ -30,11 +31,27 @@ async function guard<T>(fn: () => Promise<T>): Promise<Result<T>> {
   }
 }
 
-// ---------- 資料（館内の情報の出どころ）: 登録 → AIの読み取り → 確認して承認 ----------
+// ---------- 資料（案内情報の出どころ）: 登録 → AIの読み取り → 確認して承認（docs/006_guide_info.md） ----------
 
 export async function createInfoSourceAction(formData: FormData): Promise<Result<string>> {
   return guard(async () => {
     const member = await authorize("knowledge.facility.edit");
+    const isExternal = formData.get("is_external") === "on";
+    const url = String(formData.get("url") ?? "").trim();
+    // URLはその場で取得して読み取る。以降は定期取得で変わったら読み直して承認を依頼する
+    if (url) {
+      const data = parseOrThrow(urlSourceSchema, {
+        title: String(formData.get("title") ?? "").trim().slice(0, 120),
+        url,
+        purpose: String(formData.get("purpose") ?? ""),
+        interval_minutes: Number(formData.get("interval_minutes")),
+        is_external: isExternal,
+        reflect_mode: formData.get("reflect_mode") === "auto" ? "auto" : "approval",
+      });
+      const id = await createUrlSource(member, data);
+      await audit(member, "knowledge.facility.edit", "source.create", { type: "info_source", id }, { title: data.title, url, external: isExternal, reflect: data.reflect_mode });
+      return id;
+    }
     const file = formData.get("file");
     let body = String(formData.get("text") ?? "").trim();
     let fileName: string | null = null;
@@ -45,8 +62,8 @@ export async function createInfoSourceAction(formData: FormData): Promise<Result
     const title = String(formData.get("title") ?? "").trim().slice(0, 120) || fileName || "";
     if (!title) throw new Error("資料の名前を入力してください");
     if (!body.trim()) throw new Error("文章を入力するか、ファイルを選んでください");
-    const id = await createSource(member, { title, fileName, body: body.slice(0, 50_000) });
-    await audit(member, "knowledge.facility.edit", "source.create", { type: "info_source", id }, { title, file: fileName });
+    const id = await createSource(member, { title, fileName, body: body.slice(0, 50_000), isExternal });
+    await audit(member, "knowledge.facility.edit", "source.create", { type: "info_source", id }, { title, file: fileName, external: isExternal });
     return id;
   });
 }
@@ -154,11 +171,23 @@ export async function registerOrderAction(input: RegisterOrderInput): Promise<Re
   });
 }
 
-export async function reassignAction(ticketId: string, slotId: string, toMemberId: string): Promise<Result> {
+// 手動割り当て。ほかの枠の人に割り当てるときは、移す先の枠の権限も確認する
+export async function assignManuallyAction(ticketId: string, slotId: string, toMemberId: string, toSlotId: string): Promise<Result> {
   return guard(async () => {
     const member = await authorize("order.reassign", slotId);
-    await reassignManually(member, ticketId, toMemberId);
-    await audit(member, "order.reassign", "ticket.reassign", { type: "ticket", id: ticketId }, { to: toMemberId });
+    if (toSlotId !== slotId) await authorize("order.reassign", toSlotId);
+    await assignManually(member, ticketId, toMemberId, toSlotId);
+    await audit(member, "order.reassign", "ticket.assign_manually", { type: "ticket", id: ticketId }, { to: toMemberId, slot: toSlotId });
+    refresh();
+  });
+}
+
+// 上長の「担当者に確認」。担当者に状況の確認を送る（docs/005_order.md 6章）
+export async function requestCheckAction(ticketId: string, slotId: string, message: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("order.reassign", slotId);
+    await requestCheckBySupervisor(member, ticketId, message.slice(0, 200));
+    await audit(member, "order.reassign", "ticket.request_check", { type: "ticket", id: ticketId }, { message });
     refresh();
   });
 }
@@ -256,68 +285,77 @@ export async function deleteDocumentAction(documentId: string): Promise<Result> 
   });
 }
 
-// ---------- 外部の情報源 ----------
-
 function parseOrThrow<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "入力内容を確認してください");
   return parsed.data;
 }
 
-export async function addSourceAction(input: unknown): Promise<Result> {
+export async function setExternalAction(sourceId: string, isExternal: boolean): Promise<Result> {
   return guard(async () => {
-    const member = await authorize("knowledge.source.edit");
-    const data = parseOrThrow(sourceInputSchema, input);
-    const id = await addSource(member, data);
-    await audit(member, "knowledge.source.edit", "external_source.add", { type: "external_source", id }, { name: data.name, url: data.url });
-    // 登録直後に1回取得して、取れるページかをすぐ確認できるようにする
-    await runSourceChecks(member.hotel_id, [id]);
+    const member = await authorize("knowledge.facility.edit");
+    await setExternal(member, sourceId, isExternal);
+    await audit(member, "knowledge.facility.edit", "source.external", { type: "info_source", id: sourceId }, { isExternal });
     refresh();
   });
 }
 
-export async function updateSourceAction(sourceId: string, patch: { active?: boolean; interval_minutes?: number }): Promise<Result> {
+// ---------- URLの資料: 取得の設定・今すぐ取得・更新の見送り・期間を限定して頻度を上げる ----------
+
+export async function updateUrlSettingsAction(sourceId: string, patch: { active?: boolean; interval_minutes?: number }): Promise<Result> {
   return guard(async () => {
-    const member = await authorize("knowledge.source.edit");
-    await updateSource(member, sourceId, patch);
-    await audit(member, "knowledge.source.edit", "external_source.update", { type: "external_source", id: sourceId }, patch);
+    const member = await authorize("knowledge.facility.edit");
+    await updateUrlSettings(member, sourceId, patch);
+    await audit(member, "knowledge.facility.edit", "source.url_settings", { type: "info_source", id: sourceId }, patch);
     refresh();
   });
 }
 
-export async function deleteSourceAction(sourceId: string): Promise<Result> {
+// 反映のしかた（承認して反映／自動反映）を変える。前の方式の内容を消し、すぐ取り直す
+export async function setReflectModeAction(sourceId: string, mode: "approval" | "auto"): Promise<Result> {
   return guard(async () => {
-    const member = await authorize("knowledge.source.edit");
-    await deleteSource(member, sourceId);
-    await audit(member, "knowledge.source.edit", "external_source.delete", { type: "external_source", id: sourceId });
+    const member = await authorize("knowledge.facility.edit");
+    await setReflectMode(member, sourceId, mode);
+    await audit(member, "knowledge.facility.edit", "source.reflect_mode", { type: "info_source", id: sourceId }, { mode });
+    await runUrlSourceChecks(member.hotel_id, [sourceId]);
     refresh();
   });
 }
 
-export async function fetchSourceNowAction(sourceId: string): Promise<Result> {
+export async function fetchUrlSourceNowAction(sourceId: string): Promise<Result> {
   return guard(async () => {
-    const member = await authorize("knowledge.source.edit");
-    await audit(member, "knowledge.source.edit", "external_source.fetch_now", { type: "external_source", id: sourceId });
-    await runSourceChecks(member.hotel_id, [sourceId]);
+    const member = await authorize("knowledge.facility.edit");
+    await audit(member, "knowledge.facility.edit", "source.fetch_now", { type: "info_source", id: sourceId });
+    const result = await runUrlSourceChecks(member.hotel_id, [sourceId]);
+    if ("skipped" in result && result.skipped) throw new Error(result.skipped);
     refresh();
   });
 }
 
-export async function addBoostAction(input: unknown): Promise<Result> {
+export async function dismissUpdateAction(sourceId: string): Promise<Result> {
   return guard(async () => {
-    const member = await authorize("knowledge.source.edit");
+    const member = await authorize("knowledge.facility.edit");
+    await dismissUpdate(member, sourceId);
+    await audit(member, "knowledge.facility.edit", "source.dismiss_update", { type: "info_source", id: sourceId });
+    refresh();
+  });
+}
+
+export async function addBoostAction(sourceId: string, input: unknown): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("knowledge.facility.edit");
     const data = parseOrThrow(boostInputSchema, input);
-    await addBoost(member, data);
-    await audit(member, "knowledge.source.edit", "external_source.boost_add", undefined, data);
+    await addBoost(member, sourceId, data);
+    await audit(member, "knowledge.facility.edit", "source.boost_add", { type: "info_source", id: sourceId }, data);
     refresh();
   });
 }
 
 export async function deleteBoostAction(boostId: string): Promise<Result> {
   return guard(async () => {
-    const member = await authorize("knowledge.source.edit");
+    const member = await authorize("knowledge.facility.edit");
     await deleteBoost(member, boostId);
-    await audit(member, "knowledge.source.edit", "external_source.boost_delete", { type: "external_source_boost", id: boostId });
+    await audit(member, "knowledge.facility.edit", "source.boost_delete", { type: "info_source_boost", id: boostId });
     refresh();
   });
 }

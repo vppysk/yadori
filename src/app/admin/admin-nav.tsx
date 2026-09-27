@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logoutAction } from "../staff/actions";
 
-export type AdminNavItem = { href: string; label: string; exact?: boolean; ready?: boolean; allowed?: boolean };
+// badge: 自動反映で更新された資料など、まだ見ていない件数（0なら出さない）
+export type AdminNavItem = { href: string; label: string; exact?: boolean; ready?: boolean; allowed?: boolean; badge?: number };
 
 export function AdminNav({ hotelName, memberName, items }: { hotelName: string; memberName: string; items: AdminNavItem[] }) {
   const pathname = usePathname();
@@ -29,9 +30,14 @@ export function AdminNav({ hotelName, memberName, items }: { hotelName: string; 
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`flex min-h-11 items-center rounded-[10px] px-3 text-sm ${active ? "bg-dark-2 font-bold" : "hover:bg-dark-2"}`}
+            className={`flex min-h-11 items-center justify-between rounded-[10px] px-3 text-sm ${active ? "bg-dark-2 font-bold" : "hover:bg-dark-2"}`}
           >
             {item.label}
+            {item.badge ? (
+              <span className="min-w-5 rounded-full bg-caution px-1.5 text-center text-[11px] font-bold text-white" aria-label={`未確認の更新 ${item.badge}件`}>
+                {item.badge}
+              </span>
+            ) : null}
           </Link>
         );
       })}

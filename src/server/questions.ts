@@ -71,7 +71,7 @@ const destinationSchema = z.object({
 
 export type AnswerResult = { destination: "faq" } | { destination: "source"; sourceId: string };
 
-// 回答を登録する。確定した回答文で登録先を判定し、期間のある内容は資料にして館内の情報の確認・承認に回す（迷うときは資料）
+// 回答を登録する。確定した回答文で登録先を判定し、期間のある内容は資料にして案内情報の確認・承認に回す（迷うときは資料）
 export async function answerGap(member: Member, gapId: string, answer: string): Promise<AnswerResult> {
   const gap = await queryOne<{ question: string }>("select question from knowledge_gaps where id = $1 and hotel_id = $2 and status = 'open'", [
     gapId, member.hotel_id,
@@ -95,7 +95,7 @@ export async function answerGap(member: Member, gapId: string, answer: string): 
   await recordLlmCall({ hotelId: member.hotel_id, purpose: "knowledge_destination", thinking: false, usage });
 
   if (object.kind === "source") {
-    // 資料はAIが施設・項目・期間を読み取り、館内の情報でスタッフが承認したものだけを回答に使う
+    // 資料はAIが施設・項目・期間を読み取り、案内情報でスタッフが承認したものだけを回答に使う
     const sourceId = await createSource(member, { title: `未回答の質問から: ${gap.question}`.slice(0, 200), fileName: null, body: text });
     await query(
       "update knowledge_gaps set status = 'answered', answer = $2, answered_by = $3, answered_at = now(), source_id = $4 where id = $1 and status = 'open'",

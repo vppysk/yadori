@@ -18,7 +18,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `npm run db:start` / `db:stop` / `db:reset`: ローカルSupabase（Docker必須）。クラウドへの適用は `npx supabase db push --db-url "$DATABASE_URL"`
 - `npm run dev:shifts`: デモのスタッフを今日の枠に出勤させる（割り当ての確認に必要）
 - `npm run try:guest -- R-1203 "プール何時まで？"`: ゲストの1通を画面なしで処理する（`.env.local` の `LLM_MODE` に従う）
-- `npm run dev:cron`: 期限の監視（`/api/cron/tickets`）、外部の情報源の取得（`/api/cron/sources`）、会話ログの定期評価（`/api/cron/knowledge-review`、1日1回・現地3時以降）を1分ごとに呼ぶ（`npm run dev` と並行して起動）
+- `npm run dev:cron`: 期限の監視（`/api/cron/tickets`）、URLの資料の定期取得（`/api/cron/sources`）、会話ログの定期評価（`/api/cron/knowledge-review`、1日1回・現地3時以降）を1分ごとに呼ぶ（`npm run dev` と並行して起動）
 - `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績を生成（`signals.demo=true`）／ `npm run dev:seed-alerts`: 対応アラートに分類ごとの未対応・対応中を入れる（予約番号 `DEMO-*` の架空の会話）／ `npm run dev:seed-gaps`: 未回答の質問を、定期評価が今日3時に実行された状態で入れる（予約番号 `DEMO-GAP-*` の前日の会話）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
 - DBのマイグレーション追加後は `npx supabase db push --db-url "$DATABASE_URL"`（`.env.local` を読み込んでから）
 - デモ・検証用の資料は `docs/demo/`（冬季営業のお知らせのPDF・画像、施設の取り違えと新しい施設の確認用の文章。使い方と期待する読み取りは `docs/demo/README.md`）
@@ -35,7 +35,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`info-sources.ts`（資料: 施設ごとの読み取り・根拠の確認・承認と優先度）、`facility-fields.ts`（値の期間・重なり・優先度の純粋関数。確認画面でも使う）、`questions.ts`（未回答の質問の一覧と回答。期間のない回答はよくある質問（RAG）、期間のある回答は資料へ）、`knowledge-review.ts`（会話ログの定期評価で未回答の質問を見つける。`/api/cron/knowledge-review`）、`staff-ask.ts`（スタッフのAI相談）
 - サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）。管理PCのサイドバーは `src/app/admin/nav-items.ts`（ホームはなく、`/admin` は一番上へ移る）、`src/app/manage/actions.ts`（経営）
 - MCP: `src/mcp/pms-server.ts`（予約・客室管理のモック、`/api/mcp/pms`）と `src/mcp/work-events-server.ts`（実績の出力口、`/api/mcp/work-events`）。どちらもBearerトークン必須。予約情報の読み書きは必ず `src/server/integrations/pms.ts`（変換層）を通し、項目ルールとAIの権限を確認する
-- `src/server/external-sources.ts`: 外部の情報源（管理PC `/admin/sources`）。登録したURLだけを `integrations/web-fetch.ts`（Tavily Extract）で定期取得し（`/api/cron/sources`、検索はしない）、本文が変わったときだけ中型で要約・影響判定。要約はゲストの回答とAI相談に【外部の最新情報】として渡し、回答係が `used_sources` で返した情報源を根拠に出す。要注意はスタッフに通知。期間限定で頻度を上げられる（`external_source_boosts`）。AIの権限 `integration.web_fetch.read` と項目 `external_updates` の読み取りを確認する
+- `src/server/source-fetch.ts`: URLの資料（管理PCの案内情報 → 資料）。反映のしかたを資料ごとに選ぶ（`reflect_mode`）。自動反映は値に読み取らず、取得のたびに中型で要約・影響判定して【自動取得の最新情報】として回答に渡し、変わったら管理PCのバッジ（`unseen_update`）と、影響があれば現場スマホに通知する。以下は承認して反映の場合: 登録時に `integrations/web-fetch.ts`（Tavily Extract）で取得して読み取り、確認・承認する。定期取得（`/api/cron/sources`、検索はしない）で本文が変わったら読み直して「更新の確認待ち」（`update_pending`）にし、承認で差し替える（承認までは前の版で案内）。資料を承認できる人に通知。期間限定で頻度を上げられる（`info_source_boosts`）。定期取得はAIの権限 `integration.web_fetch.read` と項目 `external_updates` の読み取りを確認する。旧「外部の情報源」（`external-sources.ts`・【外部の最新情報】）は統合して削除した（`docs/006_guide_info.md`）
 - 引き継ぎの種類はきっかけごとに保存し、管理PC `/admin/handoffs`（対応アラート）の分類は `src/lib/handoff-kinds.ts` でまとめる。LLMの失敗は `src/lib/llm/errors.ts` の `classifyLlmError` で原因を分け、`system_error` の引き継ぎに残す（期待した出力が返らないときは `InvalidOutputError` を投げる）
 - `src/server/guardrails.ts`: 応答前の引き継ぎ条件（`guardrails.code`）と応答後の禁止事項チェック。`dashboard.ts`／`replay.ts`: 簡易・精密見積もり
 - Mastraの全HTTP API（`/api/mastra/*`）は公開しない（誰でもエージェントを呼べてしまうため削除済み）
@@ -67,7 +67,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - 案内の回答は中型（Super）が既定。小型（Lightning）はデータのない項目（朝食時間など）を推測で答えた。ルーターは小型で可
 - ルーターは「スタッフと話したい」自体を complaint の要望にすることがある。指示で禁止し、`wants_staff` のときは短い要約の会話希望を要望から除いている（`router.ts` の `isTalkRequestOnly`）。人への引き継ぎは、同じ発言のオーダー発行とクレームの引き継ぎを済ませてから行う
 - ルーターのLLMは品名・数量・備考・希望の時刻（本日／明日＋時刻）の読み取りだけ。品目との照合は `order-match.ts` のコードで行い、候補を広めに出してゲストが選択欄で確定する。LLMに照合させると、別名にある品をマスタにないと判断したり、ない品を既存品目に当てはめたりした
-- Tavily Extract は古い版を返すことがある（気象庁の予報JSONが5日前の版だった）。要約の指示で発表日時を確認させ、古ければ「最新の情報を取得できませんでした」にしている。JavaScriptで中身を読み込むページ（JR北海道の運行情報など）は本文が取れないので、元のJSONのURLを登録する
+- Tavily Extract は古い版を返すことがある（気象庁の予報JSONが5日前の版だった）。JavaScriptで中身を読み込むページ（JR北海道の運行情報など）は本文が取れないので、元のJSONのURLを登録する
 - 資料の読み取り（`info-sources.ts`）は、施設の洗い出し → 施設ごとに1回ずつ（「全体」は毎回）。全施設を一度に読ませると主な施設に引っ張られてほかの施設の記述を落とした。施設ごとだと別の施設の内容を取り違える（大浴場に「ランチ 休業」など）ので、先に該当する文（`quotes`）を抜き出させ、時刻・金額・タイトル・「休」がその中にない件、「全体」でほかの施設と同じ件、「通常どおり」だけの件はコードで捨てる。施設名・項目名は enum にせずコードで照合する（enum だと短く書かれて弾かれ、再試行で内容ごと落とした）。指示だけでは防げなかったものはコードの規則にしている
 - 資料の原文を毎回LLMに渡すと、期間の違う情報が混ざったときに滞在日に合わない内容を答えた（提供期間外のメニューの料金など）。承認済みの値を滞在日で絞って渡す
 - 画像の書き起こし（GLM-5.3-Flash）は推論オフでも `</think>` までの思考を出すので捨てる。PDFの文字は NFKC で正規化する（部首の文字で出ることがある）
@@ -89,7 +89,7 @@ TypeScriptで統一: Next.js（App Router）＋ Mastra（Next.jsに組み込み�
 
 ## アーキテクチャ上、複数章を読まないと分からない設計判断
 
-- **館内の情報は施設×項目×期間の値**（`facility_values`、タイトル＋本文＋期間、型なし。カテゴリはない）。事前に決めるマスタはなく、施設も項目名も資料の読み取り→確認画面で「新しく作る／既存と同じ」を確かめて承認したときに作る。スタッフは資料（PDF・画像・文章）を入れ、AIの読み取りを確認・承認するだけ（直接入力の画面はない）。ホテル全体の案内（チェックイン・駐車場など）は「全体」欄の値。期間の重なりは承認時にスタッフが優先を選び `priority` で持つ（特記事項は常に最優先）。回答には承認済みを滞在日で絞って渡し、値のない項目も「情報なし」と渡す（`docs/002_facility_master_design.md`）
+- **案内情報（旧 館内の情報）は施設×項目×期間の値**（`facility_values`、タイトル＋本文＋期間、型なし。カテゴリはない）。事前に決めるマスタはなく、施設も項目名も資料の読み取り→確認画面で「新しく作る／既存と同じ」を確かめて承認したときに作る。スタッフは資料（PDF・画像・文章・URL）を入れ、AIの読み取りを確認・承認するだけ（直接入力の画面はない）。管理主体がホテルの外の資料には外部情報のフラグ（`info_sources.is_external`）を付け、周辺の施設も施設として読み取る。外部の値はAIに「（外部情報: 資料名）」付きで渡し、回答の表記は `cleanReply` で「（資料名の情報）」に直す（Nemotronが表記をそのまま写すため）。ホテル全体の案内（チェックイン・駐車場など）は「全体」欄の値。期間の重なりは承認時にスタッフが優先を選び `priority` で持つ（特記事項は常に最優先）。回答には承認済みを滞在日で絞って渡し、値のない項目も「情報なし」と渡す（`docs/002_facility_master_design.md`）
 - **知識は2層**: 期間で変わる情報（営業時間・メニュー・特記事項）は期間付きの構造化**マスタ**、日付で変わらない説明文だけを**RAG**に入れる。回答は「ゲストの滞在日」基準で答え分ける（今日の日付ではない）。特記事項はマスタの各施設内の項目で、有効期間中は通常営業情報より優先
 - **オーダーの割り当ては機械ロジック**（役割×エリアの枠、品目ごとの重み1〜3pt、累計＋未完了ptが最小の人へ）。LLMは文章から品目・数量を読み取る部分のみ。公平性の説明・再現性のため
 - **指示は自然文、権限はデータで固定**: プロンプトで書く内容は柔軟でも、外部連携の読み書き範囲・禁止事項・引き継ぎ条件は構造化設定のガードレールで固定し、プロンプトで越えられないようにする（4.7）

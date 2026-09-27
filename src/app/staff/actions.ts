@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { audit, authorize, getCurrentMember, MEMBER_COOKIE } from "@/server/auth";
+import { replyCheck, type CheckReply } from "@/server/order-checks";
 import { askAi } from "@/server/staff-ask";
 import {
   acceptHandoff,
@@ -52,6 +53,14 @@ export async function declineTicketAction(ticketId: string, reason: string) {
   const trimmed = reason.trim() || "理由の記載なし";
   await declineTicket(member, ticketId, trimmed.slice(0, 200));
   await audit(member, "order.assignable", "ticket.decline", { type: "ticket", id: ticketId }, { reason: trimmed });
+  refresh();
+}
+
+// 状況の確認への返事（向かっています／対応できない＋任意の一言）
+export async function replyCheckAction(ticketId: string, reply: CheckReply, etaMinutes: number | null, note: string) {
+  const member = await authorize("order.assignable");
+  await replyCheck(member, ticketId, reply, { etaMinutes: etaMinutes ?? undefined, note });
+  await audit(member, "order.assignable", "ticket.reply_check", { type: "ticket", id: ticketId }, { reply, etaMinutes });
   refresh();
 }
 

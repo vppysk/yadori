@@ -11,6 +11,8 @@ export type InfoValue = {
   to: string | null;
   priority: number;
   sourceTitle: string | null;
+  // 管理主体がホテルの外にある資料から読み取った値（docs/006_guide_info.md）
+  external?: boolean;
 };
 
 export type FieldWithValues<V = InfoValue> = { fieldId: string; name: string; values: V[] };
@@ -43,10 +45,11 @@ export const periodText = (p: Period) => (p.to === p.from ? `${p.from}のみ` : 
 // 重なりを比べる単位: 同じ項目で、タイトルが同じ（空白と全角半角の違いは無視）
 export const titleKey = (title: string | null) => (title ?? "").normalize("NFKC").replace(/\s+/g, "");
 
-// AIに渡す1行。期間は必ず付ける（滞在日で答え分けるため）
-export function describeValue(fieldName: string, v: { title: string | null; body: string } & Period): string {
+// AIに渡す1行。期間は必ず付ける（滞在日で答え分けるため）。外部情報は出どころを付ける（案内で「○○によると」と添えさせる）
+export function describeValue(fieldName: string, v: { title: string | null; body: string; external?: boolean; sourceTitle?: string | null } & Period): string {
   const head = v.title ? `${fieldName}「${v.title}」` : fieldName;
-  return `${head}: ${v.body || "（内容の記載なし）"}（適用期間 ${periodText(v)}）`;
+  const origin = v.external ? `（外部情報: ${v.sourceTitle ?? "外部の資料"}）` : "";
+  return `${head}: ${v.body || "（内容の記載なし）"}（適用期間 ${periodText(v)}）${origin}`;
 }
 
 // 値ごとに、同じタイトルでより優先される値に覆われていない期間を返す（覆われた部分は案内に使わない）。

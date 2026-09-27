@@ -3,7 +3,7 @@ import type { Member } from "./auth";
 import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
 import { getAiAgentMemberId, getHotel, localNow, type Hotel } from "./hotel";
 import { recordWorkEvent } from "./metrics";
-import { getRoom, pickAssignee } from "./orders";
+import { assignUnassigned, getRoom, pickAssignee } from "./orders";
 
 // ---------- 出勤（その日の枠と担当者。plan 4.2） ----------
 
@@ -29,6 +29,8 @@ export async function startShift(member: Member, slotId: string) {
      on conflict (slot_id, member_id, work_date) do update set ended_at = null`,
     [slotId, member.id, localNow(hotel.timezone).date],
   );
+  // 担当者なしで待っていたチケットを、出勤した枠で割り当てる
+  await assignUnassigned(hotel, slotId, member.id);
 }
 
 export async function endShift(member: Member) {
@@ -54,6 +56,10 @@ export type MyTicket = {
   due_at: string;
   overdue: boolean;
   assign_reason: string | null;
+  // 返事待ちの状況の確認（docs/005_order.md 6章）
+  check_pending: boolean;
+  check_source: "overdue" | "guest" | "supervisor" | null;
+  check_message: string | null;
 };
 
 export async function listMyTickets(memberId: string): Promise<MyTicket[]> {
@@ -61,6 +67,7 @@ export async function listMyTickets(memberId: string): Promise<MyTicket[]> {
     `select t.id, t.room_number, t.status, t.weight,
        string_agg(l.item_name || ' × ' || l.quantity, ' ・ ' order by l.id) items, t.note, t.requested_for,
        t.assigned_at, t.started_at, t.due_at, t.due_at < now() overdue,
+       t.check_requested_at is not null and t.check_replied_at is null check_pending, t.check_source, t.check_message,
        (select e.reason from ticket_events e where e.ticket_id = t.id and e.member_id = $1 and e.type in ('assigned', 'reassigned')
         order by e.created_at desc limit 1) assign_reason
      from tickets t join ticket_lines l on l.ticket_id = t.id
@@ -145,11 +152,12 @@ export async function completeTicket(member: Member, ticketId: string) {
   });
 }
 
-// 対応できない: 理由を記録し、枠内の次の人へ再割り当て（辞退した人は除く）
-export async function declineTicket(member: Member, ticketId: string, reason: string) {
+// 対応できない: 理由を記録し、枠内の次の人へ再割り当て（辞退した人は除く）。
+// allowStarted: 状況の確認への返事としては、着手済みでも返せる
+export async function declineTicket(member: Member, ticketId: string, reason: string, options: { allowStarted?: boolean } = {}) {
   await transaction(async (client) => {
     const ticket = await lockOwnTicket(client, member, ticketId);
-    if (ticket.status !== "new") throw new Error("着手済みのオーダーは返せません");
+    if (ticket.status !== "new" && !(options.allowStarted && ticket.status === "doing")) throw new Error("着手済みのオーダーは返せません");
     const settings = await getHotel(ticket.hotel_id);
     if (settings.order_decline_reason_required && !reason.trim()) throw new Error("理由を選んでください");
     await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'declined', $2, $2, $3)", [
@@ -160,8 +168,9 @@ export async function declineTicket(member: Member, ticketId: string, reason: st
   });
 }
 
-// 枠内の次の人へ付け替える。辞退・放置した人は除く。誰もいなければ未割り当てにして上長へ通知
-export async function reassign(client: PoolClient, hotel: Hotel, ticketId: string, why: string) {
+// 枠内の次の人へ自動で再割り当てする。辞退・放置した人は除く。誰もいなければ未割り当てにして上長へ通知。
+// stale: 未着手のまま時間が過ぎたとき。ほかに担当できる人がいなければ今の担当者のまま残し、割り当て直したら前の担当者に対応不要を知らせる
+export async function reassign(client: PoolClient, hotel: Hotel, ticketId: string, why: string, options: { stale?: boolean } = {}) {
   const { rows } = await client.query<{ slot_id: string | null; room_id: string; room_number: string; assignee_id: string | null }>(
     "select slot_id, room_id, room_number, assignee_id from tickets where id = $1",
     [ticketId],
@@ -176,20 +185,37 @@ export async function reassign(client: PoolClient, hotel: Hotel, ticketId: strin
   if (ticket.slot_id) await client.query("select pg_advisory_xact_lock(hashtext($1))", [ticket.slot_id]);
   const next = ticket.slot_id ? await pickAssignee(client, hotel, ticket.slot_id, room, excludeIds) : undefined;
   const aiMemberId = await getAiAgentMemberId(hotel.id);
+  if (!next && options.stale && ticket.assignee_id) {
+    // 次の人がいない。担当者を外すと誰にも届かなくなるため、そのまま残す（次の判定は設定の分数後）
+    await client.query("update tickets set assigned_at = now() where id = $1", [ticketId]);
+    return;
+  }
 
-  await client.query("update tickets set assignee_id = $2, assigned_at = case when $2::uuid is null then null else now() end where id = $1", [
-    ticketId, next?.id ?? null,
-  ]);
+  // 担当者が変わるので、未着手に戻し、状況の確認もリセットする
+  await client.query(
+    `update tickets set assignee_id = $2, assigned_at = case when $2::uuid is null then null else now() end, assignment_mode = 'auto',
+       status = 'new', started_at = null,
+       check_requested_at = null, check_source = null, check_requested_by = null, check_message = null,
+       check_replied_at = null, check_reply = null, check_eta_at = null, check_reply_note = null
+     where id = $1`,
+    [ticketId, next?.id ?? null],
+  );
+  if (options.stale && ticket.assignee_id && next) {
+    await client.query(
+      "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_released', $2, $3, 'ticket', $4)",
+      [ticket.assignee_id, `${ticket.room_number}号室のオーダーは対応不要になりました`, `${why}ため、${next.name}に割り当て直しました`, ticketId],
+    );
+  }
   await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'reassigned', $2, $3, $4)", [
     ticketId, next?.id ?? null, aiMemberId ?? null, next ? `${why} → ${next.reason}` : `${why} → 枠内に担当できる人がいない`,
   ]);
   if (next) {
     await client.query(
       "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_assigned', $2, $3, 'ticket', $4)",
-      [next.id, `${ticket.room_number}号室のオーダー（付け替え）`, why, ticketId],
+      [next.id, `${ticket.room_number}号室のオーダー（再割り当て）`, why, ticketId],
     );
   }
-  await notifySupervisors(client, hotel.id, `${ticket.room_number}号室のオーダーを付け替え`, next ? `${why}。新しい担当: ${next.name}` : `${why}。担当者がいません`, ticketId);
+  await notifySupervisors(client, hotel.id, `${ticket.room_number}号室のオーダーを再割り当て`, next ? `${why}。新しい担当: ${next.name}` : `${why}。担当者がいません`, ticketId);
 }
 
 export async function notifySupervisors(client: PoolClient, hotelId: string, title: string, body: string, ticketId: string) {

@@ -10,7 +10,7 @@ export const FIELD_LABELS: Record<string, string> = {
   request_history: "依頼履歴",
   guest_notes: "お客様メモ",
   billing: "料金・支払い",
-  external_updates: "外部の最新情報",
+  external_updates: "Webページの内容",
 };
 
 export type IntegrationSummary = { id: string; name: string; kind: string };
@@ -21,7 +21,7 @@ export type IntegrationDetail = IntegrationSummary & {
   writeRule: string;
   fields: FieldRuleRow[];
   writes: WriteRow[];
-  // kind = 'web_fetch'（外部の情報源の取得）のときだけ
+  // kind = 'web_fetch'（URLの資料の取得）のときだけ
   webFetch?: { sourceCount: number; fetches: FetchLogRow[]; apiKeyConfigured: boolean };
 };
 
@@ -50,7 +50,7 @@ export async function getIntegration(hotelId: string, integrationId: string): Pr
     ...(base.kind === "web_fetch"
       ? {
           webFetch: {
-            sourceCount: (await queryOne<{ count: number }>("select count(*)::int count from external_sources where hotel_id = $1 and active", [hotelId]))?.count ?? 0,
+            sourceCount: (await queryOne<{ count: number }>("select count(*)::int count from info_sources where hotel_id = $1 and url is not null and active", [hotelId]))?.count ?? 0,
             fetches: await listRecentFetches(integrationId),
             apiKeyConfigured: tavilyConfigured(),
           },
@@ -65,7 +65,7 @@ export async function saveIntegration(member: Member, integrationId: string, inp
   await transaction(async (client) => {
     const before = await getIntegration(member.hotel_id, integrationId);
     if (!before) throw new Error("連携先が見つかりません");
-    // 外部の情報源の取得は読み取りのみ（書き込みルール・書き込み権限は持たない）
+    // Webページの取得は読み取りのみ（書き込みルール・書き込み権限は持たない）
     if (before.webFetch) input = { ...input, writeRule: "", fields: input.fields.map((f) => ({ ...f, write_mode: "none", require_staff_confirm: false })) };
     for (const [scope, body] of [["integration_read", input.readRule], ["integration_write", input.writeRule]] as const) {
       await client.query("delete from ai_instructions where integration_id = $1 and scope = $2", [integrationId, scope]);

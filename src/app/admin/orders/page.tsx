@@ -1,6 +1,6 @@
 import { can, requireMember } from "@/server/auth";
 import { getHotel } from "@/server/hotel";
-import { assignableMembers, getBoard, getOrderForm, listSlots } from "@/server/order-board";
+import { assignCandidates, getBoard, getOrderForm, listSlots } from "@/server/order-board";
 import { OrderBoard } from "./order-board";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export default async function OrdersPage({ searchParams }: PageProps<"/admin/ord
   if (!current) return <main className="p-8 text-sm text-ink-sub">担当の枠がありません</main>;
   const [board, candidates, canCreate, canReassign, hotel] = await Promise.all([
     getBoard(member.hotel_id, current.id),
-    assignableMembers(member.hotel_id, current.id),
+    assignCandidates(member.hotel_id, current.id),
     can(member.id, "order.create"),
     can(member.id, "order.reassign", current.id),
     getHotel(member.hotel_id),

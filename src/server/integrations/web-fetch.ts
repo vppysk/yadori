@@ -2,7 +2,7 @@ import { query, queryOne } from "../db";
 import { getAiAgentMemberId } from "../hotel";
 import { aiMayUse } from "./pms";
 
-// 外部の情報源の取得（Tavily Extract）。plan 4.1。検索はせず、管理者が登録したURLだけを取りに行く。
+// Webページの取得（Tavily Extract）。docs/006_guide_info.md。検索はせず、案内情報に資料として登録したURLだけを取りに行く。
 // AIエージェントの権限（integration.web_fetch.read）と項目ルール（external_updates の読み取り）をここで必ず確認する
 
 const TAVILY_EXTRACT_URL = "https://api.tavily.com/extract";
@@ -20,7 +20,7 @@ async function webFetchIntegrationId(hotelId: string): Promise<string | undefine
   return row?.id;
 }
 
-// 連携が有効で、外部の最新情報の読み取りが「可」で、AIエージェントに権限があるときだけ true
+// 連携が有効で、Webページの内容の読み取りが「可」で、AIエージェントに権限があるときだけ true（定期取得の条件）
 export async function webFetchAllowed(hotelId: string): Promise<boolean> {
   const integrationId = await webFetchIntegrationId(hotelId);
   if (!integrationId) return false;
@@ -84,7 +84,7 @@ export async function listRecentFetches(integrationId: string): Promise<FetchLog
   );
 }
 
-// 外部連携の画面で書く読み取りルール（外部の最新情報の使い方）
+// 外部連携の画面で書く読み取りルール（外部情報の使い方。外部情報の値を回答に渡すときに指示に足す）
 export async function externalReadRule(hotelId: string): Promise<string | undefined> {
   const integrationId = await webFetchIntegrationId(hotelId);
   if (!integrationId) return undefined;

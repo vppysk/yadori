@@ -1,4 +1,4 @@
-import { cancelOrder, cancelStaffRequest, getGuestSession, handleGuestMessage, requestStaff, submitOrder } from "@/server/guest-chat";
+import { cancelOrder, cancelStaffRequest, getGuestSession, handleGuestMessage, nudgeOrder, requestStaff, submitOrder } from "@/server/guest-chat";
 import type { SubmitOrderInput } from "@/server/order-drafts";
 
 // デモ用: 予約番号をそのままゲストの識別に使う（認証は未実装）
@@ -13,11 +13,22 @@ export async function POST(request: Request, { params }: RouteContext<"/api/gues
   const { reservationId } = await params;
   const body = (await request.json()) as {
     text?: string;
-    action?: "talk_to_staff" | "cancel_staff" | "submit_order" | "cancel_order";
+    action?: "talk_to_staff" | "cancel_staff" | "submit_order" | "cancel_order" | "nudge_order";
     draftId?: string;
+    ticketId?: string;
     order?: SubmitOrderInput;
   };
   if (body.action === "talk_to_staff") return Response.json(await requestStaff(reservationId));
+  // 未完了のご依頼の「状況を確認する」（docs/005_order.md 6章）
+  if (body.action === "nudge_order") {
+    if (!body.ticketId) return Response.json({ error: "ご依頼が見つかりません" }, { status: 400 });
+    try {
+      return Response.json(await nudgeOrder(reservationId, body.ticketId));
+    } catch (error) {
+      console.warn("[api/guest] 状況の確認に失敗", error);
+      return Response.json({ error: error instanceof Error ? error.message : "確認できませんでした" }, { status: 409 });
+    }
+  }
   // お届けの依頼の選択欄（docs/005_order.md 2章）
   if (body.action === "submit_order" || body.action === "cancel_order") {
     if (!body.draftId) return Response.json({ error: "ご依頼が見つかりません" }, { status: 400 });

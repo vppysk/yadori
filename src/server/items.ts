@@ -192,7 +192,7 @@ export async function setSeats(member: Member, slotId: string, count: number) {
       [slotId],
     );
     for (const seat of seats.filter((s) => s.seat_no > count && s.active)) {
-      if (seat.open_tickets > 0) throw new Error(`${seatMark(seat.seat_no)}の席に未完了のオーダーがあります。先に付け替えてください`);
+      if (seat.open_tickets > 0) throw new Error(`${seatMark(seat.seat_no)}の席に未完了のオーダーがあります。先にほかの人へ手動で割り当ててください`);
       await client.query("update members set active = false where id = $1", [seat.id]);
       await client.query("update slot_shifts set ended_at = now() where member_id = $1 and ended_at is null", [seat.id]);
     }

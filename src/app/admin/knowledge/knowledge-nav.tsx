@@ -12,15 +12,17 @@ export function KnowledgeNav({
   showQuestions,
   showSources,
   pendingSources,
+  unseenUpdates,
 }: {
   facilities: FacilityListItem[];
   showQuestions: boolean;
   showSources: boolean;
   pendingSources: number;
+  unseenUpdates: number;
 }) {
   const pathname = usePathname();
   return (
-    <aside aria-label="館内の情報" className="flex w-[200px] shrink-0 flex-col gap-0.5 border-r border-line bg-surface px-3 py-6">
+    <aside aria-label="案内情報" className="flex w-[200px] shrink-0 flex-col gap-0.5 border-r border-line bg-surface px-3 py-6">
       {showQuestions && (
         <Link href="/admin/knowledge/questions" aria-current={pathname.startsWith("/admin/knowledge/questions") ? "page" : undefined} className={itemClass(pathname.startsWith("/admin/knowledge/questions"))}>
           未回答の質問
@@ -29,7 +31,14 @@ export function KnowledgeNav({
       {showSources && (
         <Link href="/admin/knowledge/sources" aria-current={pathname.startsWith("/admin/knowledge/sources") ? "page" : undefined} className={itemClass(pathname.startsWith("/admin/knowledge/sources"))}>
           資料
-          {pendingSources > 0 && <span className="text-[11px] font-normal text-caution">確認待ち {pendingSources}</span>}
+          <span className="flex items-center gap-1.5">
+            {pendingSources > 0 && <span className="text-[11px] font-normal text-caution">確認待ち {pendingSources}</span>}
+            {unseenUpdates > 0 && (
+              <span className="min-w-5 rounded-full bg-caution px-1.5 text-center text-[11px] font-bold text-white" aria-label={`自動反映の未確認の更新 ${unseenUpdates}件`}>
+                {unseenUpdates}
+              </span>
+            )}
+          </span>
         </Link>
       )}
       {facilities.map((f, i) => {

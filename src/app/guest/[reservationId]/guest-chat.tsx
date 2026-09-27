@@ -108,6 +108,8 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
   }
 
   const timeline = useMemo(() => buildTimeline(session), [session]);
+  const openTickets = session.tickets.filter((t) => t.status === "new" || t.status === "doing");
+  const [ordersOpen, setOrdersOpen] = useState(false);
   const busy = pendingText !== null || pendingAction !== null;
   const staffRequest = session.staffRequest;
 
@@ -133,12 +135,25 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
             </button>
           )}
         </div>
-        <div className="flex gap-2 text-xs text-ink-sub">
+        <div className="flex items-center gap-2 text-xs text-ink-sub">
           <span className="rounded-xl bg-primary-soft px-2.5 py-1 font-medium text-primary">{session.guest.roomNumber}号室</span>
           <span className="rounded-xl bg-muted px-2.5 py-1">
             {formatDay(session.guest.checkIn)} 〜 {formatDay(session.guest.checkOut)}
           </span>
+          {openTickets.length > 0 && (
+            <button
+              type="button"
+              aria-expanded={ordersOpen}
+              onClick={() => setOrdersOpen((v) => !v)}
+              className="ml-auto flex min-h-11 items-center rounded-full border border-primary px-3 text-xs font-bold text-primary"
+            >
+              ご依頼の状況 {openTickets.length}件
+            </button>
+          )}
         </div>
+        {ordersOpen && openTickets.length > 0 && (
+          <OpenOrders tickets={openTickets} timezone={session.timezone} reservationId={reservationId} onChange={refresh} />
+        )}
         {staffRequest && (
           <div className="flex items-center justify-between gap-2 rounded-xl bg-primary-soft py-1 pr-1 pl-3 text-xs text-primary">
             <span>
@@ -284,6 +299,61 @@ const STEPS = [
   { label: "お届け済み", reached: ["done"] },
 ];
 
+// ご依頼の状況の文言（docs/005_order.md 6章）。担当者の一言はゲストには出さない
+function ticketStatus(t: GuestTicket, timezone: string): string {
+  const time = (iso: string) => new Date(iso).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: timezone });
+  if (t.status === "done") return "お届けしました";
+  if (!t.dispatched && t.requested_for) return `${time(t.requested_for)}にお届けする予定です`;
+  if (t.check_pending) return "担当のスタッフに状況を確認しています";
+  if (t.check_reply === "on_the_way") return `スタッフが向かっています${t.check_eta_at ? `（${time(t.check_eta_at)}ごろ）` : ""}`;
+  if (t.status === "doing") return "スタッフが準備・移動しています";
+  return "承りました。スタッフが準備します";
+}
+
+// 未完了のご依頼の一覧。メッセージを書かなくても「状況を確認する」で担当者に確認できる
+function OpenOrders({ tickets, timezone, reservationId, onChange }: { tickets: GuestTicket[]; timezone: string; reservationId: string; onChange: () => Promise<void> }) {
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [pending, setPending] = useState<string | null>(null);
+
+  async function nudge(ticketId: string) {
+    setPending(ticketId);
+    try {
+      const res = await fetch(`/api/guest/${encodeURIComponent(reservationId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "nudge_order", ticketId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+      setNotes((n) => ({ ...n, [ticketId]: data.message ?? data.error ?? "確認できませんでした" }));
+      await onChange();
+    } catch {
+      setNotes((n) => ({ ...n, [ticketId]: "通信できませんでした。電波の良い場所でもう一度お試しください。" }));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  return (
+    <section aria-label="ご依頼の状況" className="flex flex-col gap-2 rounded-xl border border-line bg-canvas p-2.5">
+      {tickets.map((t) => (
+        <div key={t.id} className="flex flex-col gap-1.5 rounded-[10px] bg-surface px-3 py-2.5">
+          <span className="text-sm">{t.lines.map((l) => `${l.item} × ${l.quantity}`).join("、")}</span>
+          <span className="text-xs text-primary">{ticketStatus(t, timezone)}</span>
+          {notes[t.id] && <span className="text-xs text-ink-sub">{notes[t.id]}</span>}
+          <button
+            type="button"
+            onClick={() => void nudge(t.id)}
+            disabled={pending !== null || t.check_pending || t.nudge_cooling}
+            className="min-h-11 rounded-full border border-line text-[13px] font-medium disabled:opacity-40"
+          >
+            {pending === t.id ? "確認しています…" : "状況を確認する"}
+          </button>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function TicketCard({ ticket, timezone }: { ticket: GuestTicket; timezone: string }) {
   const done = ticket.status === "done";
   const scheduled = ticket.requested_for
@@ -314,7 +384,7 @@ function TicketCard({ ticket, timezone }: { ticket: GuestTicket; timezone: strin
         })}
       </ol>
       <p className="text-xs leading-relaxed text-ink-sub">
-        {done ? "ご利用ありがとうございます。" : "お届けしたらこちらでお知らせします。"}
+        {done ? "ご利用ありがとうございます。" : `${ticketStatus(ticket, timezone)}。お届けしたらこちらでお知らせします。`}
       </p>
     </section>
   );

@@ -49,14 +49,14 @@ export type FacilityViewData = {
 };
 
 async function loadApprovedValues(facilityId: string) {
-  const rows = await query<{ id: string; field_id: string; field: string; title: string | null; body: string; valid: string; priority: number; source_title: string }>(
-    `select v.id, v.field_id, i.name field, v.title, v.body, v.valid, v.priority, s.title source_title
+  const rows = await query<{ id: string; field_id: string; field: string; title: string | null; body: string; valid: string; priority: number; source_title: string; is_external: boolean }>(
+    `select v.id, v.field_id, i.name field, v.title, v.body, v.valid, v.priority, s.title source_title, s.is_external
      from facility_values v join info_fields i on i.id = v.field_id join info_sources s on s.id = v.source_id
      where v.facility_id = $1 and v.status = 'approved' order by i.sort, lower(v.valid), v.title`,
     [facilityId],
   );
   return rows.map((v) => ({
-    fieldId: v.field_id, field: v.field, id: v.id, title: v.title, body: v.body, ...parseValidRange(v.valid), priority: v.priority, sourceTitle: v.source_title,
+    fieldId: v.field_id, field: v.field, id: v.id, title: v.title, body: v.body, ...parseValidRange(v.valid), priority: v.priority, sourceTitle: v.source_title, external: v.is_external,
   }));
 }
 

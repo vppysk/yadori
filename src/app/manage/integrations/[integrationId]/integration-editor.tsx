@@ -6,7 +6,7 @@ import Link from "next/link";
 import type { FetchLogRow } from "@/server/integrations/web-fetch";
 import { decideWriteAction, saveIntegrationAction } from "../../actions";
 
-const FIELD_LABELS: Record<string, string> = { reservation: "予約内容", request_history: "依頼履歴", guest_notes: "お客様メモ", billing: "料金・支払い", external_updates: "外部の最新情報" };
+const FIELD_LABELS: Record<string, string> = { reservation: "予約内容", request_history: "依頼履歴", guest_notes: "お客様メモ", billing: "料金・支払い", external_updates: "Webページの内容" };
 const WRITE_LABELS: Record<FieldRuleRow["write_mode"], string> = { none: "不可", append: "追記のみ", write: "可" };
 const STATUS: Record<string, { label: string; className: string }> = {
   pending_confirm: { label: "確認待ち", className: "bg-caution-soft text-caution" },
@@ -51,7 +51,7 @@ export function IntegrationEditor({ detail }: { detail: IntegrationDetail }) {
         <section className="flex flex-col gap-2.5 rounded-[14px] border border-line bg-surface px-5 py-4.5">
           <div className="flex items-center justify-between">
             <label htmlFor="read-rule" className="text-base font-bold">
-              {readOnly ? "外部の最新情報の使い方" : "読み取りルール"}
+              {readOnly ? "外部情報の使い方" : "読み取りルール"}
             </label>
             <span className="text-xs text-ink-sub">{readOnly ? "ゲストへの案内・AI相談で参照" : "会話の開始時と、必要に応じて参照"}</span>
           </div>
@@ -115,9 +115,9 @@ export function IntegrationEditor({ detail }: { detail: IntegrationDetail }) {
           {readOnly ? (
             <ul className="flex flex-col gap-1 text-xs text-ink-sub">
               <li>・読み取りのみの連携先です（書き込みはできません）</li>
-              <li>・管理者が登録したURLだけを取得します（検索はしません）</li>
-              <li>・AIエージェントに「外部の情報源の取得」の権限がないときは取得しません（メンバーと権限で変更）</li>
-              <li>・案内には取得した時点と情報源を添えます。取得できない状態が続いた情報は使いません</li>
+              <li>・案内情報に資料として登録したURLだけを取得します（検索はしません）。内容が変わったら読み直し、承認してから案内に使います</li>
+              <li>・AIエージェントに「Webページの取得」の権限がないときは定期取得しません（メンバーと権限で変更）</li>
+              <li>・外部情報の資料から読み取った内容は、案内で出どころを添えます</li>
             </ul>
           ) : (
             <ul className="flex flex-col gap-1 text-xs text-ink-sub">
@@ -165,7 +165,7 @@ export function IntegrationEditor({ detail }: { detail: IntegrationDetail }) {
   );
 }
 
-// 外部の情報源の取得（Tavily）の状態。監視するURLは管理PCの「外部の情報源」で登録する
+// Webページの取得（Tavily）の状態。取得するURLは管理PCの案内情報で資料として登録する
 function WebFetchStatus({ apiKeyConfigured, sourceCount }: { apiKeyConfigured: boolean; sourceCount: number }) {
   return (
     <section className="flex flex-col gap-3 rounded-[14px] border border-line bg-surface px-5 py-4.5">
@@ -176,13 +176,13 @@ function WebFetchStatus({ apiKeyConfigured, sourceCount }: { apiKeyConfigured: b
         </span>
       </div>
       <p className="text-sm">
-        有効な情報源 <strong>{sourceCount}件</strong>
+        取得中のURLの資料 <strong>{sourceCount}件</strong>
       </p>
       <p className="text-xs leading-relaxed text-ink-sub">
-        運行情報・天気予報・イベントの公式サイトなど、監視するURLと取得の頻度は管理PCで登録します。情報源の信頼性は登録する方が確認してください。
+        運行情報・周辺施設・イベントの公式サイトなど、取得するURLと頻度は管理PCの案内情報（資料）で登録します。情報源の信頼性は登録する方が確認してください。
       </p>
-      <Link href="/admin/sources" className="flex min-h-11 items-center self-start rounded-[10px] border border-line-input px-4 text-sm font-bold">
-        外部の情報源を開く
+      <Link href="/admin/knowledge/sources" className="flex min-h-11 items-center self-start rounded-[10px] border border-line-input px-4 text-sm font-bold">
+        資料を開く
       </Link>
     </section>
   );

@@ -16,14 +16,33 @@ import { recordLlmCall } from "./metrics";
 // 「全体」欄（施設に属さないホテル全体の案内。チェックイン、駐車場など）を資料の中で指す名前
 export const GLOBAL_NAME = "全体";
 
-export type SourceListItem = { id: string; title: string; file_name: string | null; status: "pending" | "approved"; created_at: string; created_by: string | null; facilities: string[] };
+// pending=確認待ち / approved=承認済み / update_pending=承認済み・URLの更新の確認待ち（前の版の値で案内中）
+export type SourceStatus = "pending" | "approved" | "update_pending";
+
+export type SourceListItem = {
+  id: string;
+  title: string;
+  file_name: string | null;
+  url: string | null;
+  is_external: boolean;
+  status: SourceStatus;
+  created_at: string;
+  created_by: string | null;
+  facilities: string[];
+  last_status: "ok" | "error" | null;
+  last_success_at: string | null;
+  // approval=承認して反映 / auto=自動反映（URLのみ）。unseen_update は自動反映で変わってまだ誰も開いていない
+  reflect_mode: "approval" | "auto";
+  unseen_update: boolean;
+};
 
 export async function listSources(hotelId: string): Promise<SourceListItem[]> {
   return query<SourceListItem>(
-    `select s.id, s.title, s.file_name, s.status, to_char(s.created_at, 'YYYY-MM-DD') created_at, m.display_name created_by,
-       coalesce((select array_agg(distinct f.name) from facility_values v join facilities f on f.id = v.facility_id where v.source_id = s.id), '{}') facilities
-     from info_sources s left join members m on m.id = s.created_by
-     where s.hotel_id = $1 order by s.status = 'pending' desc, s.created_at desc`,
+    `select s.id, s.title, s.file_name, s.url, s.is_external, s.status, to_char(s.created_at, 'YYYY-MM-DD') created_at, m.display_name created_by,
+       coalesce((select array_agg(distinct f.name) from facility_values v join facilities f on f.id = v.facility_id where v.source_id = s.id), '{}') facilities,
+       s.last_status, to_char(s.last_success_at at time zone h.timezone, 'FMMM/FMDD HH24:MI') last_success_at, s.reflect_mode, s.unseen_update
+     from info_sources s join hotels h on h.id = s.hotel_id left join members m on m.id = s.created_by
+     where s.hotel_id = $1 order by s.status <> 'approved' or s.unseen_update desc, s.created_at desc`,
     [hotelId],
   );
 }
@@ -79,9 +98,10 @@ function grounded(item: { title?: string; body: string }, quotes: string[], doc:
 // 読み取った1件。facility は "id:<施設ID>"（登録済み）か "name:<資料での名前>"（新しい施設の候補）
 export type DraftRow = { key: string; facility: string; field: string; title: string | null; body: string; from: string; to: string | null };
 
-async function extract(member: Member, title: string, body: string): Promise<DraftRow[]> {
-  const { facilities, fields } = await loadNames(member.hotel_id);
-  const hotel = await getHotel(member.hotel_id);
+// external: 管理主体がホテルの外にある資料。館内の施設だけでなく、周辺の施設・交通機関なども施設として読み取る（docs/006_guide_info.md）
+export async function extract(hotelId: string, title: string, body: string, options: { external?: boolean } = {}): Promise<DraftRow[]> {
+  const { facilities, fields } = await loadNames(hotelId);
+  const hotel = await getHotel(hotelId);
   const today = localNow(hotel.timezone).date;
   const doc = `【資料】${title}\n${body.slice(0, 20_000)}`;
   const global = facilities.find((f) => f.kind === "global");
@@ -98,14 +118,16 @@ async function extract(member: Member, title: string, body: string): Promise<Dra
     name: "list_facilities",
     description: "ホテルの資料に出てくる施設を洗い出す",
     system: [
-      "ホテルの資料に出てくる、ゲストが利用する館内の施設（レストラン、大浴場、プール、スパなど）の名前を挙げる。",
+      options.external
+        ? "ホテルの外の資料（周辺の施設・交通機関・自治体などのお知らせ）に出てくる、ゲストに案内する施設や路線（公園、観光施設、店、駅、バス路線など）の名前を挙げる。ホテル自体の案内があれば館内の施設名で挙げる。"
+        : "ホテルの資料に出てくる、ゲストが利用する館内の施設（レストラン、大浴場、プール、スパなど）の名前を挙げる。",
       `施設に属さないホテル全体の案内（チェックイン・チェックアウト、駐車場、Wi-Fi など）があれば「${GLOBAL_NAME}」も挙げる。`,
       ...(known.length ? [`登録済みの施設: ${known.map((f) => f.name).join("、")}（同じ施設ならこの名前で挙げる）`] : []),
       "ゲストへの案内（時間・料金・利用方法など）が書かれていない施設は挙げない。",
     ].join("\n"),
     prompt: doc,
   });
-  await recordLlmCall({ hotelId: member.hotel_id, purpose: "source_extract", thinking: false, usage: listed.usage });
+  await recordLlmCall({ hotelId, purpose: "source_extract", thinking: false, usage: listed.usage });
   const targets = new Map<string, { ref: string; name: string; id: string | null }>();
   // 「全体」（チェックイン・駐車場など）は挙げられないことがあったため、毎回読み取りの対象にする
   if (global) targets.set(facilityRef.id(global.id), { ref: facilityRef.id(global.id), name: global.name, id: global.id });
@@ -147,7 +169,7 @@ async function extract(member: Member, title: string, body: string): Promise<Dra
         ].join("\n"),
         prompt: doc,
       });
-      await recordLlmCall({ hotelId: member.hotel_id, purpose: "source_extract", thinking: false, usage });
+      await recordLlmCall({ hotelId, purpose: "source_extract", thinking: false, usage });
       return { target, object };
     }),
   );
@@ -158,7 +180,7 @@ async function extract(member: Member, title: string, body: string): Promise<Dra
     `select v.facility_id, i.name field, min(v.title) title from facility_values v join info_fields i on i.id = v.field_id
      join facilities f on f.id = v.facility_id where f.hotel_id = $1
      group by v.facility_id, i.name having count(distinct coalesce(v.title, '')) = 1 and min(v.title) is not null`,
-    [member.hotel_id],
+    [hotelId],
   );
   // 「全体」は毎回読むため、ほかの施設の件（冬季のレストランの営業時間など）を重ねて拾うことがある。
   // ほかの施設の件と同じタイトル・内容のものは「全体」から外す
@@ -188,14 +210,21 @@ async function extract(member: Member, title: string, body: string): Promise<Dra
   return rows;
 }
 
-// 資料を登録して読み取る。読み取り結果は承認まで資料の draft に持つ（新しい施設・項目は承認まで作らない）
-export async function createSource(member: Member, input: { title: string; fileName: string | null; body: string }): Promise<string> {
-  const rows = await extract(member, input.title, input.body);
+// 資料（ファイル・文章）を登録して読み取る。読み取り結果は承認まで資料の draft に持つ（新しい施設・項目は承認まで作らない）。
+// URLの資料は source-fetch.ts の createUrlSource。isExternal は管理主体がホテルの外にある資料（docs/006_guide_info.md）
+export async function createSource(member: Member, input: { title: string; fileName: string | null; body: string; isExternal?: boolean }): Promise<string> {
+  const rows = await extract(member.hotel_id, input.title, input.body, { external: input.isExternal });
   const created = await queryOne<{ id: string }>(
-    "insert into info_sources (hotel_id, title, file_name, body, draft, created_by) values ($1, $2, $3, $4, $5, $6) returning id",
-    [member.hotel_id, input.title, input.fileName, input.body, JSON.stringify({ rows }), member.id],
+    "insert into info_sources (hotel_id, title, file_name, body, draft, created_by, is_external) values ($1, $2, $3, $4, $5, $6, $7) returning id",
+    [member.hotel_id, input.title, input.fileName, input.body, JSON.stringify({ rows }), member.id, input.isExternal ?? false],
   );
   return created!.id;
+}
+
+// 外部情報のフラグを付け外しする（登録後に直すため）
+export async function setExternal(member: Member, sourceId: string, isExternal: boolean) {
+  const row = await queryOne<{ id: string }>("update info_sources set is_external = $3 where id = $1 and hotel_id = $2 returning id", [sourceId, member.hotel_id, isExternal]);
+  if (!row) throw new Error("資料が見つかりません");
 }
 
 // ---------- 確認 ----------
@@ -206,8 +235,11 @@ export type SourceReview = {
   id: string;
   title: string;
   fileName: string | null;
+  url: string | null;
+  isExternal: boolean;
+  // 確認する版の本文（更新の確認待ちなら新しい版）
   body: string;
-  status: "pending" | "approved";
+  status: SourceStatus;
   facilities: FacilityName[];
   fields: Named[];
   rows: DraftRow[];
@@ -216,8 +248,10 @@ export type SourceReview = {
 };
 
 export async function getSourceReview(hotelId: string, sourceId: string): Promise<SourceReview | undefined> {
-  const source = await queryOne<{ id: string; title: string; file_name: string | null; body: string; status: "pending" | "approved"; draft: { rows: DraftRow[] } | null }>(
-    "select id, title, file_name, body, status, draft from info_sources where id = $1 and hotel_id = $2",
+  const source = await queryOne<{
+    id: string; title: string; file_name: string | null; url: string | null; is_external: boolean; body: string; status: SourceStatus; draft: { rows: DraftRow[] } | null;
+  }>(
+    "select id, title, file_name, url, is_external, coalesce(pending_body, body) body, status, draft from info_sources where id = $1 and hotel_id = $2",
     [sourceId, hotelId],
   );
   if (!source) return undefined;
@@ -235,15 +269,17 @@ export async function getSourceReview(hotelId: string, sourceId: string): Promis
       [hotelId, sourceId],
     ),
   ]);
-  // 確認待ちなら読み取り結果、承認済みなら今の値を開き直す
+  // 確認待ち・更新の確認待ちなら読み取り結果、承認済みなら今の値を開き直す
   const rows: DraftRow[] =
-    source.status === "pending" && source.draft
+    source.status !== "approved" && source.draft
       ? source.draft.rows
       : approved.map((v) => ({ key: v.id, facility: facilityRef.id(v.facility_id), field: v.field, title: v.title, body: v.body, ...parseValidRange(v.valid) }));
   return {
     id: source.id,
     title: source.title,
     fileName: source.file_name,
+    url: source.url,
+    isExternal: source.is_external,
     body: source.body,
     status: source.status,
     facilities: names.facilities,
@@ -336,7 +372,13 @@ export async function approveSource(member: Member, sourceId: string, input: z.i
         [facilityIds.get(r.facility), fieldIds.get(r.field), sourceId, r.title, r.body, r.from, r.to, priorities.get(r.key) ?? 0, member.id],
       );
     }
-    await client.query("update info_sources set status = 'approved', draft = null, approved_by = $2, approved_at = now() where id = $1", [sourceId, member.id]);
+    // 更新の確認待ちなら、本文を新しい版に差し替える
+    await client.query(
+      `update info_sources set status = 'approved', draft = null, approved_by = $2, approved_at = now(),
+         body = coalesce(pending_body, body), content_hash = coalesce(pending_hash, content_hash), pending_body = null, pending_hash = null
+       where id = $1`,
+      [sourceId, member.id],
+    );
     const ids = [...new Set(facilityIds.values())];
     await client.query("update facilities set updated_at = now(), updated_by = $2 where id = any ($1)", [ids, member.id]);
     return { facilityIds: ids };

@@ -28,8 +28,8 @@ export async function getFacilityInfo(
 
   const [values, notices] = await Promise.all([
     // 優先度の判定には滞在期間の外の値も要るため、承認済みの値をすべて取る（施設ごとに数十件程度）
-    query<{ id: string; facility_id: string; field_id: string; field: string; title: string | null; body: string; valid: string; priority: number; source_title: string }>(
-      `select v.id, v.facility_id, v.field_id, i.name field, v.title, v.body, v.valid, v.priority, s.title source_title
+    query<{ id: string; facility_id: string; field_id: string; field: string; title: string | null; body: string; valid: string; priority: number; source_title: string; is_external: boolean }>(
+      `select v.id, v.facility_id, v.field_id, i.name field, v.title, v.body, v.valid, v.priority, s.title source_title, s.is_external
        from facility_values v join info_fields i on i.id = v.field_id join info_sources s on s.id = v.source_id
        where v.facility_id = any ($1) and v.status = 'approved'
        order by i.sort, lower(v.valid), v.title`,
@@ -62,7 +62,7 @@ export async function getFacilityInfo(
           values: effectivePeriods(
             own
               .filter((v) => v.field_id === fieldId)
-              .map((v): InfoValue => ({ id: v.id, title: v.title, body: v.body, ...parseValidRange(v.valid), priority: v.priority, sourceTitle: v.source_title })),
+              .map((v): InfoValue => ({ id: v.id, title: v.title, body: v.body, ...parseValidRange(v.valid), priority: v.priority, sourceTitle: v.source_title, external: v.is_external })),
           ).filter((v) => overlaps(v, stay)),
         })),
         notices: notices

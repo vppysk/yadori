@@ -26,7 +26,7 @@ const answerSchema = z.object({
   unanswered_questions: z
     .array(z.string())
     .describe("情報がなくて答えられなかった質問（短くまとめたもの）。すべて答えられたなら空"),
-  used_sources: z.array(z.string()).optional().describe("回答に使った【外部の最新情報】の情報源の名前。使っていなければ空"),
+  used_sources: z.array(z.string()).optional().describe("回答に使った【自動取得の最新情報】の資料名。使っていなければ空"),
 });
 
 // 回答は必ずこのツールの引数で返させる（回答文と、答えられなかった質問を分けて確実に受け取るため）

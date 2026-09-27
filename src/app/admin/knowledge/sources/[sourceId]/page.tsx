@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { requireMember } from "@/server/auth";
 import { getSourceReview } from "@/server/info-sources";
+import { getUrlSettings, markSeen } from "@/server/source-fetch";
+import { AutoSourceView } from "./auto-source";
 import { SourceReviewView } from "./source-review";
 
 export const dynamic = "force-dynamic";
@@ -11,5 +13,11 @@ export default async function SourceReviewPage({ params }: PageProps<"/admin/kno
   const member = await requireMember(`/admin/knowledge/sources/${sourceId}`);
   const review = await getSourceReview(member.hotel_id, sourceId);
   if (!review) notFound();
-  return <SourceReviewView key={sourceId} review={review} />;
+  const urlSettings = review.url ? await getUrlSettings(member.hotel_id, sourceId) : undefined;
+  if (urlSettings?.reflect_mode === "auto") {
+    // 開いたら自動反映の未確認のバッジを消す
+    await markSeen(member.hotel_id, sourceId);
+    return <AutoSourceView key={sourceId} review={review} settings={urlSettings} />;
+  }
+  return <SourceReviewView key={sourceId} review={review} urlSettings={urlSettings} />;
 }

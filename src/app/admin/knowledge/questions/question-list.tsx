@@ -51,7 +51,7 @@ export function QuestionList({ questions }: { questions: OpenGap[] }) {
     <div className="flex flex-col gap-2">
       {notice && (
         <p role="status" className="rounded-lg bg-primary-soft px-3 py-2 text-xs leading-relaxed text-primary">
-          期間のある内容のため、資料として登録しました。館内の情報で確認してから案内に使います。
+          期間のある内容のため、資料として登録しました。案内情報で確認してから案内に使います。
           <Link href="/admin/knowledge/sources" className="ml-1 font-bold underline underline-offset-2">資料を確認する</Link>
         </p>
       )}

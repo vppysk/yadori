@@ -9,6 +9,15 @@ export const fmtDate = (date: string) => `${Number(date.slice(5, 7))}/${Number(d
 
 // 小型モデルでも取り違えないよう、施設ごとに「特記事項（優先）→ 項目順に値」の文章にする。
 // 施設に情報が1件もないときや、項目はあるが滞在日の値がないときは「情報なし」と明示する（推測で答えさせないため）
+// 回答文の整形: マークダウンの強調・見出しを取り除き、外部情報の内部表記「（外部情報: ○○）」を「（○○の情報）」にする。
+// どちらも指示しても出すことがあるため、コードで直す（外部情報の表記は2026-09-27 検証）
+export function cleanReply(reply: string): string {
+  return reply
+    .replace(/\*\*|__|^#+\s*/gm, "")
+    .replace(/[（(]\s*外部情報\s*[:：]\s*([^）)]+?)\s*[）)]/g, "（$1の情報）")
+    .trim();
+}
+
 export function renderFacilities(facilities: FacilityInfo[], requested: string[]): string {
   const lines: string[] = [];
   for (const f of facilities) {

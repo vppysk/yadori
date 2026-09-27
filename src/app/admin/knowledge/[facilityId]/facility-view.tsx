@@ -14,7 +14,7 @@ export function FacilityView({ data, canNotice, children }: { data: FacilityView
       <div className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-1.5">
           <div className="text-xs text-ink-sub">
-            館内の情報 ／ 最終更新 {data.updatedAt}
+            案内情報 ／ 最終更新 {data.updatedAt}
           </div>
           <h1 className="text-[22px] font-bold">{isGlobal ? "全体" : data.name}</h1>
         </div>
@@ -34,7 +34,10 @@ export function FacilityView({ data, canNotice, children }: { data: FacilityView
                 {v.body}
                 {v.overriddenBy.length > 0 && <span className="block text-xs text-ink-sub">重なる期間は {v.overriddenBy.join("、")} を優先</span>}
               </span>
-              <span className="text-xs text-ink-sub">{v.sourceTitle ?? "導入時の設定"}</span>
+              <span className="text-xs text-ink-sub">
+                {v.external && <span className="mr-1 rounded border border-line-input px-1 text-[11px]">外部</span>}
+                {v.sourceTitle ?? "導入時の設定"}
+              </span>
             </div>
           ))}
           {f.values.length === 0 && <p className="border-t border-line px-4 py-3 text-sm text-ink-sub">案内している内容はありません</p>}

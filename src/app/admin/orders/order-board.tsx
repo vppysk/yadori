@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import type { AssignmentPreview, Board, BoardTicket, OrderForm, SlotSummary } from "@/server/order-board";
-import { previewAssignmentAction, reassignAction, registerOrderAction } from "../actions";
+import type { AssignCandidate, AssignmentPreview, Board, BoardTicket, OrderForm, SlotSummary } from "@/server/order-board";
+import { assignManuallyAction, previewAssignmentAction, registerOrderAction, requestCheckAction } from "../actions";
 
 const WEIGHT = {
   1: { label: "軽", className: "bg-primary-soft text-primary" },
@@ -18,7 +18,7 @@ type Props = {
   slots: SlotSummary[];
   slotId: string;
   board: Board;
-  candidates: { id: string; name: string }[];
+  candidates: AssignCandidate[];
   form: OrderForm | null; // オーダーを登録する権限があるとき
   canReassign: boolean;
   timezone: string;
@@ -61,7 +61,7 @@ export function OrderBoard({ slots, slotId, board, candidates, form, canReassign
         <section className="flex flex-col gap-2.5 rounded-xl bg-danger-soft p-3">
           <h2 className="text-sm font-bold text-danger">要対応</h2>
           {board.attention.map((t) => (
-            <AttentionCard key={t.id} ticket={t} slotId={slotId} candidates={candidates} canReassign={canReassign} />
+            <AttentionCard key={t.id} ticket={t} slotId={slotId} candidates={candidates} canReassign={canReassign} timezone={timezone} />
           ))}
           {board.attention.length === 0 && <p className="text-xs text-ink-sub">ありません</p>}
         </section>
@@ -100,10 +100,12 @@ export function OrderBoard({ slots, slotId, board, candidates, form, canReassign
                 </span>
                 {t.requested_for && <span className="text-xs font-bold text-primary">{fmtTime(t.requested_for, timezone)} にお届け</span>}
                 {t.note && <span className="text-xs text-ink-sub">備考：{t.note}</span>}
+                <CheckLine ticket={t} timezone={timezone} />
                 <span className="text-[11px] text-ink-sub">
                   {SOURCE[t.source] ?? t.source}
                   {t.source !== "ai_chat" && t.created_by_name ? `（${t.created_by_name}）` : ""}
                   {t.last_reason?.includes("同じフロア") ? " ・ 同フロアでまとめ" : ""}
+                  {t.last_event === "reassigned" && t.last_reason?.includes("手動で割り当て") ? " ・ 手動割り当て" : ""}
                 </span>
               </div>
             ))}
@@ -116,6 +118,16 @@ export function OrderBoard({ slots, slotId, board, candidates, form, canReassign
   );
 }
 
+function groupBySlot(candidates: AssignCandidate[]) {
+  const groups: { slotId: string; slotLabel: string; sameSlot: boolean; members: AssignCandidate[] }[] = [];
+  for (const c of candidates) {
+    const group = groups.find((g) => g.slotId === c.slotId);
+    if (group) group.members.push(c);
+    else groups.push({ slotId: c.slotId, slotLabel: c.slotLabel, sameSlot: c.sameSlot, members: [c] });
+  }
+  return groups;
+}
+
 function fmtTime(iso: string, timeZone: string): string {
   return new Date(iso).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone });
 }
@@ -125,12 +137,57 @@ function WeightBadge({ weight }: { weight: number }) {
   return <span className={`rounded px-1.5 text-xs font-bold ${w.className}`}>{w.label}</span>;
 }
 
-function AttentionCard({ ticket: t, slotId, candidates, canReassign }: { ticket: BoardTicket; slotId: string; candidates: { id: string; name: string }[]; canReassign: boolean }) {
-  const [open, setOpen] = useState(false);
+const CHECK_SOURCE: Record<string, string> = { overdue: "期限超過", guest: "ゲストの確認", supervisor: "上長" };
+
+// 状況の確認の表示（docs/005_order.md 6章）。返事待ちは経過時間、返事があれば内容
+function CheckLine({ ticket: t, timezone }: { ticket: BoardTicket; timezone: string }) {
+  if (!t.check_requested_at) return null;
+  if (!t.check_reply) {
+    return (
+      <span className="text-xs font-bold text-caution">
+        担当に確認中（{CHECK_SOURCE[t.check_source ?? ""] ?? ""}）・{t.check_waiting_minutes}分返事なし{t.check_message ? `「${t.check_message}」` : ""}
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs text-primary">
+      返事：{t.check_reply === "on_the_way" ? `向かっています${t.check_eta_at ? `（${fmtTime(t.check_eta_at, timezone)}ごろ）` : ""}` : "対応できない"}
+      {t.check_reply_note ? `「${t.check_reply_note}」` : ""}
+    </span>
+  );
+}
+
+function AttentionCard({
+  ticket: t,
+  slotId,
+  candidates,
+  canReassign,
+  timezone,
+}: {
+  ticket: BoardTicket;
+  slotId: string;
+  candidates: AssignCandidate[];
+  canReassign: boolean;
+  timezone: string;
+}) {
+  const [mode, setMode] = useState<"none" | "check" | "assign">("none");
+  const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const overdue = t.overdue_minutes > 0;
-  const state = overdue ? `期限超過 ${t.overdue_minutes}分` : !t.assignee_id ? "担当者なし" : "再割り当て中";
+  const checkPending = t.check_requested_at !== null && t.check_reply === null;
+  const state = overdue ? `期限超過 ${t.overdue_minutes}分` : !t.assignee_id ? "担当者なし" : checkPending ? "返事待ち" : t.complaint ? "クレーム" : "再割り当て中";
+  const others = candidates.filter((c) => c.id !== t.assignee_id);
+  const run = (fn: () => Promise<{ ok: boolean; error?: string }>) =>
+    startTransition(async () => {
+      const r = await fn();
+      if (!r.ok) setError(r.error ?? "失敗しました");
+      else {
+        setMode("none");
+        setMessage("");
+        setError(null);
+      }
+    });
   return (
     <div className={`flex flex-col gap-1.5 rounded-[10px] bg-surface p-3 ${overdue ? "border-2 border-danger" : "border border-line"}`}>
       <div className="flex items-center justify-between">
@@ -143,34 +200,76 @@ function AttentionCard({ ticket: t, slotId, candidates, canReassign }: { ticket:
         {t.assignee_name ? `担当：${t.assignee_name}（${t.status === "doing" ? "対応中" : "未着手"}）` : "担当：なし"}
         {t.last_reason && t.last_event === "reassigned" ? ` ・ ${t.last_reason}` : ""}
       </span>
-      {canReassign &&
-        (open ? (
-          <div className="flex flex-col gap-1.5">
-            {candidates.filter((c) => c.id !== t.assignee_id).map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                disabled={pending}
-                onClick={() =>
-                  startTransition(async () => {
-                    const r = await reassignAction(t.id, slotId, c.id);
-                    if (!r.ok) setError(r.error);
-                    else setOpen(false);
-                  })
-                }
-                className="min-h-9 rounded-lg border border-line-input text-[13px]"
-              >
-                {c.name}に付け替える
-              </button>
-            ))}
-            {candidates.length === 0 && <span className="text-xs text-ink-sub">出勤している担当者がいません</span>}
-            {error && <span className="text-xs text-danger">{error}</span>}
-          </div>
-        ) : (
-          <button type="button" onClick={() => setOpen(true)} className="min-h-9 rounded-lg border border-danger text-[13px] font-bold text-danger">
-            付け替える
+      <CheckLine ticket={t} timezone={timezone} />
+      {(t.guest_nudges > 0 || t.complaint) && (
+        <span className="text-xs text-danger">
+          {t.guest_nudges > 0 ? `ゲストの催促 ${t.guest_nudges}回` : ""}
+          {t.complaint ? `${t.guest_nudges > 0 ? " ・ " : ""}クレームとして引き継ぎ済み（対応アラート）` : ""}
+        </span>
+      )}
+      {canReassign && mode === "none" && (
+        <div className="flex gap-1.5">
+          {t.assignee_id && !checkPending && (
+            <button type="button" onClick={() => setMode("check")} className="min-h-9 flex-1 rounded-lg border border-line-input text-[13px]">
+              担当者に確認
+            </button>
+          )}
+          <button type="button" onClick={() => setMode("assign")} className="min-h-9 flex-1 rounded-lg border border-danger text-[13px] font-bold text-danger">
+            手動で割り当てる
           </button>
-        ))}
+        </div>
+      )}
+      {mode === "check" && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(() => requestCheckAction(t.id, slotId, message));
+          }}
+          className="flex flex-col gap-1.5"
+        >
+          <span className="text-[11px] text-ink-sub">{t.assignee_name}さんのスマホに「状況の確認」を送ります</span>
+          <input value={message} onChange={(e) => setMessage(e.target.value)} maxLength={200} placeholder="一言（任意）" className="min-h-9 rounded-lg border border-line-input px-2.5 text-[13px]" />
+          <div className="flex gap-1.5">
+            <button type="submit" disabled={pending} className="min-h-9 flex-1 rounded-lg bg-primary text-[13px] font-bold text-white disabled:opacity-50">
+              送る
+            </button>
+            <button type="button" onClick={() => setMode("none")} className="min-h-9 px-3 text-xs text-ink-sub">
+              やめる
+            </button>
+          </div>
+        </form>
+      )}
+      {mode === "assign" && (
+        <div className="flex flex-col gap-1.5">
+          {t.status === "doing" && t.assignee_name && (
+            <span className="rounded-md bg-caution-soft px-2 py-1.5 text-[11px] leading-normal text-caution">
+              {t.assignee_name}さんが対応中です。割り当て直すと、{t.assignee_name}さんには「対応不要」と通知します。先に「担当者に確認」もできます。
+            </span>
+          )}
+          {/* 表示中の枠の人を先に、ほかの枠に出勤している人をその後に（選ぶとチケットをその枠に移す） */}
+          {groupBySlot(others).map((group) => (
+            <div key={group.slotId} className="flex flex-col gap-1">
+              <span className="text-[11px] text-ink-sub">{group.sameSlot ? "この枠" : `ほかの枠：${group.slotLabel}`}</span>
+              {group.members.map((c) => (
+                <button
+                  key={`${c.slotId}-${c.id}`}
+                  type="button"
+                  disabled={pending}
+                  onClick={() => run(() => assignManuallyAction(t.id, slotId, c.id, c.slotId))}
+                  className="min-h-9 rounded-lg border border-line-input text-[13px]"
+                >
+                  {c.name}に割り当てる
+                </button>
+              ))}
+            </div>
+          ))}
+          {others.length === 0 && <span className="text-xs text-ink-sub">出勤している担当者がいません</span>}
+          <button type="button" onClick={() => setMode("none")} className="min-h-9 text-xs text-ink-sub">
+            やめる
+          </button>
+        </div>
+      )}
+      {error && <span className="text-xs text-danger">{error}</span>}
     </div>
   );
 }
