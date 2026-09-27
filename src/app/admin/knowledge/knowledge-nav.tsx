@@ -7,10 +7,25 @@ import type { FacilityListItem } from "@/server/knowledge-admin";
 const itemClass = (active: boolean) =>
   `flex min-h-11 items-center justify-between rounded-lg px-2.5 text-sm ${active ? "bg-primary-soft font-bold text-primary" : "hover:bg-canvas"}`;
 
-export function KnowledgeNav({ facilities, showSources, pendingSources }: { facilities: FacilityListItem[]; showSources: boolean; pendingSources: number }) {
+export function KnowledgeNav({
+  facilities,
+  showQuestions,
+  showSources,
+  pendingSources,
+}: {
+  facilities: FacilityListItem[];
+  showQuestions: boolean;
+  showSources: boolean;
+  pendingSources: number;
+}) {
   const pathname = usePathname();
   return (
     <aside aria-label="館内の情報" className="flex w-[200px] shrink-0 flex-col gap-0.5 border-r border-line bg-surface px-3 py-6">
+      {showQuestions && (
+        <Link href="/admin/knowledge/questions" aria-current={pathname.startsWith("/admin/knowledge/questions") ? "page" : undefined} className={itemClass(pathname.startsWith("/admin/knowledge/questions"))}>
+          未回答の質問
+        </Link>
+      )}
       {showSources && (
         <Link href="/admin/knowledge/sources" aria-current={pathname.startsWith("/admin/knowledge/sources") ? "page" : undefined} className={itemClass(pathname.startsWith("/admin/knowledge/sources"))}>
           資料

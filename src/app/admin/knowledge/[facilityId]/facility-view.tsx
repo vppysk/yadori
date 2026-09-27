@@ -146,6 +146,7 @@ function NoticeSection({ data, canNotice }: { data: FacilityViewData; canNotice:
         <div key={n.id} className="grid grid-cols-[1.6fr_2.6fr_1.4fr_40px] items-center gap-3 border-t border-line px-4 py-3 text-sm">
           <span className="font-bold">
             {label(n.starts_at)}〜{n.ends_at.slice(0, 10) === n.starts_at.slice(0, 10) ? n.ends_at.slice(11, 16) : label(n.ends_at)}
+            {n.ends_at.slice(0, 10) === data.today && <span className="ml-1.5 rounded bg-caution-soft px-1.5 py-0.5 text-[11px] font-normal text-caution">本日まで</span>}
           </span>
           <span>
             {n.body}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { Citation, GuestChatMessage, GuestSession } from "@/server/guest-chat";
+import type { GuestOrderDraft, SubmitOrderInput } from "@/server/order-drafts";
 import type { GuestTicket } from "@/server/orders";
 
 // チケットの進み具合を追うための再取得間隔
@@ -18,7 +19,8 @@ type StaffAction = "talk_to_staff" | "cancel_staff";
 type TimelineItem =
   | { kind: "day"; key: string; label: string }
   | { kind: "message"; key: string; message: GuestChatMessage }
-  | { kind: "ticket"; key: string; ticket: GuestTicket };
+  | { kind: "ticket"; key: string; ticket: GuestTicket }
+  | { kind: "draft"; key: string; draft: GuestOrderDraft };
 
 export function GuestChat({ reservationId, initialSession }: { reservationId: string; initialSession: GuestSession }) {
   const [session, setSession] = useState(initialSession);
@@ -46,7 +48,7 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
     if (!list) return;
     list.scrollTo({ top: list.scrollHeight, behavior: firstScroll.current ? "instant" : "smooth" });
     firstScroll.current = false;
-  }, [session.messages.length, session.tickets.length, pendingText, error]);
+  }, [session.messages.length, session.tickets.length, session.orderDrafts.length, pendingText, error]);
 
   async function post(body: { text?: string; action?: StaffAction }) {
     setError(null);
@@ -71,6 +73,25 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
     } finally {
       setPendingText(null);
       setPendingAction(null);
+    }
+  }
+
+  // 選択欄の確定・取り消し。失敗したらカードに理由を出す（画面全体の送信状態とは分ける）
+  async function postOrder(body: { action: "submit_order" | "cancel_order"; draftId: string; order?: SubmitOrderInput }): Promise<string | null> {
+    try {
+      const res = await fetch(`/api/guest/${encodeURIComponent(reservationId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        return data.error ?? "送信できませんでした。もう一度お試しください。";
+      }
+      await refresh();
+      return null;
+    } catch {
+      return "通信できませんでした。電波の良い場所でもう一度お試しください。";
     }
   }
 
@@ -154,7 +175,9 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
                 {item.label}
               </div>
             );
-          if (item.kind === "ticket") return <TicketCard key={item.key} ticket={item.ticket} />;
+          if (item.kind === "ticket") return <TicketCard key={item.key} ticket={item.ticket} timezone={session.timezone} />;
+          if (item.kind === "draft")
+            return <OrderDraftCard key={item.key} draft={item.draft} today={session.today} checkOut={session.guest.checkOut} onSubmit={postOrder} />;
           return <MessageBubble key={item.key} message={item.message} />;
         })}
         {pendingText !== null && (
@@ -261,23 +284,24 @@ const STEPS = [
   { label: "お届け済み", reached: ["done"] },
 ];
 
-function TicketCard({ ticket }: { ticket: GuestTicket }) {
+function TicketCard({ ticket, timezone }: { ticket: GuestTicket; timezone: string }) {
   const done = ticket.status === "done";
+  const scheduled = ticket.requested_for
+    ? new Date(ticket.requested_for).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: timezone })
+    : null;
   return (
     <section className="flex w-[86%] flex-col gap-3 self-start rounded-2xl border border-line bg-surface p-3.5" aria-label="ご依頼の状況">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold">{done ? "お届けしました" : "ご依頼を承りました"}</h2>
-        {!done && <span className="text-xs text-ink-sub">目安 {ticket.due_minutes_total}分以内</span>}
+        {!done && <span className="text-xs text-ink-sub">{scheduled ? `${scheduled} にお届け予定` : `目安 ${ticket.due_minutes_total}分以内`}</span>}
       </div>
       {ticket.lines.map((line, i) => (
         <div key={i} className="flex justify-between rounded-[10px] bg-canvas px-3 py-2.5 text-sm">
-          <span>
-            {line.item}
-            {line.note ? `（${line.note}）` : ""}
-          </span>
+          <span>{line.item}</span>
           <span className="font-bold">× {line.quantity}</span>
         </div>
       ))}
+      {ticket.note && <p className="text-xs leading-relaxed text-ink-sub">備考：{ticket.note}</p>}
       <ol className="flex items-center gap-1.5">
         {STEPS.map((step) => {
           const reached = step.reached.includes(ticket.status);
@@ -296,10 +320,184 @@ function TicketCard({ ticket }: { ticket: GuestTicket }) {
   );
 }
 
+// お届けの依頼の選択欄（docs/005_order.md 2章）。AIが当てた候補から、品目と数量・備考・お届け時間をゲストが決める
+function OrderDraftCard({
+  draft,
+  today,
+  checkOut,
+  onSubmit,
+}: {
+  draft: GuestOrderDraft;
+  today: string;
+  checkOut: string;
+  onSubmit: (body: { action: "submit_order" | "cancel_order"; draftId: string; order?: SubmitOrderInput }) => Promise<string | null>;
+}) {
+  const [quantities, setQuantities] = useState<Record<string, number>>(() => Object.fromEntries(draft.lines.map((l) => [l.itemId, l.paused ? 0 : l.quantity])));
+  const [note, setNote] = useState(draft.note ?? "");
+  const [deliver, setDeliver] = useState<{ date: string; time: string } | null>(draft.deliver);
+  const [pending, setPending] = useState<"submit" | "cancel" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const total = Object.values(quantities).reduce((a, b) => a + b, 0);
+  const categories = [...new Set(draft.lines.map((l) => l.category))];
+  const tomorrow = addDay(today);
+  const dates = [today, ...(tomorrow <= checkOut ? [tomorrow] : [])];
+  const change = (itemId: string, delta: number) => setQuantities((q) => ({ ...q, [itemId]: Math.min(9, Math.max(0, (q[itemId] ?? 0) + delta)) }));
+
+  async function run(action: "submit_order" | "cancel_order") {
+    setError(null);
+    setPending(action === "submit_order" ? "submit" : "cancel");
+    const failure = await onSubmit({
+      action,
+      draftId: draft.id,
+      order: action === "submit_order" ? { lines: Object.entries(quantities).map(([itemId, quantity]) => ({ itemId, quantity })), note, deliver } : undefined,
+    });
+    setError(failure);
+    setPending(null);
+  }
+
+  return (
+    <section className="flex w-[92%] flex-col gap-3 self-start rounded-2xl border border-primary bg-surface p-3.5" aria-label="お届けする品を選ぶ">
+      <div className="flex flex-col gap-0.5">
+        <h2 className="text-sm font-bold">お届けする品をお選びください</h2>
+        {draft.requested.length > 0 && (
+          <p className="text-xs text-ink-sub">ご依頼：{draft.requested.map((r) => `${r.label} × ${r.quantity}`).join("、")}</p>
+        )}
+      </div>
+      {categories.map((category) => (
+        <div key={category} className="flex flex-col gap-1.5">
+          <h3 className="text-xs text-ink-sub">{category}</h3>
+          {draft.lines
+            .filter((l) => l.category === category)
+            .map((line) => (
+              <div key={line.itemId} className="flex min-h-11 items-center justify-between gap-2 rounded-[10px] bg-canvas py-1 pr-1 pl-3 text-sm">
+                <span className={line.paused ? "text-ink-sub" : ""}>{line.name}</span>
+                {line.paused ? (
+                  <span className="pr-2 text-xs text-caution">品切れ中</span>
+                ) : (
+                  <span className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-label={`${line.name}を減らす`}
+                      onClick={() => change(line.itemId, -1)}
+                      disabled={!quantities[line.itemId]}
+                      className="flex size-11 items-center justify-center rounded-full border border-line bg-surface text-lg disabled:opacity-30"
+                    >
+                      −
+                    </button>
+                    <span className="w-6 text-center font-bold" aria-live="polite" aria-label={`${line.name}の数量`}>
+                      {quantities[line.itemId] ?? 0}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`${line.name}を増やす`}
+                      onClick={() => change(line.itemId, 1)}
+                      className="flex size-11 items-center justify-center rounded-full border border-line bg-surface text-lg"
+                    >
+                      ＋
+                    </button>
+                  </span>
+                )}
+              </div>
+            ))}
+        </div>
+      ))}
+      <label className="flex flex-col gap-1 text-xs text-ink-sub">
+        備考（任意）
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          maxLength={300}
+          placeholder="使い道やご希望があればどうぞ"
+          className="rounded-[10px] border border-line-input bg-canvas px-3 py-2 text-[15px] text-ink outline-none focus:border-primary"
+        />
+      </label>
+      <fieldset className="flex flex-col gap-1.5">
+        <legend className="mb-1 text-xs text-ink-sub">お届け</legend>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            aria-pressed={deliver === null}
+            onClick={() => setDeliver(null)}
+            className={`min-h-11 rounded-[10px] border text-[13px] ${deliver === null ? "border-primary bg-primary-soft font-bold text-primary" : "border-line"}`}
+          >
+            できるだけ早く
+          </button>
+          <button
+            type="button"
+            aria-pressed={deliver !== null}
+            onClick={() => setDeliver((d) => d ?? { date: today, time: "" })}
+            className={`min-h-11 rounded-[10px] border text-[13px] ${deliver !== null ? "border-primary bg-primary-soft font-bold text-primary" : "border-line"}`}
+          >
+            時間を指定
+          </button>
+        </div>
+        {deliver && (
+          <div className="flex gap-1.5">
+            <select
+              aria-label="お届けの日"
+              value={deliver.date}
+              onChange={(e) => setDeliver({ ...deliver, date: e.target.value })}
+              className="min-h-11 flex-1 rounded-[10px] border border-line-input bg-canvas px-2 text-[15px]"
+            >
+              {dates.map((d) => (
+                <option key={d} value={d}>
+                  {d === today ? "本日" : "明日"}（{formatDay(d)}）
+                </option>
+              ))}
+            </select>
+            <input
+              type="time"
+              aria-label="お届けの時刻"
+              step={600}
+              value={deliver.time}
+              onChange={(e) => setDeliver({ ...deliver, time: e.target.value })}
+              className="min-h-11 flex-1 rounded-[10px] border border-line-input bg-canvas px-2 text-[15px]"
+            />
+          </div>
+        )}
+      </fieldset>
+      {error && (
+        <p role="alert" className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">
+          {error}
+        </p>
+      )}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void run("submit_order")}
+          disabled={pending !== null || total === 0 || (deliver !== null && !deliver.time)}
+          className="min-h-11 flex-1 rounded-full bg-primary text-sm font-bold text-white disabled:opacity-40"
+        >
+          {pending === "submit" ? "送信しています…" : "この内容で依頼する"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void run("cancel_order")}
+          disabled={pending !== null}
+          className="min-h-11 shrink-0 rounded-full px-3 text-[13px] text-ink-sub underline underline-offset-2 disabled:opacity-50"
+        >
+          {pending === "cancel" ? "取り消し中…" : "取り消す"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function addDay(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 // メッセージとチケットを時刻順に並べる。チケットは発行直後の回答の下に出す
 function buildTimeline(session: GuestSession): TimelineItem[] {
   const items: TimelineItem[] = [];
-  const pendingTickets = [...session.tickets];
+  // 選択欄とチケットは、作られた直後の回答の下に出す
+  const pending: TimelineItem[] = [
+    ...session.orderDrafts.map((draft): TimelineItem => ({ kind: "draft", key: draft.id, draft })),
+    ...session.tickets.map((ticket): TimelineItem => ({ kind: "ticket", key: ticket.id, ticket })),
+  ].sort((a, b) => createdAt(a).localeCompare(createdAt(b)));
   let lastDay = "";
   for (const message of session.messages) {
     const day = localDate(message.created_at, session.timezone);
@@ -309,14 +507,15 @@ function buildTimeline(session: GuestSession): TimelineItem[] {
     }
     items.push({ kind: "message", key: message.id, message });
     if (message.role === "assistant") {
-      while (pendingTickets.length && pendingTickets[0].created_at <= message.created_at) {
-        const ticket = pendingTickets.shift()!;
-        items.push({ kind: "ticket", key: ticket.id, ticket });
-      }
+      while (pending.length && createdAt(pending[0]) <= message.created_at) items.push(pending.shift()!);
     }
   }
-  for (const ticket of pendingTickets) items.push({ kind: "ticket", key: ticket.id, ticket });
+  items.push(...pending);
   return items;
+}
+
+function createdAt(item: TimelineItem): string {
+  return item.kind === "draft" ? item.draft.created_at : item.kind === "ticket" ? item.ticket.created_at : "";
 }
 
 // ホテル現地の日付 YYYY-MM-DD

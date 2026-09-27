@@ -33,9 +33,10 @@ type Props = {
   load: LoadSummary | null;
   handoffs: OpenHandoff[];
   serverNow: number;
+  timezone: string;
 };
 
-export function OrdersView({ memberName, slots, tickets, load, handoffs, serverNow }: Props) {
+export function OrdersView({ memberName, slots, tickets, load, handoffs, serverNow, timezone }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<"new" | "doing">("new");
   const [now, setNow] = useState(serverNow);
@@ -165,6 +166,10 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
                 <span className={`text-[13px] ${t.overdue ? "font-bold text-danger" : "text-ink-sub"}`}>{ago(t, now)}</span>
               </div>
               <div className="text-[15px] leading-relaxed">{t.items}</div>
+              {t.requested_for && (
+                <div className="text-[13px] font-bold text-primary">{fmtTime(t.requested_for, timezone)} にお届け（時間指定）</div>
+              )}
+              {t.note && <div className="rounded-lg bg-canvas px-3 py-2 text-[13px] leading-normal">備考：{t.note}</div>}
               {declining === t.id ? (
                 <div className="flex flex-col gap-2">
                   <span className="text-xs text-ink-sub">理由を選ぶと、枠内の次の人に割り当てます</span>
@@ -227,6 +232,10 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
       </main>
     </>
   );
+}
+
+function fmtTime(iso: string, timeZone: string): string {
+  return new Date(iso).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone });
 }
 
 function ago(t: MyTicket, now: number): string {

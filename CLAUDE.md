@@ -18,8 +18,8 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `npm run db:start` / `db:stop` / `db:reset`: ローカルSupabase（Docker必須）。クラウドへの適用は `npx supabase db push --db-url "$DATABASE_URL"`
 - `npm run dev:shifts`: デモのスタッフを今日の枠に出勤させる（割り当ての確認に必要）
 - `npm run try:guest -- R-1203 "プール何時まで？"`: ゲストの1通を画面なしで処理する（`.env.local` の `LLM_MODE` に従う）
-- `npm run dev:cron`: 期限の監視（`/api/cron/tickets`）と外部の情報源の取得（`/api/cron/sources`）を1分ごとに呼ぶ（`npm run dev` と並行して起動）
-- `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績を生成（`signals.demo=true`）／ `npm run dev:seed-alerts`: 対応アラートに分類ごとの未対応・対応中を入れる（予約番号 `DEMO-*` の架空の会話）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
+- `npm run dev:cron`: 期限の監視（`/api/cron/tickets`）、外部の情報源の取得（`/api/cron/sources`）、会話ログの定期評価（`/api/cron/knowledge-review`、1日1回・現地3時以降）を1分ごとに呼ぶ（`npm run dev` と並行して起動）
+- `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績を生成（`signals.demo=true`）／ `npm run dev:seed-alerts`: 対応アラートに分類ごとの未対応・対応中を入れる（予約番号 `DEMO-*` の架空の会話）／ `npm run dev:seed-gaps`: 未回答の質問を、定期評価が今日3時に実行された状態で入れる（予約番号 `DEMO-GAP-*` の前日の会話）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
 - DBのマイグレーション追加後は `npx supabase db push --db-url "$DATABASE_URL"`（`.env.local` を読み込んでから）
 - デモ・検証用の資料は `docs/demo/`（冬季営業のお知らせのPDF・画像、施設の取り違えと新しい施設の確認用の文章。使い方と期待する読み取りは `docs/demo/README.md`）
 - テストランナーは未導入
@@ -28,11 +28,12 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 
 - `src/lib/llm/models.ts`: モデル取得の唯一の入口 `getModel(tier, { thinking })`。`LLM_MODE=mock`（既定）でAI SDKのモックモデル、`nebius`でToken Factory。tierは small=Nemotron 3.5 Lightning / medium=3 Super / large=3 Ultra。エージェントや処理から直接プロバイダーを生成しない
 - `src/lib/llm/structured.ts`: 構造化出力は `generateStructured`（強制ツール呼び出し＋Zod検証＋再試行）を使う。Token Factoryの`json_schema`はNemotronでスキーマを保証しないため、MastraやAI SDKの`output`／`structuredOutput`は使わない
-- `src/server/`: 業務ロジック（DBは `db.ts` の `pg` で直接SQL）。`guest-chat.ts` がゲスト1通の処理の流れ（ルーター → チケット発行 → 知識の取得 → 回答 → 計測の記録）
-- `src/server/orders.ts`: チケットの割り当ては機械ロジック（同フロアのまとめ → 担当量最小 → 最後の割り当てが古い順）。LLMは使わない
+- `src/server/`: 業務ロジック（DBは `db.ts` の `pg` で直接SQL）。`guest-chat.ts` がゲスト1通の処理の流れ（ルーター → お届けの選択欄 → 知識の取得 → 回答 → 計測の記録）
+- `src/server/orders.ts`: チケットの割り当ては機械ロジック（同じ棟・フロアのまとめ → 担当量最小 → 最後の割り当てが古い順）。LLMは使わない。お届けの希望日時があるチケットは前倒しの時刻まで割り当てを保留し、`/api/cron/tickets` で割り当てる
+- オーダーの受付（`docs/005_order.md`）: `order-match.ts`（ゲストの言い方→品目の候補。名前・別名の一致 → 分類 → 部分一致）、`order-drafts.ts`（ゲストの選択欄。確定でチケットを作る。オーダーだけの発言は回答係を呼ばず定型文）。部屋は客室ID（`rooms.id`）で持ち、`room_number` 列には表示名を入れる。担当席は `members.seat_slot_id` の共有アカウント（`items.ts` の `setSeats`）
 - `src/server/auth.ts`: `requireMember`（画面）と `authorize(権限キー, 対象ID)`（サーバーアクション）。操作は必ず `authorize` → 処理 → `audit` の順
-- `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`info-sources.ts`（資料: 施設ごとの読み取り・根拠の確認・承認と優先度）、`facility-fields.ts`（値の期間・重なり・優先度の純粋関数。確認画面でも使う）、`questions.ts`（未回答→回答でRAGへ）、`staff-ask.ts`（スタッフのAI相談）
-- サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）、`src/app/manage/actions.ts`（経営）
+- `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`info-sources.ts`（資料: 施設ごとの読み取り・根拠の確認・承認と優先度）、`facility-fields.ts`（値の期間・重なり・優先度の純粋関数。確認画面でも使う）、`questions.ts`（未回答の質問の一覧と回答。期間のない回答はよくある質問（RAG）、期間のある回答は資料へ）、`knowledge-review.ts`（会話ログの定期評価で未回答の質問を見つける。`/api/cron/knowledge-review`）、`staff-ask.ts`（スタッフのAI相談）
+- サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）。管理PCのサイドバーは `src/app/admin/nav-items.ts`（ホームはなく、`/admin` は一番上へ移る）、`src/app/manage/actions.ts`（経営）
 - MCP: `src/mcp/pms-server.ts`（予約・客室管理のモック、`/api/mcp/pms`）と `src/mcp/work-events-server.ts`（実績の出力口、`/api/mcp/work-events`）。どちらもBearerトークン必須。予約情報の読み書きは必ず `src/server/integrations/pms.ts`（変換層）を通し、項目ルールとAIの権限を確認する
 - `src/server/external-sources.ts`: 外部の情報源（管理PC `/admin/sources`）。登録したURLだけを `integrations/web-fetch.ts`（Tavily Extract）で定期取得し（`/api/cron/sources`、検索はしない）、本文が変わったときだけ中型で要約・影響判定。要約はゲストの回答とAI相談に【外部の最新情報】として渡し、回答係が `used_sources` で返した情報源を根拠に出す。要注意はスタッフに通知。期間限定で頻度を上げられる（`external_source_boosts`）。AIの権限 `integration.web_fetch.read` と項目 `external_updates` の読み取りを確認する
 - 引き継ぎの種類はきっかけごとに保存し、管理PC `/admin/handoffs`（対応アラート）の分類は `src/lib/handoff-kinds.ts` でまとめる。LLMの失敗は `src/lib/llm/errors.ts` の `classifyLlmError` で原因を分け、`system_error` の引き継ぎに残す（期待した出力が返らないときは `InvalidOutputError` を投げる）
@@ -58,13 +59,14 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - 回答係（`concierge`）には館内情報を調べるツールを持たせない。営業情報・特記事項はサーバーが滞在日で取得して文章にする。Nemotronがツール呼び出しを文字で書く・同じ呼び出しを216回繰り返す事象があったため
 - 回答は `generateAnswer`（`answer` ツールの強制呼び出し）で、回答文と答えられなかった質問を分けて受け取る
 - 館内情報はシステム指示ではなく、最後のユーザー発言の前に【最新の館内情報】として付ける。システム指示に置くと、マスタ更新後も会話中の古い回答を繰り返した
-- 情報にないことを「ございません」と断定しやすいので、指示で禁止している（未回答として記録させる）
+- 情報にないことを「ございません」と断定しやすいので、指示で禁止している。未回答の質問は会話ログの定期評価で見つける（1通ごとの記録はしない）
+- 定期評価（Super）は「苦情や依頼は抜き出さない」と指示しても返すため、発言の種類を分類させて情報の質問だけをコードで残している（`knowledge-review.ts`）。スタッフの名乗りや「確認して折り返します」も下書きに入れがちなので、指示と `has_information` で除いている
 - 禁止事項の後チェックは中型（Super）。小型は値引きの約束や他の客の情報を見逃した
 - 精密見積もりのAI採点は差が出にくい（どちらも4点になりがち）。「過去の会話で試す」の指示判定も誤ることがあるため、画面に判定理由を出している。採点基準の改善は未着手
 - 実績の記録（`recordWorkEvent`）のたびにWebhookを `after()` で送る。本文のHMAC-SHA256を `X-Hotel-Agent-Signature` に付ける
 - 案内の回答は中型（Super）が既定。小型（Lightning）はデータのない項目（朝食時間など）を推測で答えた。ルーターは小型で可
 - ルーターは「スタッフと話したい」自体を complaint の要望にすることがある。指示で禁止し、`wants_staff` のときは短い要約の会話希望を要望から除いている（`router.ts` の `isTalkRequestOnly`）。人への引き継ぎは、同じ発言のオーダー発行とクレームの引き継ぎを済ませてから行う
-- ルーターのLLMは品名と数量の読み取りだけ。品目マスタとの照合は `matchCatalog`（品名・別名の部分一致）で行う。LLMに照合させると、別名にある品をマスタにないと判断したり、ない品を既存品目に当てはめたりした
+- ルーターのLLMは品名・数量・備考・希望の時刻（本日／明日＋時刻）の読み取りだけ。品目との照合は `order-match.ts` のコードで行い、候補を広めに出してゲストが選択欄で確定する。LLMに照合させると、別名にある品をマスタにないと判断したり、ない品を既存品目に当てはめたりした
 - Tavily Extract は古い版を返すことがある（気象庁の予報JSONが5日前の版だった）。要約の指示で発表日時を確認させ、古ければ「最新の情報を取得できませんでした」にしている。JavaScriptで中身を読み込むページ（JR北海道の運行情報など）は本文が取れないので、元のJSONのURLを登録する
 - 資料の読み取り（`info-sources.ts`）は、施設の洗い出し → 施設ごとに1回ずつ（「全体」は毎回）。全施設を一度に読ませると主な施設に引っ張られてほかの施設の記述を落とした。施設ごとだと別の施設の内容を取り違える（大浴場に「ランチ 休業」など）ので、先に該当する文（`quotes`）を抜き出させ、時刻・金額・タイトル・「休」がその中にない件、「全体」でほかの施設と同じ件、「通常どおり」だけの件はコードで捨てる。施設名・項目名は enum にせずコードで照合する（enum だと短く書かれて弾かれ、再試行で内容ごと落とした）。指示だけでは防げなかったものはコードの規則にしている
 - 資料の原文を毎回LLMに渡すと、期間の違う情報が混ざったときに滞在日に合わない内容を答えた（提供期間外のメニューの料金など）。承認済みの値を滞在日で絞って渡す

@@ -12,7 +12,8 @@ export type HandoffKind =
   | "safety"
   | "staff_assigned"
   | "guardrail_blocked"
-  | "system_error";
+  | "system_error"
+  | "order_unavailable";
 
 // システムの不具合の中身（stage と cause は system_error のとき）。禁止事項で止めたときは detail に理由と止めた回答を残す
 export type HandoffFailure = { stage?: "answer" | "guardrail"; cause?: LlmFailureCause; detail?: string; modelId?: string };

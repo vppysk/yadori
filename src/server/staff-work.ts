@@ -3,7 +3,7 @@ import type { Member } from "./auth";
 import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
 import { getAiAgentMemberId, getHotel, localNow, type Hotel } from "./hotel";
 import { recordWorkEvent } from "./metrics";
-import { pickAssignee, roomFloor } from "./orders";
+import { getRoom, pickAssignee } from "./orders";
 
 // ---------- 出勤（その日の枠と担当者。plan 4.2） ----------
 
@@ -17,7 +17,7 @@ export async function listMySlots(member: Member): Promise<SlotOption[]> {
        exists (select 1 from slot_shifts ss where ss.slot_id = s.id and ss.member_id = $2 and ss.work_date = $3 and ss.ended_at is null) on_shift
      from slots s join job_roles r on r.id = s.job_role_id left join areas a on a.id = s.area_id
      where s.hotel_id = $1 and has_permission($2, 'order.assignable', s.id)
-     order by r.name, a.floor_from`,
+     order by r.name, a.sort, a.name`,
     [member.hotel_id, member.id, localNow(hotel.timezone).date],
   );
 }
@@ -47,6 +47,8 @@ export type MyTicket = {
   status: "new" | "doing";
   weight: number;
   items: string;
+  note: string | null;
+  requested_for: string | null;
   assigned_at: string;
   started_at: string | null;
   due_at: string;
@@ -57,7 +59,7 @@ export type MyTicket = {
 export async function listMyTickets(memberId: string): Promise<MyTicket[]> {
   return query<MyTicket>(
     `select t.id, t.room_number, t.status, t.weight,
-       string_agg(l.item_name || coalesce('（' || l.note || '）', '') || ' × ' || l.quantity, ' ・ ' order by l.id) items,
+       string_agg(l.item_name || ' × ' || l.quantity, ' ・ ' order by l.id) items, t.note, t.requested_for,
        t.assigned_at, t.started_at, t.due_at, t.due_at < now() overdue,
        (select e.reason from ticket_events e where e.ticket_id = t.id and e.member_id = $1 and e.type in ('assigned', 'reassigned')
         order by e.created_at desc limit 1) assign_reason
@@ -160,8 +162,8 @@ export async function declineTicket(member: Member, ticketId: string, reason: st
 
 // 枠内の次の人へ付け替える。辞退・放置した人は除く。誰もいなければ未割り当てにして上長へ通知
 export async function reassign(client: PoolClient, hotel: Hotel, ticketId: string, why: string) {
-  const { rows } = await client.query<{ slot_id: string | null; room_number: string; assignee_id: string | null }>(
-    "select slot_id, room_number, assignee_id from tickets where id = $1",
+  const { rows } = await client.query<{ slot_id: string | null; room_id: string; room_number: string; assignee_id: string | null }>(
+    "select slot_id, room_id, room_number, assignee_id from tickets where id = $1",
     [ticketId],
   );
   const ticket = rows[0];
@@ -170,9 +172,9 @@ export async function reassign(client: PoolClient, hotel: Hotel, ticketId: strin
     [ticketId],
   );
   const excludeIds = [...excluded.map((e) => e.member_id), ...(ticket.assignee_id ? [ticket.assignee_id] : [])];
-  const floor = await roomFloor(client, hotel.id, ticket.room_number);
+  const room = await getRoom(client, hotel.id, ticket.room_id);
   if (ticket.slot_id) await client.query("select pg_advisory_xact_lock(hashtext($1))", [ticket.slot_id]);
-  const next = ticket.slot_id ? await pickAssignee(client, hotel, ticket.slot_id, floor, excludeIds) : undefined;
+  const next = ticket.slot_id ? await pickAssignee(client, hotel, ticket.slot_id, room, excludeIds) : undefined;
   const aiMemberId = await getAiAgentMemberId(hotel.id);
 
   await client.query("update tickets set assignee_id = $2, assigned_at = case when $2::uuid is null then null else now() end where id = $1", [

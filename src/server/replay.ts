@@ -3,13 +3,14 @@ import { configuredModelId, type ModelTier } from "@/lib/llm/models";
 import { generateStructured } from "@/lib/llm/structured";
 import { query } from "./db";
 import { draftAnswer, type InstructionOverrides } from "./guest-chat";
+import { mergeOrders, summarizeOrder } from "./order-drafts";
 import { checkReply } from "./guardrails";
 import { getGuestContext } from "./guest-context";
 import { getHotel, type Pattern } from "./hotel";
 import { listFacilityNames } from "./knowledge";
 import { recordLlmCall } from "./metrics";
 import { getCatalog } from "./orders";
-import { route } from "./router";
+import { route, type RouteIntent } from "./router";
 
 // 精密見積もり（plan 4.3）: 過去のゲストの質問を、現在のモデルと新しいモデルで再生して、
 // 実際のトークン数・コスト・答えられなかった率（引き継ぎの代わり）・AI採点による品質を比べる。DBの業務データには書かない
@@ -77,12 +78,10 @@ export async function replay(hotelId: string, request: ReplayRequest): Promise<R
     const rows = await Promise.all(
       questions.map(async (text) => {
         const routed = await route(text, catalog, facilityNames);
-        const items = routed.result.intents.flatMap((i) => i.items ?? []);
         const { answer } = await draftAnswer({
           hotel, guest, text, history: [], routed: routed.result, allFacilityNames: facilityNames,
-          // オーダーは発行したものとして答えさせる（再生ではチケットを作らない）
-          tickets: items.length ? [{ id: "replay", lines: items.map((l) => ({ item: l.label, quantity: l.quantity })), dueMinutes: 30, assigneeName: null }] : [],
-          unsupportedItems: routed.result.intents.flatMap((i) => i.unsupported_items ?? []),
+          // お届けの依頼は選択欄を出したものとして答えさせる（再生では保存しない）
+          order: replayOrder(routed.result.intents),
           hasComplaint: routed.result.intents.some((i) => i.pattern === "complaint"),
           tier, thinking: false,
         });
@@ -160,11 +159,9 @@ export async function tryInstructions(hotelId: string, pattern: Pattern, draft: 
   const cases = await Promise.all(
     questions.map(async (text) => {
       const routed = await route(text, catalog, facilityNames);
-      const items = routed.result.intents.flatMap((i) => i.items ?? []);
       const base = {
         hotel, guest, text, history: [], routed: routed.result, allFacilityNames: facilityNames,
-        tickets: items.length ? [{ id: "replay", lines: items.map((l) => ({ item: l.label, quantity: l.quantity })), dueMinutes: 30, assigneeName: null }] : [],
-        unsupportedItems: routed.result.intents.flatMap((i) => i.unsupported_items ?? []),
+        order: replayOrder(routed.result.intents),
         hasComplaint: routed.result.intents.some((i) => i.pattern === "complaint"),
         tier: "medium" as const, thinking: false,
       };
@@ -198,4 +195,9 @@ async function judgeInstruction(hotelId: string, instruction: string, question: 
   } catch {
     return { follows: false, reason: "判定できなかった" };
   }
+}
+
+function replayOrder(intents: RouteIntent[]) {
+  const merged = mergeOrders(intents);
+  return merged ? summarizeOrder(merged, merged.lines.length ? "replay" : undefined) : undefined;
 }

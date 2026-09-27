@@ -4,19 +4,19 @@ import { classifyLlmError, type LlmFailure } from "@/lib/llm/errors";
 import { modelIdFor, type ModelTier } from "@/lib/llm/models";
 import type { LlmUsage } from "@/lib/llm/structured";
 import { generateAnswer, type Answer, type ConciergeContext } from "@/mastra/agents/concierge";
-import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
+import { ISO_TIMESTAMP, query, queryOne } from "./db";
 import { getGuestContext, type GuestContext } from "./guest-context";
 import { checkReply, enabledHandoffCodes, unansweredCount } from "./guardrails";
 import { activeGuestRequest, cancelGuestRequest, createHandoff, type GuestRequest, type HandoffKind } from "./handoffs";
-import { currentTimeBand, getAiAgentMemberId, getAssignment, getHotel, localNow, type Hotel, type Pattern } from "./hotel";
+import { currentTimeBand, getAssignment, getHotel, localNow, type Hotel, type Pattern } from "./hotel";
 import { fmtDate, noticeCitations, renderFacilities, type Citation } from "./answer-context";
 import { externalCitations, getExternalUpdates, renderExternalUpdates, type ExternalUpdate } from "./external-sources";
 import { getFacilityInfo, listFacilityNames, searchDocuments, type FacilityInfo } from "./knowledge";
 import { recordLlmCall, recordWorkEvent } from "./metrics";
-import { createTickets, getCatalog, listConversationTickets, type CreatedTicket, type GuestTicket } from "./orders";
+import { cancelDraft, listOpenDrafts, orderInstructions, orderReply, proposeOrder, submitDraft, type GuestOrderDraft, type OrderSummary, type SubmitOrderInput } from "./order-drafts";
+import { getCatalog, listConversationTickets, type GuestTicket } from "./orders";
 import { readRuleText } from "./integrations/pms";
 import { externalReadRule } from "./integrations/web-fetch";
-import { recordUnanswered } from "./questions";
 import { route, type RouteResult } from "./router";
 
 const HISTORY_LIMIT = 12;
@@ -43,6 +43,8 @@ export type GuestSession = {
   conversationId: string;
   messages: GuestChatMessage[];
   tickets: GuestTicket[];
+  // ゲストが品目・数量を選ぶ前のお届けの依頼（選択欄）
+  orderDrafts: GuestOrderDraft[];
   // 対応中の「スタッフと話す」の依頼。ヘッダーのボタンの表示に使う
   staffRequest: GuestRequest | null;
 };
@@ -52,9 +54,10 @@ export async function getGuestSession(reservationId: string): Promise<GuestSessi
   if (!guest) return undefined;
   const hotel = await getHotel(guest.hotelId);
   const conversationId = await findOrCreateConversation(hotel, guest);
-  const [messages, tickets, staffRequest] = await Promise.all([
+  const [messages, tickets, orderDrafts, staffRequest] = await Promise.all([
     listMessages(conversationId),
     listConversationTickets(conversationId),
+    listOpenDrafts(conversationId, hotel),
     activeGuestRequest(conversationId),
   ]);
   return {
@@ -65,6 +68,7 @@ export async function getGuestSession(reservationId: string): Promise<GuestSessi
     conversationId,
     messages,
     tickets,
+    orderDrafts,
     staffRequest: staffRequest ?? null,
   };
 }
@@ -94,6 +98,22 @@ export async function cancelStaffRequest(reservationId: string) {
   return { cancelled };
 }
 
+// 選択欄の「この内容で依頼する」: チケットを作り、機械ロジックで割り当てる（docs/005_order.md 2章）
+export async function submitOrder(reservationId: string, draftId: string, input: SubmitOrderInput) {
+  const guest = await getGuestContext(reservationId);
+  if (!guest) throw new Error(`予約が見つかりません: ${reservationId}`);
+  const hotel = await getHotel(guest.hotelId);
+  const conversationId = await findOrCreateConversation(hotel, guest);
+  return submitDraft({ hotel, guest, conversationId, draftId, input });
+}
+
+export async function cancelOrder(reservationId: string, draftId: string) {
+  const guest = await getGuestContext(reservationId);
+  if (!guest) throw new Error(`予約が見つかりません: ${reservationId}`);
+  const hotel = await getHotel(guest.hotelId);
+  await cancelDraft(await findOrCreateConversation(hotel, guest), draftId);
+}
+
 async function handOffToStaff(
   hotel: Hotel,
   guest: GuestContext,
@@ -101,11 +121,11 @@ async function handOffToStaff(
   pattern: Pattern,
   timeBandId: string | undefined,
   summary: string,
-  // ordered: 同じ発言のオーダーを受け付け済み（回答でそのことにも触れる）
+  // ordered: 同じ発言のお届けの依頼の選択欄を出した（回答でそのことにも触れる）
   // messageId: 引き継ぎのきっかけになったゲストの発言（ボタンのときはなし）
   options: { kind?: HandoffKind; reply?: string; guestRequested?: boolean; ordered?: boolean; messageId?: string } = {},
 ) {
-  const accepted = options.ordered ? "ご依頼を承りました。" : "";
+  const accepted = options.ordered ? "お届けの品は下の欄でお選びください。" : "";
   const handoffId = await createHandoff({
     hotelId: hotel.id, kind: options.kind ?? "talk_request", conversationId, roomNumber: guest.roomNumber, summary, guestRequested: options.guestRequested,
     messageId: options.messageId,
@@ -153,8 +173,8 @@ export async function handleGuestMessage(reservationId: string, text: string) {
       reply: "すぐにスタッフにおつなぎします。命に関わる緊急の場合は、ためらわず119番に通報してください。",
     });
   }
-  const tickets = await issueOrders(hotel, guest, conversationId, text, intents, band?.id);
-  const unsupportedItems = intents.flatMap((i) => i.unsupported_items ?? []);
+  // お届けの依頼は選択欄を出し、ゲストが確定したときにチケットを作る（取り扱いのない品・品切れは引き継ぐ）
+  const order = await proposeOrder({ hotel, guest, conversationId, messageId: userMessageId, text, intents });
   const complaints = intents.filter((i) => i.pattern === "complaint");
   // クレームと強い不満は人へ引き継ぐ（AIは一次受け止めのみ。「強い不満」の条件をオフにすると引き継がない）
   if (conditions.has("strong_complaint")) {
@@ -169,10 +189,16 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   if (conditions.has("wants_staff") && routed.result.wants_staff) {
     // オーダーの実績は発行時に記録済みのため、引き継ぎはオーダー以外の要望として数える
     const pattern = intents.find((i) => i.pattern !== "order")?.pattern ?? "info";
-    const summary = unsupportedItems.length ? `${text}（取り扱いのない品: ${unsupportedItems.join("、")}）` : text;
-    return handOffToStaff(hotel, guest, conversationId, pattern, band?.id, summary, {
-      guestRequested: true, ordered: tickets.length > 0, messageId: userMessageId,
+    return handOffToStaff(hotel, guest, conversationId, pattern, band?.id, text, {
+      guestRequested: true, ordered: order?.draftId !== undefined, messageId: userMessageId,
     });
+  }
+
+  // お届けの依頼だけの発言は、回答係を呼ばずに定型文で返す（品目・数量は選択欄で確定する）
+  if (order && intents.every((i) => i.pattern === "order")) {
+    const reply = orderReply(order);
+    await insertMessage(conversationId, "assistant", reply);
+    return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
   }
 
   const primary = PATTERN_PRIORITY.find((p) => intents.some((i) => i.pattern === p)) ?? "info";
@@ -189,19 +215,18 @@ export async function handleGuestMessage(reservationId: string, text: string) {
 
   const tier: ModelTier = assignment.handler === "human" ? "small" : assignment.handler;
   const { answer, facilities, externalUpdates, failure } = await draftAnswer({
-    hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, tickets, unsupportedItems,
+    hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, order,
     hasComplaint: complaints.length > 0, tier, thinking: assignment.thinking,
   });
   const today = localNow(hotel.timezone).date;
   const usage: LlmUsage = answer?.usage ?? { modelId: modelIdFor(tier), inputTokens: 0, outputTokens: 0, reasoningTokens: 0, ms: 0 };
-  // 答えられなかった質問は未回答の一覧へ（管理PCで回答すると知識に蓄積）
-  // モデルが「確認します」と答えたのに一覧を空で返すことがあるため、そのときはゲストの文をそのまま記録する
+  // 答えられなかったか（ガードレールの「同じ会話で2回答えられなかった」と実績に使う）。未回答の質問の一覧は会話ログの定期評価で作る（knowledge-review.ts）
+  // モデルが「確認します」と答えたのに一覧を空で返すことがあるため、そのときも答えられなかったとみなす
   const unanswered = answer?.unanswered_questions.length
     ? answer.unanswered_questions
     : answer && /スタッフに確認|確認して(ご連絡|お知らせ)/.test(answer.reply)
       ? [text]
       : [];
-  for (const question of unanswered) await recordUnanswered(hotel.id, question);
   // 指示してもマークダウンの強調・見出しを出すことがあるため取り除く
   const generated = (answer?.reply ?? "").replace(/\*\*|__|^#+\s*/gm, "").trim();
   const failed = generated === "";
@@ -268,29 +293,6 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   return { reply, citations, tickets: await listConversationTickets(conversationId) };
 }
 
-async function issueOrders(
-  hotel: Hotel,
-  guest: GuestContext,
-  conversationId: string,
-  text: string,
-  intents: RouteResult["intents"],
-  timeBandId?: string,
-): Promise<CreatedTicket[]> {
-  const lines = intents.filter((i) => i.pattern === "order").flatMap((i) => i.items ?? []);
-  if (lines.length === 0) return [];
-  const aiMemberId = await getAiAgentMemberId(hotel.id);
-  const tickets = await transaction((client) =>
-    createTickets(client, { hotel, roomNumber: guest.roomNumber, lines, source: "ai_chat", rawText: text, conversationId, createdBy: aiMemberId }),
-  );
-  for (const ticket of tickets) {
-    await recordWorkEvent({
-      hotelId: hotel.id, conversationId, ticketId: ticket.id, pattern: "order", timeBandId, handlerKind: "ai",
-      handler: modelIdFor("small"), outcome: "resolved", signals: { assigned: ticket.assigneeName !== null },
-    });
-  }
-  return tickets;
-}
-
 // 回答の下書き（DBには書かない）: 滞在日で館内情報を取り、指示を組み立てて回答係に答えさせる。
 // ゲスト対応と、精密見積もりの再生（replay.ts）で共通に使う
 export async function draftAnswer(params: {
@@ -300,8 +302,7 @@ export async function draftAnswer(params: {
   history: { role: string; content: string }[];
   routed: RouteResult;
   allFacilityNames: string[];
-  tickets: CreatedTicket[];
-  unsupportedItems: string[];
+  order: OrderSummary | undefined;
   hasComplaint: boolean;
   tier: ModelTier;
   thinking: boolean;
@@ -323,7 +324,7 @@ export async function draftAnswer(params: {
   ]);
 
   const instructions = await buildInstructions({
-    hotel, guest, intents, tickets: params.tickets, unsupportedItems: params.unsupportedItems, hasComplaint: params.hasComplaint,
+    hotel, guest, intents, order: params.order, hasComplaint: params.hasComplaint,
     overrides: params.instructionOverrides, externalUpdates,
   });
   const requestContext = new RequestContext<ConciergeContext>();
@@ -357,13 +358,12 @@ async function buildInstructions(params: {
   hotel: Hotel;
   guest: GuestContext;
   intents: RouteResult["intents"];
-  tickets: CreatedTicket[];
-  unsupportedItems: string[];
+  order: OrderSummary | undefined;
   hasComplaint: boolean;
   overrides?: InstructionOverrides;
   externalUpdates: ExternalUpdate[];
 }): Promise<string> {
-  const { hotel, guest, intents, tickets, unsupportedItems, hasComplaint, overrides, externalUpdates } = params;
+  const { hotel, guest, intents, order, hasComplaint, overrides, externalUpdates } = params;
   const patterns = [...new Set(intents.map((i) => i.pattern))];
   const [instructions, guardrails, readRule, externalRule] = await Promise.all([
     overrides
@@ -409,10 +409,7 @@ async function buildInstructions(params: {
     "## ゲストの状況",
     `・今日: ${now.date} ${now.time}（${stayStatus}）`,
     `・ご滞在: ${guest.checkIn}（チェックイン）〜 ${guest.checkOut}（チェックアウト）、${guest.roomNumber}号室、${guest.adults}名`,
-    ...(tickets.length
-      ? [`・このメッセージのオーダーは手配済み: ${tickets.flatMap((t) => t.lines.map((l) => `${l.item}×${l.quantity}`)).join("、")}。お届けの目安は${Math.min(...tickets.map((t) => t.dueMinutes))}分以内。手配したことを一言伝える（進み具合は画面に表示される）`]
-      : []),
-    ...(unsupportedItems.length ? [`・品目マスタにない依頼（${unsupportedItems.join("、")}）は、スタッフが確認してご連絡すると伝える`] : []),
+    ...(order ? orderInstructions(order) : []),
     ...(hasComplaint ? ["・不満の内容はスタッフに引き継ぎ済み。お詫びし、担当者から改めて連絡すると伝える"] : []),
     // 予約・客室管理システムのお客様メモ（読み取りが許可されている場合のみ）と、その読み取りルール
     ...(guest.guestNotes?.length

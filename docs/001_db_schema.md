@@ -35,11 +35,12 @@
 ### オーダーチケット（4.2）
 | テーブル | 役割 |
 |---|---|
-| `job_roles` / `areas` / `rooms` | 役割、担当エリア（フロアの範囲）、部屋とフロアの対応 |
+| `job_roles` / `areas` / `rooms` | 役割、担当エリア、部屋（予約・客室管理システムの客室IDが主キー。棟・部屋番号・フロア・エリア。`label` は表示名） |
 | `slots` | 枠 = 役割 × エリア。`area_id=null` は全館担当（ルームサービスなど） |
-| `order_items` | 品目。担当役割、重み（1〜3）、期限。`aliases` はLLMが読み取るときの補助 |
+| `order_items` | 品目。分類、担当役割、重み（1〜3）、期限、取り扱いの状態（取り扱い中／一時品切れ／取り扱い終了）。`aliases` は照合の補助 |
 | `slot_shifts` | その日の枠と担当者（出勤時にスマホで選ぶ） |
-| `tickets` / `ticket_lines` | チケットと品目の行。`weight` は含まれる品目の最大段階 |
+| `tickets` / `ticket_lines` | チケットと品目の行。`weight` は含まれる品目の最大段階。`note` は備考、`requested_for` はお届けの希望日時（`dispatched_at` まで割り当てを保留） |
+| `order_drafts` | ゲストの選択待ち（選択欄に出した候補と初期の数量・備考・希望日時）。ゲストが確定するとチケットになる |
 | `ticket_events` | 割り当て・再割り当て・対応できない・着手・完了・昇格の履歴 |
 
 - **割り当ては `member_daily_load` ビューを使う**: 「本日の累計pt＋未完了pt」が最小の人。同点なら `last_assigned_at` が古い人。同フロアのまとめなどの細かいルールはアプリ側で書く
@@ -110,3 +111,5 @@
 - `20260930000000_info_sources.sql`: 資料 `info_sources` を追加。`facility_values` を型なし（`title`・`body`）にし、`source_id`・`priority` を追加、状態を `pending`／`approved` に変更、`value`・`source_file_id` と `info_fields.value_type` を削除。`facility_period_overlaps` を「優先度が同じ重なり」に作り直した
 - `20260930010000_handoff_reasons.sql`: 引き継ぎの種類をきっかけごとに分けた（`staff_assigned`＝担当が人、`guardrail_blocked`＝禁止事項で回答を止めた、`system_error`＝回答の生成・禁止事項のチェックの失敗）。システムの不具合の中身（`failure_stage`・`failure_cause`・`failure_detail`・`model_id`。禁止事項で止めたときは `failure_detail` に理由と止めた回答）と、引き継いだ時点のメッセージ `message_id` を追加。既存の行は要約の書き出しで移し替え、担当が人は確実に見分けられないため、ゲストの依頼でない `talk_request` をまとめて寄せた。管理PCの対応アラートでの分類は `src/lib/handoff-kinds.ts`
 - `20261001000000_facilities_from_sources.sql`: カテゴリ（`facility_categories`・`category_fields`・`facilities.category_id`）を削除。確認待ちの読み取り結果を `info_sources.draft` に持ち、`facility_values` は承認済みだけにした（`unplaced` を削除）。資料のない値を「導入時の設定」の資料に紐づけ、`facility_values.source_id` を必須にした
+- `20261002000000_knowledge_review.sql`: 未回答の質問を会話ログの定期評価に置き換えた（`docs/004_knowledge_gap_review.md`）。`knowledge_review_runs`（評価の記録。`cursor` は評価した最後のゲストの発言の時刻）、`knowledge_gaps`（追記の提案。質問の埋め込みで同じ意味の質問をまとめる。登録先は `document_id`＝よくある質問 か `source_id`＝資料）、`knowledge_gap_evidences`（根拠の会話・発言・判定の理由・スタッフの答え）。`unanswered_questions` の行を移して削除した
+- `20261003000000_orders_v2.sql`: オーダーの改修（`docs/005_order.md`）。`order_items` に分類 `category` と状態 `status`（`active` を置き換え）。`rooms` の主キーを客室ID `id` にし、棟 `building`・エリア `area_id`・表示名 `label` を追加（`areas` のフロアの範囲は削除）。`members.seat_slot_id`・`seat_no`（担当席）。`tickets` に `room_id`・`note`・`requested_for`・`dispatched_at`（品目ごとの補足 `ticket_lines.note` は `note` にまとめて削除）。`hotels.order_schedule_lead_minutes`、`order_drafts`、引き継ぎの種類 `order_unavailable`。`mock_pms.reservations.room_id`

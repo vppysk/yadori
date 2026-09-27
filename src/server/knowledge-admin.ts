@@ -173,30 +173,3 @@ export async function readDocument(hotelId: string, file: File): Promise<string>
   // 推論をオフにしても考えた過程を書くことがあるため、</think> より前は捨てる
   return result.text.replace(/^[\s\S]*<\/think>/, "").trim();
 }
-
-// 管理PCホームの「情報の点検」: 長期間未更新、期間の重なり、有効な特記事項
-export type KnowledgeCheck = { facilityId: string; label: string; kind: "stale" | "overlap" };
-
-export async function inspectKnowledge(hotelId: string) {
-  const hotel = await getHotel(hotelId);
-  const [checks, notices] = await Promise.all([
-    query<KnowledgeCheck>(
-      `select f.id "facilityId", f.name || ' ・ 期間の重なり ' || count(*) || '件' label, 'overlap' kind
-       from facility_period_overlaps o join facilities f on f.id = o.facility_id
-       where f.hotel_id = $1 group by f.id, f.name
-       union all
-       select f.id, f.name || ' ・ ' || (current_date - max(x.updated_at)::date) || '日間更新なし', 'stale'
-       from facilities f join facility_values x on x.facility_id = f.id and x.status = 'approved'
-       where f.hotel_id = $1 group by f.id, f.name having max(x.updated_at) < now() - make_interval(days => $2)`,
-      [hotelId, STALE_DAYS],
-    ),
-    query<{ active: number; expiring_today: number }>(
-      `select count(*)::int active,
-         count(*) filter (where (n.ends_at at time zone $2)::date = (now() at time zone $2)::date)::int expiring_today
-       from special_notices n join facilities f on f.id = n.facility_id
-       where f.hotel_id = $1 and n.starts_at <= now() and n.ends_at > now()`,
-      [hotelId, hotel.timezone],
-    ),
-  ]);
-  return { checks, activeNotices: notices[0]?.active ?? 0, expiringToday: notices[0]?.expiring_today ?? 0 };
-}

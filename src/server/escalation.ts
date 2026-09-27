@@ -2,14 +2,17 @@ import { generateStructured } from "@/lib/llm/structured";
 import { z } from "zod";
 import { query, transaction } from "./db";
 import { createHandoff } from "./handoffs";
-import { getHotel } from "./hotel";
+import { getAiAgentMemberId, getHotel } from "./hotel";
 import { recordLlmCall } from "./metrics";
+import { dispatchScheduled } from "./orders";
 import { notifySupervisors, reassign } from "./staff-work";
 
 
 // 定期実行（1分ごと想定）: 放置チケットの付け替えと、期限切れのクレーム予兆への昇格（plan 3章 2→5 の自動昇格）
 export async function runTicketChecks(hotelId: string) {
   const hotel = await getHotel(hotelId);
+  // お届けの時間指定があるオーダーを、前倒しの時刻に割り当てる（docs/005_order.md 5章）
+  const dispatched = await dispatchScheduled(hotel, await getAiAgentMemberId(hotelId));
   // 割り当てから着手されないまま過ぎたら枠内の次の人へ（plan 4.2。分数は品目・担当設定の画面で変更）
   const reassignAfter = hotel.order_reassign_minutes;
   const stale = await query<{ id: string }>(
@@ -39,7 +42,7 @@ export async function runTicketChecks(hotelId: string) {
     });
     await createHandoff({ hotelId, kind: "overdue_order", conversationId: ticket.conversation_id ?? undefined, ticketId: ticket.id, roomNumber: ticket.room_number, summary });
   }
-  return { reassigned: stale.length, escalated: overdue.length };
+  return { dispatched, reassigned: stale.length, escalated: overdue.length };
 }
 
 // 上長向けの要約。チケット発行後のゲストの発言（催促や口調）をLLMで読み取り、事実と合わせて1〜2文にする

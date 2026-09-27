@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { llmMode, registerMockToolFixture } from "@/lib/llm/models";
 import { generateStructured, type LlmUsage } from "@/lib/llm/structured";
+import { matchCatalog, type OrderCandidates, type RequestedLine } from "./order-match";
 import type { CatalogItem } from "./orders";
 
 const PATTERNS = ["info", "order", "external", "reservation", "complaint"] as const;
 
-// LLMには依頼の品名・数量を読み取らせるだけにし、品目マスタとの照合はコードで行う（matchCatalog）。
+// LLMには依頼の品名・数量・備考・希望の時刻を読み取らせるだけにし、品目マスタとの照合はコードで行う（order-match.ts）。
 // LLMに照合までさせると、別名に載っている品（フェイスタオルなど）をマスタにないと判断したり、
 // 載っていない品（充電器など）を既存の品目に当てはめたりした（2026-09-25 検証）
 function routeSchema(facilityNames: string[]) {
@@ -21,13 +22,23 @@ function routeSchema(facilityNames: string[]) {
           requested: z
             .array(
               z.object({
-                label: z.string().describe("ゲストが言った品名そのまま（例: バスタオル、お水）"),
-                quantity: z.number().int().min(1),
-                note: z.string().optional().describe("「低め」など品への補足"),
+                label: z.string().describe("ゲストが言った品名そのまま（例: タオル、バスタオル、お水）。種類がはっきりしなくても言い換えない"),
+                quantity: z.number().int().min(1).describe("数。言っていなければ1"),
               }),
             )
             .optional()
             .describe("pattern=order のとき、届けてほしい品"),
+          note: z
+            .string()
+            .optional()
+            .describe("pattern=order のとき、使い道・理由・届け方の希望など届ける係に伝えること（例: 誕生日のケーキに火をつけるため、枕は低めのもの）。なければ省略"),
+          deliver_at: z
+            .object({
+              day: z.enum(["today", "tomorrow"]).describe("today=今日、tomorrow=明日"),
+              time: z.string().describe("24時間表記の HH:MM（例: 20:00、07:30）"),
+            })
+            .optional()
+            .describe("pattern=order で、届ける時刻の指定があるとき（「20時に」「明日の朝7時」）。「すぐ」「なるべく早く」や指定がなければ省略"),
         }),
       )
       .min(1),
@@ -41,13 +52,17 @@ function routeSchema(facilityNames: string[]) {
 
 type RawRoute = z.infer<ReturnType<typeof routeSchema>>;
 
+export type OrderRequest = OrderCandidates & {
+  requested: RequestedLine[];
+  note?: string;
+  deliverAt?: { day: "today" | "tomorrow"; time: string };
+};
+
 export type RouteIntent = {
   pattern: (typeof PATTERNS)[number];
   summary: string;
-  // 品目マスタに当たった品（item は品目マスタの名前、label はゲストの言い方）
-  items?: { item: string; label: string; quantity: number; note?: string }[];
-  // 品目マスタにない依頼
-  unsupported_items?: string[];
+  // pattern=order のとき: 読み取った依頼と、品目マスタの候補（ゲストが選択欄で確定する）
+  order?: OrderRequest;
 };
 
 export type RouteResult = { facilities: string[]; intents: RouteIntent[]; wants_staff: boolean; safety: boolean; strong_emotion: boolean };
@@ -72,7 +87,8 @@ export async function route(
       "- external: ホテルの外のこと（交通・運行状況・天気・周辺のイベントや施設）や、館外のレストラン予約など外部サービス",
       "- reservation: 予約内容・部屋の変更",
       "- complaint: 不満・苦情（騒音、対応の遅れなど）",
-      "部屋番号や挨拶だけの文は要望にしない。1つの要望は1回だけ書く。",
+      "部屋番号や挨拶だけの文は要望にしない。1つの要望は1回だけ書く。お届けの依頼は1つの order にまとめる。",
+      "お届けの時刻は、ゲストが時刻をはっきり言ったときだけ deliver_at に入れる（「30分後」「夜」のように時刻が決まらないものは入れない）。",
       "「スタッフと話したい」のように人との会話を求める部分は要望にせず、wants_staff で表す（complaint にしない）。ほかに要望がなければ info とする。",
     ].join("\n"),
     prompt: message,
@@ -93,40 +109,53 @@ function normalize(raw: RawRoute, catalog: CatalogItem[]): RouteResult {
   const intents = kept
     .map((intent): RouteIntent => {
       if (intent.pattern !== "order") return { pattern: intent.pattern, summary: intent.summary };
-      const { items, unsupported } = matchCatalog(intent.requested ?? [], catalog);
-      return { pattern: "order", summary: intent.summary, items, unsupported_items: unsupported };
+      const requested = (intent.requested ?? []).filter((r) => r.label.trim());
+      return {
+        pattern: "order",
+        summary: intent.summary,
+        order: {
+          requested,
+          ...matchCatalog(requested, catalog),
+          note: intent.note?.trim() || undefined,
+          deliverAt: parseDeliverAt(intent.deliver_at),
+        },
+      };
     });
   return { facilities: raw.facilities, intents, wants_staff: raw.wants_staff, safety: raw.safety, strong_emotion: raw.strong_emotion };
 }
 
-// ゲストの言い方と品目名・別名の部分一致で品目マスタに当てる。当たらないものはマスタにない依頼
-export function matchCatalog(requested: { label: string; quantity: number; note?: string }[], catalog: CatalogItem[]) {
-  const items: NonNullable<RouteIntent["items"]> = [];
-  const unsupported: string[] = [];
-  for (const line of requested) {
-    const label = line.label.trim();
-    if (!label) continue;
-    const hit = catalog.find((c) => [c.name, ...c.aliases].some((w) => label.includes(w) || w.includes(label)));
-    if (hit) items.push({ item: hit.name, label, quantity: line.quantity, note: line.note || undefined });
-    else unsupported.push(label);
-  }
-  return { items, unsupported };
+// 時刻は書き方がぶれる（「20時」「8:00pm」）ため、読めるものだけ HH:MM にする。読めなければ指定なし（ゲストが選択欄で選ぶ）
+function parseDeliverAt(raw: RawRoute["intents"][number]["deliver_at"]): OrderRequest["deliverAt"] {
+  const m = raw?.time.normalize("NFKC").match(/(\d{1,2})\s*[:時]\s*(\d{2})?/);
+  if (!raw || !m) return undefined;
+  const hour = Number(m[1]);
+  const minute = Number(m[2] ?? 0);
+  if (hour > 23 || minute > 59) return undefined;
+  return { day: raw.day, time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
 }
 
 // モック用: 品目名・別名と数字だけで分ける簡易版（UIと業務ロジックの確認用）
 function mockRoute(text: string, catalog: CatalogItem[], facilityNames: string[]): RawRoute {
   const facilities = facilityNames.filter((name) => text.includes(name) || text.includes(name.replace("屋外", "")));
-  const requested = catalog.flatMap((c) => {
-    const word = [c.name, ...c.aliases].find((w) => text.includes(w));
-    if (!word) return [];
-    const qty = text.slice(text.indexOf(word)).match(/(\d+)/)?.[1];
-    return [{ label: word, quantity: qty ? Number(qty) : 1 }];
-  });
+  const words = [...new Set(catalog.flatMap((c) => [c.name, ...c.aliases, c.category]))].sort((a, b) => b.length - a.length);
+  const requested: { label: string; quantity: number }[] = [];
+  let rest = text;
+  for (const word of words) {
+    const at = rest.indexOf(word);
+    if (at < 0) continue;
+    const qty = rest.slice(at + word.length).match(/^\D{0,3}?(\d+)/)?.[1];
+    requested.push({ label: word, quantity: qty ? Number(qty) : 1 });
+    rest = rest.replace(word, "　");
+  }
+  const hour = text.match(/(\d{1,2})時/)?.[1];
+  const deliver_at = hour ? { day: /明日/.test(text) ? ("tomorrow" as const) : ("today" as const), time: `${hour}:00` } : undefined;
+  const note = /ため|用に/.test(text) ? text : undefined;
   const intents: RawRoute["intents"] = [];
   const external = /近く|周辺|観光|天気|駅|電車|運休|試合/.test(text);
   if (external) intents.push({ pattern: "external", summary: text });
-  if ((!external && /時|営業|何時|どこ|ある/.test(text)) || (!external && requested.length === 0)) intents.push({ pattern: "info", summary: text });
-  if (requested.length > 0) intents.push({ pattern: "order", summary: text, requested });
+  const asksInfo = /営業|何時|どこ|ある/.test(text) || (/時/.test(text) && !hour);
+  if ((!external && asksInfo) || (!external && requested.length === 0)) intents.push({ pattern: "info", summary: text });
+  if (requested.length > 0) intents.push({ pattern: "order", summary: text, requested, note, deliver_at });
   if (/うるさい|遅い|ひどい/.test(text)) intents.push({ pattern: "complaint", summary: text });
   return { facilities, intents, wants_staff: /スタッフと話/.test(text), safety: /けが|怪我|具合|救急|火事/.test(text), strong_emotion: /最悪|ふざけ/.test(text) };
 }

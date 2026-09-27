@@ -11,9 +11,9 @@ import {
 import { parseFacilityRef } from "@/server/facility-fields";
 import { approveSchema, approveSource, createSource, deleteSource as deleteInfoSource, sourceFacilityIds } from "@/server/info-sources";
 import { addNotice, deleteNotice, previewNotice, readDocument } from "@/server/knowledge-admin";
-import { addSlot, deleteSlot, saveItemSettings, type SaveItemsInput } from "@/server/items";
-import { previewOrder, reassignManually, registerOrder, type OrderPreview } from "@/server/order-board";
-import { answerQuestion, dismissQuestion } from "@/server/questions";
+import { addArea, addSlot, deleteArea, deleteSlot, saveItemSettings, setFloorArea, setSeats, type SaveItemsInput } from "@/server/items";
+import { previewAssignment, reassignManually, registerOrder, type AssignmentPreview, type RegisterOrderInput } from "@/server/order-board";
+import { answerGap, dismissGap, getConversationMessages, type AnswerResult, type ConversationMessage } from "@/server/questions";
 import { acceptHandoff, closeHandoff, replyToGuest } from "@/server/staff-work";
 
 // 管理PCの操作。ログインと権限（範囲付きなら対象の施設）を確認し、監査ログに残す（plan 4.8）
@@ -108,44 +108,48 @@ export async function deleteNoticeAction(noticeId: string): Promise<Result> {
   });
 }
 
-export async function answerQuestionAction(questionId: string, answer: string): Promise<Result> {
+// 未回答の質問に回答する。期間のない内容はよくある質問、期間のある内容は資料になる（どちらになったかを返す）
+export async function answerQuestionAction(gapId: string, answer: string): Promise<Result<AnswerResult>> {
   return guard(async () => {
     const member = await authorize("knowledge.question.answer");
     const trimmed = answer.trim();
     if (!trimmed) throw new Error("回答を入力してください");
-    await answerQuestion(member, questionId, trimmed.slice(0, 2000));
-    await audit(member, "knowledge.question.answer", "question.answer", { type: "question", id: questionId });
+    const result = await answerGap(member, gapId, trimmed.slice(0, 2000));
+    await audit(member, "knowledge.question.answer", "question.answer", { type: "knowledge_gap", id: gapId }, result);
     refresh();
+    return result;
   });
 }
 
-export async function dismissQuestionAction(questionId: string): Promise<Result> {
+export async function dismissQuestionAction(gapId: string): Promise<Result> {
   return guard(async () => {
     const member = await authorize("knowledge.question.answer");
-    await dismissQuestion(member, questionId);
-    await audit(member, "knowledge.question.answer", "question.dismiss", { type: "question", id: questionId });
+    await dismissGap(member, gapId);
+    await audit(member, "knowledge.question.answer", "question.dismiss", { type: "knowledge_gap", id: gapId });
     refresh();
   });
 }
 
-export async function previewOrderAction(roomNumber: string, text: string): Promise<Result<OrderPreview>> {
+// 未回答の質問の根拠になった会話を読む
+export async function getConversationAction(conversationId: string): Promise<Result<ConversationMessage[]>> {
   return guard(async () => {
-    const member = await authorize("order.create");
-    if (!roomNumber.trim() || !text.trim()) throw new Error("部屋番号とご依頼内容を入力してください");
-    return previewOrder(member, roomNumber.trim(), text.trim().slice(0, 500));
+    const member = await authorize("knowledge.question.answer");
+    return getConversationMessages(member.hotel_id, conversationId);
   });
 }
 
-export async function registerOrderAction(input: {
-  roomNumber: string;
-  text: string;
-  source: "phone" | "front_desk" | "other";
-  items: { item: string; label: string; quantity: number }[];
-}): Promise<Result> {
+export async function previewAssignmentAction(roomId: string, itemIds: string[]): Promise<Result<AssignmentPreview>> {
   return guard(async () => {
     const member = await authorize("order.create");
-    const tickets = await registerOrder(member, input);
-    await audit(member, "order.create", "order.register", undefined, { room: input.roomNumber, tickets: tickets.map((t) => t.id) });
+    return previewAssignment(member, roomId, itemIds.slice(0, 50));
+  });
+}
+
+export async function registerOrderAction(input: RegisterOrderInput): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("order.create");
+    const tickets = await registerOrder(member, { ...input, note: input.note.slice(0, 300) });
+    await audit(member, "order.create", "order.register", undefined, { room: input.roomId, tickets: tickets.map((t) => t.id) });
     refresh();
   });
 }
@@ -182,6 +186,43 @@ export async function deleteSlotAction(slotId: string): Promise<Result> {
     const member = await authorize("settings.items");
     await deleteSlot(member, slotId);
     await audit(member, "settings.items", "slot.delete", { type: "slot", id: slotId });
+    refresh();
+  });
+}
+
+// 担当席の人数（docs/005_order.md 3章）。席のメンバーを作る・無効にする
+export async function setSeatsAction(slotId: string, count: number): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.items");
+    await setSeats(member, slotId, count);
+    await audit(member, "settings.items", "slot.seats", { type: "slot", id: slotId }, { count });
+    refresh();
+  });
+}
+
+export async function addAreaAction(name: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.items");
+    await addArea(member, name);
+    await audit(member, "settings.items", "area.add", undefined, { name });
+    refresh();
+  });
+}
+
+export async function deleteAreaAction(areaId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.items");
+    await deleteArea(member, areaId);
+    await audit(member, "settings.items", "area.delete", { type: "area", id: areaId });
+    refresh();
+  });
+}
+
+export async function setFloorAreaAction(building: string | null, floor: number, areaId: string | null): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.items");
+    await setFloorArea(member, building, floor, areaId);
+    await audit(member, "settings.items", "rooms.area", undefined, { building, floor, areaId });
     refresh();
   });
 }

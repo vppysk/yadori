@@ -36,7 +36,7 @@ Nebius x NVIDIA Global AI Hackathon 応募用（締切: 2026-10-30 10:00 PDT ＝
 |---|---|---|
 | ゲスト | `/guest/R-1203`（滞在中）、`/guest/R-1503`（来月） | 滞在日での答え分け、特記事項の優先、オーダーと進捗、スタッフと話す |
 | 現場スマホ | `/staff/login` → `/staff/orders`・`/staff/ask`・`/staff/notifications` | 出勤枠の選択、向かう／届けた、対応できない、引き継ぎと返信、AI相談、通知 |
-| 管理PC | `/admin`（ホーム）、`/admin/orders`、`/admin/knowledge`、`/admin/items`、`/admin/handoffs` | 今日の要対応、オーダーボード、館内の情報（施設・営業情報とPDF/画像からの下書き、「全体」欄にお知らせと案内・マニュアル）、品目・担当設定、引き継ぎ・クレーム履歴 |
+| 管理PC | `/admin`（サイドバーの一番上へ移る）、`/admin/orders`、`/admin/knowledge`（未回答の質問を含む）、`/admin/items`、`/admin/handoffs` | オーダーボード、館内の情報（施設・営業情報とPDF/画像からの下書き、「全体」欄にお知らせと案内・マニュアル）、品目・担当設定、引き継ぎ・クレーム履歴 |
 | 経営 | `/manage`、`/manage/policy`、`/manage/integrations`、`/manage/history`、`/manage/masters`、`/manage/members` | 担当範囲とコスト（簡易・精密見積もり）、指示とガードレール（過去の会話で試す）、外部連携（Webhook含む）、変更履歴、マスタ、メンバーと権限 |
 | MCP | `/api/mcp/pms`、`/api/mcp/work-events` | 予約・客室管理のモック、実績の出力口（どちらもBearerトークン必須） |
 
@@ -64,38 +64,33 @@ Nebius x NVIDIA Global AI Hackathon 応募用（締切: 2026-10-30 10:00 PDT ＝
 3. `.env.local` を確認（`NEBIUS_API_KEY`、`SUPABASE_URL`、`SUPABASE_SECRET_KEY`、`DATABASE_URL`、`LLM_MODE`、`PMS_MCP_URL`、`PMS_MCP_TOKEN`、`EXPORT_MCP_TOKEN`。見本は `.env.example`）
 4. `npm run dev` → `http://localhost:3000`。`npm run typecheck` / `npm run lint` / `npm run build` で確認
 
-### 審査基準（公式ルールより・配点均等）
+### 審査基準（[公式ルール](https://nebiusglobalaihackathon.devpost.com/rules)より・配点均等。2026-09-27 確認）
 | 基準 | 内容 | 本企画での打ち手 |
 |---|---|---|
 | 技術的な実装 | Token Factory・NVIDIAモデルの使い方 | パターン・時間帯別のNemotron使い分け |
 | デザイン | 概念実証ではなく一貫した製品体験か | UIモックから着手、3画面の一貫性 |
-| 潜在的な影響 | 実在の課題を実在の相手に解決しているか | ホテル勤務・シフト作成経験、既存ボット満足度23%のデータ |
+| 潜在的な影響 | 実在の課題を実在の相手に解決しているか | ホテル勤務・シフト作成経験、不正確な回答が予約の離脱につながる研究（1章） |
 | アイデアの質 | ありきたりでない使い方、課題の深い理解 | 期間付き知識、特記事項、AIをチームの一員とする見方 |
 
 - 第1段階で「トラックの趣旨に合うか・必須API／SDKを使っているか」の合否判定あり
-- 審査員は実際に触らず、説明文・画像・動画だけで判断してよいとされている → **3分動画の画面の分かりやすさが重要**
-- Best Apps and Agentsトラックの説明では、重い推論にNemotron 3 Ultra、日常の速い処理にNano／Superを推奨 → 経営ダッシュボードのモデル切り替えと一致
+- 審査員は実際に触らず、説明文・画像・動画だけで判断してよいとされている（"Judges are not required to test the Project and may choose to judge based solely on the text description, images, and video provided"） → **3分動画の画面の分かりやすさが重要**
+- Best Apps and Agentsトラックの説明では、重い推論にNemotron 3 Ultra、日常の速い処理にNano／Superを推奨（"Reach for Nemotron 3 Ultra when you need serious reasoning, and let Nano or Super handle the fast, everyday calls."、[Devpostのトップ](https://nebiusglobalaihackathon.devpost.com/)） → 経営ダッシュボードのモデル切り替えと一致
 - Nebius Serverless Endpoints／Jobsでのデプロイは推奨（必須ではない）
 
 ### 賞の対象
 - 全体賞（1位2万ドル・2位1万ドル・3位6千ドル）またはトラック賞（Jetson Orin Nano）のどちらか1つ ＋ 特別賞1つ
-- Best Use of Tavily（3,000ドル）: 実行時にTavily APIを呼ぶことが条件
-- 都市賞（500ドル）は対面イベント参加者のみ。東京は9/9に開催済みのため対象外
+- Best Use of Tavily（3,000ドル）: 実行時にTavily APIを呼ぶことが条件（"make a functional, runtime call to the Tavily API as part of its solution"）
+- 都市賞（500ドル）は対面イベント（Builders & Brews）参加者のみ。[東京は9/9に開催済み](https://luma.com/qa0c59fy)のため対象外
 
 ---
 
 ## 1. 背景と課題
 
-### 既存ホテルチャットボットの現状
-- ゲスト側の満足度は低い（Mythos Group調査: AIチャットボットに満足と答えた宿泊客は23%）
-- 簡単な質問には役立つが、複雑な要望は人に頼みたいという声が多い
-- ベンダーが出す「解決率」は、有人対応に回らなかった割合であることが多く、実際の満足度とずれている
-- 日本のホテル向けは今もFAQ・シナリオ型が中心
-
-### 不満の主な原因
-1. **文脈を持っていない**: 予約情報を参照できず、一般論しか返せない
-2. **行動できない**: 備品の依頼などをスタッフへのタスクにできない
-3. **情報が古い**: 季節で変わる営業時間・メニューを正しく答え分けられない
+### 既存ホテルチャットボットの現状（2026-09-27 確認）
+- 簡単な質問ではチャットボットが役立つと答えた宿泊客は70%（[Hotel Tech Report「2026 State of Hotel Guest Tech Report」](https://hoteltechreport.com/news/2026-state-of-hotel-guest-technology-report)、2026-03、世界の宿泊客402人）
+- **不正確な回答は予約の離脱につながる**: 古い・不完全な情報などによる不正確さが、利用者の不快感の最大の要因だった（影響の大きさは「信用できなさ」の4倍超）。不快感は会話を続ける意向を約38%下げ、予約の先送り・中止の可能性をほぼ2倍にした（[Texas A&M大学の研究](https://agrilifetoday.tamu.edu/2026/05/22/research-finds-hotel-booking-chatbots-can-creep-out-customers/)、International Journal of Hospitality Management、2026-05発表、英国でチャットボットでホテルを予約した成人340人）
+- 日本の主要製品が示す指標は「自動応答率」（[talkappi](https://talkappi.com/)、96%以上）や「AI応答率」（[tripla Bot](https://tripla.io/ai-chatbot/)、3か月で85%）で、解決率や満足度は公表されていない
+- 日本の主要製品は、FAQ（質問と回答の組）を知識の単位にしている。tripla Botは2026-09-17に既存のFAQデータベースを参照するLLM対話型へ移行し、資料のアップロードによる自動学習は「今後の予定」（[発表](https://tripla.io/2026/09/17/tripla-bot_update/)）。talkappiは公式サイトやOTAの掲載情報とFAQを照合し、更新が必要な箇所を知らせる（[FAQ更新AIアシスト](https://talkappi.com/faq-ai-check/)、2025-04〜）
 
 ### 現場経験から見た負担
 - **案内（知識）**: 季節によってレストランやアクティビティの営業時間・メニューが変わり、スタッフの研修やキャッチアップが大変
@@ -154,12 +149,12 @@ Nebius x NVIDIA Global AI Hackathon 応募用（締切: 2026-10-30 10:00 PDT ＝
 - **スタッフ向け相談相手**: 新人が同じ知識ベースに質問できる（研修・キャッチアップの負担軽減）
 
 ### 4.2 オーダーチケット（パターン2）
-- ゲストの要望を定型チケット化（品目・数量・部屋番号・期限）
+- ゲストの要望を定型チケット化（品目・数量・部屋・期限・備考・お届けの希望日時）。受付の流れ・担当席・部屋のID・時間指定・品切れの扱いは `docs/005_order.md`
 - **自動アサイン**（早い者勝ちにはしない。時給制でスタッフに受けるインセンティブがなく、受けない方が楽になるため）
-  - **枠 = 役割 × エリア**。品目ごとに担当役割をマスタで決め（タオル・アメニティ→ハウスキーピング、飲み物→ルームサービスなど）、部屋番号から担当エリア（フロア）を決める。その日の枠と担当者はスマホで出勤時に選ぶ（将来は既存のシフトシステムから連携）
+  - **枠 = 役割 × エリア**。品目ごとに担当役割をマスタで決め（タオル・アメニティ→ハウスキーピング、飲み物→ルームサービスなど）、部屋（予約・客室管理システムの客室ID）から担当エリアを決める。その日の枠と担当者はスマホで出勤時に選ぶ。担当は個人のアカウントのほか、枠ごとの**担当席**（共有アカウント、人数を管理PCで設定）でもよい（将来は既存のシフトシステムから連携）
   - **重みづけ**: 品目ごとに負荷を3段階でマスタ設定（軽=1pt: タオル・アメニティ／中=2pt: 枕・寝具／重=3pt: 加湿器・ベビーベッドなど設置を伴うもの）。1件の重み＝含まれる品目の最大段階
   - **均等化**: 同じ枠に複数の担当者がいる場合、「本日の累計pt＋未完了pt」が最も少ない人に割り当てる。同点なら最後の割り当てから時間が空いている人。同じフロアの近い時間の依頼は同じ人にまとめる（動線短縮）
-  - 割り当ては**機械ロジック**で行う（公平性の説明がしやすく、結果が再現できるため）。LLMはゲストの文章から品目・数量を読み取る部分に使う
+  - 割り当ては**機械ロジック**で行う（公平性の説明がしやすく、結果が再現できるため）。LLMはゲストの文章から品名・数量・備考・希望の時刻を読み取る部分に使い、品目の候補はコードで当てて、ゲストが画面の選択欄で確定する。フロントは品目を選んで登録する（自由文の読み取りは廃止）
   - 実績の対応時間から重みの妥当性を検証し、段階の見直しに使う（4.4の想定値→実測値補正と同じ仕組み）
 - スタッフは「向かう」「届けた」の2タップ。「対応できない」で枠内の次の人へ再割り当て（理由を記録）
 - 割り当てから一定時間（設定可）着手されなければ、枠内の次の人へ再割り当て、さらに上長へ通知
@@ -251,7 +246,8 @@ Nebius x NVIDIA Global AI Hackathon 応募用（締切: 2026-10-30 10:00 PDT ＝
 | 未回答の質問への回答 → 知識として蓄積 | ― | ○ |
 
 - 現場スマホは下部タブ（オーダー／AIに相談／通知）。情報の登録・編集機能は持たせないで、片手・大きなボタン（高さ52px前後）を前提にする
-- 管理PCはホーム「今日の要対応」（未回答の質問、引き継ぎ・クレーム予兆、情報の点検）を起点にする
+- 管理PCにホームは置かない（2026-09-27 削除）。`/admin` はサイドバーの一番上（権限で見られるもののうち）に移る。未回答の質問は「館内の情報」の中（`/admin/knowledge/questions`）、対応アラートは `/admin/handoffs`、特記事項の「本日まで」は施設の詳細で見る。サイドバーに件数のバッジは出さない
+- 館内の情報の左の一覧は権限ごとに出し分ける（未回答の質問＝`knowledge.question.answer`、資料＝`knowledge.facility.edit`、施設＝施設・特記事項・案内の権限のどれか）。グループはプリセットで、権限はメンバーごとに付けられるため、グループ単位では判定しない
 
 ### 4.4 ホテル別マスタ設定
 - 人件費: 役職別時給、時間帯別割増
@@ -370,8 +366,8 @@ sequenceDiagram
 | 業務ロジック | 素のTS（DBは `pg` で直接SQL） | オーダー割り当て・期限切れ昇格はLLMを使わない。期限監視は `/api/cron/tickets` を1分ごとに呼ぶ |
 | DB・ベクトル | Supabase（Postgres＋pgvector） | 構造化データとRAGを同居 |
 | 推論 | Nebius Token Factory（OpenAI互換、`https://api.tokenfactory.nebius.com/v1/`） | 小型＝Nemotron 3.5 Lightning（ルーター・品名抽出）、中型＝3 Super（案内・オーダーの回答の既定、禁止事項の後チェック、採点）、大型＝3 Ultra（クレーム一次対応）。単価と実測は12章 |
-| PDF・画像の読み取り | Token Factory上の画像対応モデル（GLM-5.3-Flash、MiniCPM-Vなど） | Token FactoryにNemotronの画像対応モデルはない（2026-09-25時点）。文字のPDFはテキスト抽出してNemotronに渡す |
-| 埋め込み | Qwen/Qwen3-Embedding-8B（Token Factory、$0.01/1M） | NVIDIA製の埋め込みは提供なし。ローカルと本番でインデックスを混ぜない |
+| PDF・画像の読み取り | Token Factory上の画像対応モデル（GLM-5.3-Flash、MiniCPM-Vなど） | Token FactoryにNemotronの画像対応モデルはない（APIの`/v1/models`で確認、2026-09-27時点）。文字のPDFはテキスト抽出してNemotronに渡す |
+| 埋め込み | Qwen/Qwen3-Embedding-8B（Token Factory、$0.01/1M） | NVIDIA製の埋め込みは提供なし（2026-09-27時点）。ローカルと本番でインデックスを混ぜない |
 | 外部連携 | MCPサーバー（自作モック、`/api/mcp/pms`） | 予約・客室管理（読み取り・お客様メモ／依頼履歴への追記）。レストラン予約のモックは未作成 |
 | ローカル確認 | AI SDKのテスト用モックモデル | LLM費用なしでUI・業務ロジックを確認。品質評価はToken Factoryで行う |
 | ホスティング | 要検討（W5） | 提出にホスト済みデモが必要 |
@@ -439,7 +435,7 @@ sequenceDiagram
 
 ## 10. デモシナリオ（3分・英語）
 
-1. **課題提示（20秒）**: 既存ボットの満足度は低い。原因は文脈不足・行動不可・情報の古さ
+1. **課題提示（20秒）**: チャットボットの不正確な回答は予約の中止・先送りにつながる（1章のTexas A&M大学の研究）。現場では、季節で変わる営業時間・メニューの共有と、件数の多い備品のオーダーが負担
 2. **季節の切り替え（40秒）**: 管理PCで冬季営業のPDFを読み込む → マスタに下書きが入る → 修正して保存 → 今日のゲストと来月のゲストが同じ質問をし、違う正しい答えが返る
 3. **特記事項（20秒）**: 管理PCで屋外プールに特記事項「本日15時まで閉鎖」を登録 → ゲストの質問に即反映
 4. **オーダー（30秒）**: 「タオル2枚と歯ブラシ」→ 枠内で担当量が最も少ないスタッフに自動アサイン → 2タップで完了 → ゲストに通知
@@ -468,7 +464,7 @@ sequenceDiagram
 
 - [x] 技術スタック → Next.js＋Mastra（TS統一）。Strands・Python案は不採用（2026-09-25）
 - [x] Token FactoryのNemotronの実呼び出し確認（2026-09-25）
-  - 単価（/1M、APIの`/v1/models`より）: Lightning・Nano 入$0.06/出$0.24、Super 入$0.30/出$0.90、Ultra 入$1/出$3
+  - 単価（/1M、APIの`/v1/models`より。2026-09-27に再確認し変更なし）: Lightning・Nano 入$0.06/出$0.24、Super 入$0.30/出$0.90、Ultra 入$1/出$3
   - ツール呼び出し: 4モデルとも動作。`tool_choice`で関数を指定した強制呼び出しも動作
   - 構造化出力: `json_schema`はエラーにならないが、モデル一覧で`structured_outputs`非対応の表示。スキーマは保証されないため、構造化出力は強制ツール呼び出し＋Zod検証＋再試行で行う
   - `usage`: 4モデルとも入出力トークン数を返す（Nanoのみ推論トークンの内訳なし）
@@ -486,9 +482,10 @@ sequenceDiagram
 - [x] PDF・画像の読み取り: PDFは文字抽出（NFKCで正規化）、画像は GLM-5.3-Flash で書き起こし（推論オフでも `</think>` までの思考を出すので捨てる）→ Superで期間付きの表に構造化
 - [x] 館内の情報の持ち方（2026-09-28）→ スタッフは資料と特記事項だけを扱う。資料はAIが読み取り、スタッフが確認・承認したものだけを回答に使う（原文を毎回読ませる方式は、期間の違う情報が混ざると誤案内したため不採用）。値の型は1つ（タイトル＋本文＋期間）。期間の重なりは承認時にスタッフが優先を選ぶ（特記事項は常に最優先）。施設・項目も資料から作り、カテゴリは持たない。詳細は `docs/002_facility_master_design.md`
 - [x] 施設・項目を資料から作る変更とカテゴリの削除の実装（2026-09-28）
-- [ ] 未回答の質問を会話ログの定期評価に置き換える（`docs/004_knowledge_gap_review.md`。2026-09-27 決定）
-- [ ] 未回答の質問を管理PCの「館内の情報」に統合する（`/admin/knowledge/questions`。定期評価の実装と同時が手戻りが少ない）。要検討: フロントのグループは「未回答の質問に回答」を持つが館内の情報の権限を持たないため、サイドバーの表示と中の一覧の出し分けをどうするか
-- [ ] 管理PCのホーム（今日の要対応）を削除するか検討する。未回答の質問は館内の情報、対応アラートは `/admin/handoffs`、情報の点検は館内の情報の一覧と重なる。削除する場合: `/admin` を権限に応じた最初の画面へ移す、サイドバーに件数のバッジ（対応アラートの未対応、未回答の質問、確認待ちの資料）、「本日中に期限切れの特記事項」の置き場所。4.6の「ホームを起点にする」と画面一覧も直す
+- [x] 未回答の質問を会話ログの定期評価に置き換える（`docs/004_knowledge_gap_review.md`。2026-09-27 実装）
+- [x] 未回答の質問を管理PCの「館内の情報」に統合する（`/admin/knowledge/questions`。左の一覧は権限ごとに出し分け。2026-09-27）
+- [x] 管理PCのホーム（今日の要対応）を削除する（`/admin` はサイドバーの一番上へ。バッジなし。特記事項の「本日まで」は施設の詳細に表示。2026-09-27）
+- [x] オーダーの改修（2026-09-27）→ 品目は分類付きで選べる単位に、ゲストは選択欄で品目・数量・備考・お届け時間を確定、フロントは品目を選んで登録（自由文の読み取りは廃止）、担当席（枠ごとの共有アカウント）、部屋は客室IDで持ちエリアは部屋ごと、時間指定は前倒しの時刻に割り当て、在庫数は持たず取り扱い中／一時品切れ／取り扱い終了の3状態。詳細は `docs/005_order.md`
 - [ ] 適用期間の末尾をLLMに計算させない（「9/30まで」を9/28に「本日が最終日」と誤答。滞在期間に合わせてサーバーで言い換える。`docs/002_facility_master_design.md` 6章）
 - [ ] WebサイトのURLを資料として登録し、定期取得する（更新時に読み直して承認を依頼。`docs/002_facility_master_design.md` 6章）→ 提出後
 - [ ] ホスティング先
@@ -502,5 +499,9 @@ sequenceDiagram
 
 ## 参考
 - [Nebius x NVIDIA Global AI Hackathon（Devpost）](https://nebiusglobalaihackathon.devpost.com/)
-- [Conduit: AI Chatbot for Hotels](https://conduit.ai/blog/ai-chatbot-for-hotels)
-- [Hotel Dive: Using tech to close the guest experience gap](https://www.hoteldive.com/spons/using-tech-to-close-the-guest-experience-gap/750531/)
+- [公式ルール（Devpost）](https://nebiusglobalaihackathon.devpost.com/rules)
+- [Hotel Tech Report: 2026 State of Hotel Guest Tech Report](https://hoteltechreport.com/news/2026-state-of-hotel-guest-technology-report)（2026-03）
+- [Texas A&M AgriLife Today: Research finds hotel booking chatbots can 'creep out' customers](https://agrilifetoday.tamu.edu/2026/05/22/research-finds-hotel-booking-chatbots-can-creep-out-customers/)（2026-05）
+- [tripla Bot 生成AI搭載の発表](https://tripla.io/2026/09/17/tripla-bot_update/)（2026-09）
+- [talkappi FAQ更新AIアシスト](https://talkappi.com/faq-ai-check/)
+- [pgvector](https://github.com/pgvector/pgvector)（v0.8.6。HNSWは`vector`が2,000次元まで、`halfvec`は4,000次元まで）

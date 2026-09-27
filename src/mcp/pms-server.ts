@@ -11,11 +11,11 @@ const reservationId = z.string().describe("予約番号（例: R-1203）");
 
 const getReservation = createTool({
   id: "get_reservation",
-  description: "予約内容（部屋番号・滞在日・人数・プラン・料金）を取得する",
+  description: "予約内容（客室ID・部屋番号・滞在日・人数・プラン・料金）を取得する",
   inputSchema: z.object({ reservation_id: reservationId }),
   execute: async ({ reservation_id }) => {
     const row = await queryOne(
-      `select id reservation_id, hotel_id, guest_name, room_number, check_in::text, check_out::text, adults, plan_name, total_amount_jpy
+      `select id reservation_id, hotel_id, guest_name, room_id, room_number, check_in::text, check_out::text, adults, plan_name, total_amount_jpy
        from mock_pms.reservations where id = $1`,
       [reservation_id],
     );

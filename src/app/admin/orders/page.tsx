@@ -1,5 +1,6 @@
 import { can, requireMember } from "@/server/auth";
-import { assignableMembers, getBoard, listSlots } from "@/server/order-board";
+import { getHotel } from "@/server/hotel";
+import { assignableMembers, getBoard, getOrderForm, listSlots } from "@/server/order-board";
 import { OrderBoard } from "./order-board";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +12,15 @@ export default async function OrdersPage({ searchParams }: PageProps<"/admin/ord
   const { slot } = await searchParams;
   const current = slots.find((s) => s.id === slot) ?? slots[0];
   if (!current) return <main className="p-8 text-sm text-ink-sub">担当の枠がありません</main>;
-  const [board, candidates, canCreate, canReassign] = await Promise.all([
+  const [board, candidates, canCreate, canReassign, hotel] = await Promise.all([
     getBoard(member.hotel_id, current.id),
     assignableMembers(member.hotel_id, current.id),
     can(member.id, "order.create"),
     can(member.id, "order.reassign", current.id),
+    getHotel(member.hotel_id),
   ]);
-  return <OrderBoard slots={slots} slotId={current.id} board={board} candidates={candidates} canCreate={canCreate} canReassign={canReassign} />;
+  const form = canCreate ? await getOrderForm(member.hotel_id) : null;
+  return (
+    <OrderBoard slots={slots} slotId={current.id} board={board} candidates={candidates} form={form} canReassign={canReassign} timezone={hotel.timezone} />
+  );
 }

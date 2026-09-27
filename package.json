@@ -19,7 +19,8 @@
     "dev:reset-activity": "tsx --env-file=.env.local scripts/dev-reset-activity.ts",
     "dev:seed-documents": "tsx --env-file=.env.local scripts/dev-seed-documents.ts",
     "dev:seed-activity": "tsx --env-file=.env.local scripts/dev-seed-activity.ts",
-    "dev:seed-alerts": "tsx --env-file=.env.local scripts/dev-seed-alerts.ts"
+    "dev:seed-alerts": "tsx --env-file=.env.local scripts/dev-seed-alerts.ts",
+    "dev:seed-gaps": "tsx --env-file=.env.local scripts/dev-seed-gaps.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.55",

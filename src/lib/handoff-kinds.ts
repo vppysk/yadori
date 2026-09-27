@@ -9,6 +9,7 @@ export const HANDOFF_LABELS: Record<string, string> = {
   staff_assigned: "スタッフが担当する業務",
   guardrail_blocked: "AIの回答を止めた（禁止事項）",
   system_error: "AIの不具合（回答できず）",
+  order_unavailable: "取り扱いのない品・品切れの依頼",
 };
 
 // 対応アラートの分類。オーダー遅延はオーダーボードだけに出すため含めない
@@ -16,7 +17,7 @@ export const ALERT_CATEGORIES = {
   safety: { label: "安全", kinds: ["safety"] },
   talk: { label: "スタッフとの会話希望", kinds: ["talk_request"] },
   complaint: { label: "クレーム・強い不満", kinds: ["complaint"] },
-  ai: { label: "AIでは対応できない", kinds: ["staff_assigned", "guardrail_blocked", "unanswerable", "system_error"] },
+  ai: { label: "AIでは対応できない", kinds: ["staff_assigned", "guardrail_blocked", "unanswerable", "system_error", "order_unavailable"] },
 } as const satisfies Record<string, { label: string; kinds: readonly string[] }>;
 
 export type AlertCategory = keyof typeof ALERT_CATEGORIES;
@@ -33,6 +34,7 @@ export const AI_REASONS: Record<string, string> = {
   guardrail_blocked: "禁止事項に反した",
   unanswerable: "2回答えられなかった",
   system_error: "システムの不具合",
+  order_unavailable: "取り扱いのない品・品切れ",
 };
 
 export const FAILURE_STAGES: Record<string, string> = { answer: "回答の生成", guardrail: "禁止事項のチェック" };

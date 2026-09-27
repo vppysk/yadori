@@ -10,11 +10,13 @@ export type Hotel = {
   order_reassign_minutes: number;
   order_bundle_enabled: boolean;
   order_decline_reason_required: boolean;
+  // 希望日時のあるオーダーを、その何分前に割り当てるか（docs/005_order.md 5章）
+  order_schedule_lead_minutes: number;
 };
 
 export async function getHotel(hotelId: string): Promise<Hotel> {
   const hotel = await queryOne<Hotel>(
-    "select id, name, timezone, fx_usd_jpy, order_reassign_minutes, order_bundle_enabled, order_decline_reason_required from hotels where id = $1",
+    "select id, name, timezone, fx_usd_jpy, order_reassign_minutes, order_bundle_enabled, order_decline_reason_required, order_schedule_lead_minutes from hotels where id = $1",
     [hotelId],
   );
   if (!hotel) throw new Error(`ホテルが見つかりません: ${hotelId}`);

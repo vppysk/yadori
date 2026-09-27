@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logoutAction } from "../staff/actions";
 
-export type AdminNavItem = { href: string; label: string; exact?: boolean; badge?: number; ready?: boolean; allowed?: boolean };
+export type AdminNavItem = { href: string; label: string; exact?: boolean; ready?: boolean; allowed?: boolean };
 
 export function AdminNav({ hotelName, memberName, items }: { hotelName: string; memberName: string; items: AdminNavItem[] }) {
   const pathname = usePathname();
@@ -29,10 +29,9 @@ export function AdminNav({ hotelName, memberName, items }: { hotelName: string; 
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`flex min-h-11 items-center justify-between rounded-[10px] px-3 text-sm ${active ? "bg-dark-2 font-bold" : "hover:bg-dark-2"}`}
+            className={`flex min-h-11 items-center rounded-[10px] px-3 text-sm ${active ? "bg-dark-2 font-bold" : "hover:bg-dark-2"}`}
           >
             {item.label}
-            {item.badge ? <span className="text-xs text-[#AEB6B9]">{item.badge}</span> : null}
           </Link>
         );
       })}

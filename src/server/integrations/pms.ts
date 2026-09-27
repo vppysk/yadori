@@ -64,6 +64,8 @@ export type GuestContext = {
   reservationId: string;
   hotelId: string;
   guestName: string;
+  // 客室の一意のID（本館・別館で同じ部屋番号があっても区別できる）と、表示名（棟＋部屋番号）
+  roomId: string | null;
   roomNumber: string;
   checkIn: string;
   checkOut: string;
@@ -77,6 +79,7 @@ type RawReservation = {
   reservation_id: string;
   hotel_id: string;
   guest_name: string;
+  room_id?: string;
   room_number: string;
   check_in: string;
   check_out: string;
@@ -95,12 +98,16 @@ export async function getGuestContext(reservationId: string): Promise<GuestConte
 
   const raw = await callTool<RawReservation>("get_reservation", { reservation_id: reservationId });
   if (!raw || raw.error || raw.hotel_id !== integration.hotel_id) return undefined;
-  // 変換層: 相手の項目名を自前の形に直し、許可されていない項目（料金など）は落とす
+  // 変換層: 相手の項目名を自前の形に直し、許可されていない項目（料金など）は落とす。部屋は客室IDで自前の部屋マスタに当て、表示名を使う
+  const room = raw.room_id
+    ? await queryOne<{ label: string }>("select label from rooms where hotel_id = $1 and id = $2", [integration.hotel_id, raw.room_id])
+    : undefined;
   const context: GuestContext = {
     reservationId: raw.reservation_id,
     hotelId: raw.hotel_id,
     guestName: raw.guest_name,
-    roomNumber: raw.room_number,
+    roomId: room ? raw.room_id! : null,
+    roomNumber: room?.label ?? raw.room_number,
     checkIn: raw.check_in,
     checkOut: raw.check_out,
     adults: raw.adults,

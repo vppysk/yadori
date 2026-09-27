@@ -2,44 +2,25 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { ArrowIcon } from "@/components/icons";
 import { AI_REASONS, ALERT_CATEGORIES, FAILURE_CAUSES, FAILURE_STAGES, HANDOFF_LABELS, alertCategoryOf } from "@/lib/handoff-kinds";
 import type { HandoffDetail } from "@/server/staff-work";
 import { acceptHandoffAdminAction, closeHandoffAdminAction, replyHandoffAdminAction } from "../actions";
+import { ConversationMessages } from "../conversation-messages";
 
 // ゲストの新しい発言を拾うための再取得間隔（ゲスト画面と同じ）
 const POLL_MS = 15_000;
-const ROLE_LABELS = { user: "ゲスト", assistant: "AI", staff: "スタッフ" } as const;
 const WRITES: Record<string, string> = { pending_confirm: "お客様メモ: 確認待ち", held: "お客様メモ: 保留", written: "お客様メモに記録済み", rejected: "お客様メモ: 取りやめ" };
 
 // 対応アラートの右側: そのゲストとの会話を開き、引き継いだ時点のメッセージまでスクロールする。ここから返信すると引き受けたことになる
 export function ConversationPanel({ handoff, canReply, closeHref }: { handoff: HandoffDetail; canReply: boolean; closeHref: string }) {
   const router = useRouter();
-  const listRef = useRef<HTMLOListElement>(null);
-  const targetRef = useRef<HTMLLIElement>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const active = handoff.status === "open" || handoff.status === "accepted";
   const category = alertCategoryOf(handoff.kind);
-
-  // パネルの中だけをスクロールする（scrollIntoView はページ全体も動かすため使わない）
-  useEffect(() => {
-    const list = listRef.current;
-    const target = targetRef.current;
-    if (!list) return;
-    list.scrollTop = target ? target.offsetTop - (list.clientHeight - target.offsetHeight) / 2 : list.scrollHeight;
-  }, [handoff.id]);
-
-  // 開いた後に届いたメッセージ（自分の返信・ゲストの新しい発言）は一番下まで送って見せる
-  const messageCount = handoff.messages.length;
-  const shownCount = useRef(messageCount);
-  useEffect(() => {
-    const list = listRef.current;
-    if (list && messageCount > shownCount.current) list.scrollTop = list.scrollHeight;
-    shownCount.current = messageCount;
-  }, [messageCount]);
 
   useEffect(() => {
     if (!active) return;
@@ -89,27 +70,7 @@ export function ConversationPanel({ handoff, canReply, closeHref }: { handoff: H
         {handoff.status === "cancelled" && <p className="text-[13px] text-ink-sub">ゲストがスタッフへの依頼を取り消しました。対応は不要です。</p>}
       </header>
 
-      <ol ref={listRef} className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto bg-canvas px-4 py-4">
-        {handoff.messages.map((m) => {
-          const target = m.id === handoff.target_message_id;
-          return (
-            <li
-              key={m.id}
-              ref={target ? targetRef : undefined}
-              className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-sm leading-relaxed ${
-                m.role === "user" ? "self-start border border-line bg-surface" : "self-end bg-muted"
-              } ${target ? "ring-2 ring-primary" : ""}`}
-            >
-              <span className="block text-[11px] text-ink-sub">
-                {ROLE_LABELS[m.role]} ・ {new Date(m.created_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                {target ? " ・ ここで引き継ぎ" : ""}
-              </span>
-              {m.content}
-            </li>
-          );
-        })}
-        {handoff.messages.length === 0 && <li className="text-sm text-ink-sub">会話はありません</li>}
-      </ol>
+      <ConversationMessages messages={handoff.messages} targetId={handoff.target_message_id} targetLabel="ここで引き継ぎ" />
 
       {error && <p role="alert" className="bg-danger-soft px-4 py-2 text-xs text-danger">{error}</p>}
       {canReply && active && handoff.conversation_id && (

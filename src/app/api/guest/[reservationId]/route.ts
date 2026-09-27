@@ -1,4 +1,5 @@
-import { cancelStaffRequest, getGuestSession, handleGuestMessage, requestStaff } from "@/server/guest-chat";
+import { cancelOrder, cancelStaffRequest, getGuestSession, handleGuestMessage, requestStaff, submitOrder } from "@/server/guest-chat";
+import type { SubmitOrderInput } from "@/server/order-drafts";
 
 // デモ用: 予約番号をそのままゲストの識別に使う（認証は未実装）
 export async function GET(_request: Request, { params }: RouteContext<"/api/guest/[reservationId]">) {
@@ -10,8 +11,35 @@ export async function GET(_request: Request, { params }: RouteContext<"/api/gues
 
 export async function POST(request: Request, { params }: RouteContext<"/api/guest/[reservationId]">) {
   const { reservationId } = await params;
-  const body = (await request.json()) as { text?: string; action?: "talk_to_staff" | "cancel_staff" };
+  const body = (await request.json()) as {
+    text?: string;
+    action?: "talk_to_staff" | "cancel_staff" | "submit_order" | "cancel_order";
+    draftId?: string;
+    order?: SubmitOrderInput;
+  };
   if (body.action === "talk_to_staff") return Response.json(await requestStaff(reservationId));
+  // お届けの依頼の選択欄（docs/005_order.md 2章）
+  if (body.action === "submit_order" || body.action === "cancel_order") {
+    if (!body.draftId) return Response.json({ error: "ご依頼が見つかりません" }, { status: 400 });
+    try {
+      if (body.action === "cancel_order") {
+        await cancelOrder(reservationId, body.draftId);
+        return Response.json({ ok: true });
+      }
+      const order = body.order;
+      if (!order || !Array.isArray(order.lines)) return Response.json({ error: "品目と数量をお選びください" }, { status: 400 });
+      const input: SubmitOrderInput = {
+        lines: order.lines.map((l) => ({ itemId: String(l.itemId), quantity: Number(l.quantity) })),
+        note: String(order.note ?? "").slice(0, 300),
+        deliver: order.deliver ? { date: String(order.deliver.date), time: String(order.deliver.time) } : null,
+      };
+      return Response.json({ tickets: await submitOrder(reservationId, body.draftId, input) });
+    } catch (error) {
+      // 入力の誤り（品切れ・過ぎた時刻など）はゲストに伝える
+      console.warn("[api/guest] ご依頼の確定に失敗", error);
+      return Response.json({ error: error instanceof Error ? error.message : "ご依頼を確定できませんでした" }, { status: 409 });
+    }
+  }
   if (body.action === "cancel_staff") {
     const { cancelled, error } = await cancelStaffRequest(reservationId);
     if (!cancelled) return Response.json({ error }, { status: 409 });
