@@ -16,16 +16,18 @@
 ### 期間付き知識（4.1）
 | テーブル | 役割 |
 |---|---|
-| `facilities` | 施設。`kind='global'` の1行がマスタの「全体」欄 |
-| `facility_hours` / `facility_offerings` | 営業時間／メニュー・プラン。`valid daterange` で有効期間を持つ |
+| `facilities` | 施設。`kind='global'` の1行がマスタの「全体」欄。`category_id` でカテゴリに属する（「全体」は null） |
+| `facility_categories` / `info_fields` / `category_fields` | カテゴリ（食事・温浴…）、項目（営業時間・メニュー・プラン…）、カテゴリで使う項目と並び順。導入時に設定する（`docs/002_facility_master_design.md`） |
+| `info_sources` | 資料。読み取った本文と状態（確認待ち／承認済み）、どの項目にも入らなかった内容 |
+| `facility_values` | 施設 × 項目 × 期間の値。タイトル（任意）＋本文（自由文）、`valid daterange`（終了日なし可）、優先度（期間が重なるとき大きい方で案内。承認時にスタッフが選ぶ）、出どころの資料、状態（確認待ち／承認済み） |
 | `special_notices` | 特記事項。施設（または「全体」）に紐づき、`ends_at` を過ぎたら案内に使わない |
 | `source_files` | PDF・画像の元ファイル（Supabase Storage）。下書きの出どころ |
 | `documents` / `document_chunks` | RAG。埋め込みは1536次元 |
 | `unanswered_questions` | 未回答の質問。回答すると `documents`（`source='answered_question'`）に蓄積 |
 
 - **滞在日での答え分け**: `valid @> 滞在日` で絞る（GiSTインデックス）。季節をまたぐ滞在は日ごとに引く
-- **期間の重なりは禁止しない**: 除外制約にすると、PDFから入れた下書きが保存できなくなる。`facility_period_overlaps` ビューで検出して警告する（UIモックの「冬の鍋会席と期間が重複」）。営業時間は同じラベル同士、メニューは同じ施設内のすべてを比較する
-- **下書き**: `status='draft'` の行。保存で `published` に変える（行ごとの承認操作は作らない）
+- **期間の重なりは禁止しない**: 除外制約にすると、PDFから入れた下書きが保存できなくなる。`facility_period_overlaps` ビューで検出して警告する（UIモックの「冬の鍋会席と期間が重複」）。同じ施設・項目・タイトルで期間が重なり、優先度が同じ（どちらを優先するか決まっていない）組を「要確認」にする
+- **確認待ち**: 資料から読み取った `status='pending'` の行。資料の確認画面で承認すると `approved` になる
 - **特記事項の自動消去**: 行は消さずに期限で案内対象から外す（履歴・監査のため）
 - **「要確認」（長期間未更新）**: 各行の `updated_at` から計算する
 - **埋め込みは1536次元**: Qwen3-Embedding-8B の既定は4096次元だが、pgvectorのHNSW索引は2000次元までのため `dimensions=1536` で取得する（Token Factoryで動作確認済み）
@@ -103,3 +105,7 @@
 - `20260926000000_guardrail_codes.sql`: `guardrails.code`。必ず人に引き継ぐ条件のうち、アプリが判定を実装している組み込みの条件（`wants_staff`・`strong_complaint`・`unanswered_twice`・`safety`）を識別する。オン・オフは `enabled`
 - `20260926010000_order_settings.sql`: `hotels` にオーダーの割り当て設定（未着手のまま次の人へ回すまでの分数、同じフロアのまとめ、「対応できない」の理由必須）。品目・担当設定の画面で編集する
 - `20260927000000_external_sources.sql`: 外部の情報源。`external_sources`（管理者が登録したURL・見る内容・基本の取得間隔・最終取得／最終成功）、`external_source_boosts`（期間を限定して頻度を上げる。`tstzrange`、重なるときは短い間隔が有効）、`external_snapshots`（本文のハッシュと、変化したときのAIの要約・影響・スタッフへの配信文）。`integrations.kind` を `mcp`／`web_fetch` にし、Tavilyの取得を外部連携の1つ（項目 `external_updates`、読み取りのみ）として扱う。権限 `knowledge.source.edit`（登録）と `integration.web_fetch.read`（AIエージェントの取得）
+- `20260928000000_facility_fields.sql`: 館内の情報のマスタ化。`facility_categories`・`info_fields`（型は `hours`／`list`／`text`）・`category_fields`・`facility_values` を追加し、`facilities.category_id` を追加。旧 `facility_hours`・`facility_offerings` の行を `facility_values` に写して（件数が合わなければ中止）旧テーブルを削除し、`facility_period_overlaps` を作り直した。移行時のカテゴリは「施設」1つ。デモの構成は `seed.sql`
+- `20260929000000_handoff_guest_request.sql`: `handoffs.guest_requested`（ゲスト自身が求めた引き継ぎ。「スタッフと話す」ボタンと「スタッフと話したい」の発言）と状態 `cancelled`（引き受け前にゲストが取り消した）。1つの会話で対応中（`open`／`accepted`）のゲストの依頼は1件までの部分一意索引 `handoffs_active_guest_request`。書き戻しの時点で取り消し済みならお客様メモに書かないが、書き戻しは応答直後に走るため、通常は取り消し前に書かれる
+- `20260930000000_info_sources.sql`: 資料 `info_sources` を追加。`facility_values` を型なし（`title`・`body`）にし、`source_id`・`priority` を追加、状態を `pending`／`approved` に変更、`value`・`source_file_id` と `info_fields.value_type` を削除。`facility_period_overlaps` を「優先度が同じ重なり」に作り直した
+- `20260930010000_handoff_reasons.sql`: 引き継ぎの種類をきっかけごとに分けた（`staff_assigned`＝担当が人、`guardrail_blocked`＝禁止事項で回答を止めた、`system_error`＝回答の生成・禁止事項のチェックの失敗）。システムの不具合の中身（`failure_stage`・`failure_cause`・`failure_detail`・`model_id`。禁止事項で止めたときは `failure_detail` に理由と止めた回答）と、引き継いだ時点のメッセージ `message_id` を追加。既存の行は要約の書き出しで移し替え、担当が人は確実に見分けられないため、ゲストの依頼でない `talk_request` をまとめて寄せた。管理PCの対応アラートでの分類は `src/lib/handoff-kinds.ts`

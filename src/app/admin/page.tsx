@@ -2,26 +2,20 @@ import Link from "next/link";
 import { permissionKeys, requireMember } from "@/server/auth";
 import { inspectKnowledge } from "@/server/knowledge-admin";
 import { listOpenQuestions } from "@/server/questions";
+import { ALERT_CATEGORIES, ALERT_KINDS, AI_REASONS, alertCategoryOf } from "@/lib/handoff-kinds";
 import { listOpenHandoffs } from "@/server/staff-work";
 import { QuestionList } from "./question-list";
 
 export const dynamic = "force-dynamic";
 
-const HANDOFF_LABELS: Record<string, string> = {
-  talk_request: "スタッフとの会話を希望",
-  complaint: "クレーム",
-  overdue_order: "オーダー遅延",
-  unanswerable: "AIが回答できない質問",
-  safety: "安全に関わる内容",
-};
 
-// 管理PCのホーム「今日の要対応」（plan 4.6）: 未回答の質問、引き継ぎ・クレーム予兆、情報の点検
+// 管理PCのホーム「今日の要対応」（plan 4.6）: 未回答の質問、対応アラート（オーダー遅延はオーダーボードだけに出す）、情報の点検
 export default async function AdminHome() {
   const member = await requireMember("/admin");
   const keys = await permissionKeys(member.id);
   const [questions, handoffs, inspection] = await Promise.all([
     keys.has("knowledge.question.answer") ? listOpenQuestions(member.hotel_id) : [],
-    listOpenHandoffs(member.hotel_id),
+    listOpenHandoffs(member.hotel_id).then((rows) => rows.filter((h) => ALERT_KINDS.includes(h.kind))),
     inspectKnowledge(member.hotel_id),
   ]);
   const time = (iso: string) => new Date(iso).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" });
@@ -40,15 +34,24 @@ export default async function AdminHome() {
         )}
         <div className="flex min-h-0 flex-col gap-4.5">
           <section className="flex flex-col gap-3 rounded-[14px] border border-line bg-surface p-5">
-            <h2 className="text-base font-bold">引き継ぎ・クレーム予兆</h2>
+            <h2 className="flex justify-between text-base font-bold">
+              対応アラート
+              <Link href="/admin/handoffs" className="text-xs font-normal text-primary">一覧</Link>
+            </h2>
             {handoffs.map((h) => {
-              const alert = h.kind === "overdue_order" || h.kind === "complaint";
+              const category = alertCategoryOf(h.kind);
+              const alert = category === "safety" || category === "complaint";
               return (
-                <div key={h.id} className={`flex flex-col gap-1.5 rounded-[10px] px-3.5 py-3 ${alert ? "border-2 border-danger" : "border border-line"}`}>
+                <Link
+                  key={h.id}
+                  href={`/admin/handoffs?id=${h.id}`}
+                  className={`flex flex-col gap-1.5 rounded-[10px] px-3.5 py-3 hover:bg-canvas ${alert ? "border-2 border-danger" : "border border-line"}`}
+                >
                   <div className="flex justify-between text-sm">
                     <strong className={alert ? "text-danger" : ""}>
                       {h.room_number ? `${h.room_number}号室 ` : ""}
-                      {HANDOFF_LABELS[h.kind] ?? h.kind}
+                      {category ? ALERT_CATEGORIES[category].label : h.kind}
+                      {category === "ai" ? `（${AI_REASONS[h.kind]}）` : ""}
                     </strong>
                     <span className="text-xs text-ink-sub">{time(h.created_at)}</span>
                   </div>
@@ -56,7 +59,7 @@ export default async function AdminHome() {
                     {h.summary}
                     {h.accepted_by_name ? `。対応：${h.accepted_by_name}が引き受け` : "。対応：未"}
                   </span>
-                </div>
+                </Link>
               );
             })}
             {handoffs.length === 0 && <p className="text-sm text-ink-sub">ありません</p>}

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { classifyLlmError, type LlmFailure } from "@/lib/llm/errors";
 import { generateStructured } from "@/lib/llm/structured";
 import { query, queryOne } from "./db";
 import { recordLlmCall } from "./metrics";
@@ -26,7 +27,8 @@ export async function unansweredCount(conversationId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
-export type ReplyCheck = { ok: true } | { ok: false; rule: string; reason: string };
+// failure: チェック自体が失敗した（違反の判定ではない）
+export type ReplyCheck = { ok: true } | { ok: false; rule: string; reason: string; failure?: LlmFailure };
 
 // 回答の後チェック。「してはいけないこと」への違反をモデルで判定する
 export async function checkReply(hotelId: string, reply: string, conversationId?: string): Promise<ReplyCheck> {
@@ -60,6 +62,6 @@ export async function checkReply(hotelId: string, reply: string, conversationId?
   } catch (error) {
     // 判定できないときは出してしまうより止める
     console.warn("[guardrails] 後チェックに失敗", error);
-    return { ok: false, rule: "判定できなかった", reason: String(error) };
+    return { ok: false, rule: "判定できなかった", reason: String(error), failure: classifyLlmError(error) };
   }
 }

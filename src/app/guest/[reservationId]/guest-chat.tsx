@@ -13,6 +13,8 @@ const QUICK_REPLIES = [
   { label: "アメニティ追加", text: "アメニティを追加でお願いしたいです" },
 ];
 
+type StaffAction = "talk_to_staff" | "cancel_staff";
+
 type TimelineItem =
   | { kind: "day"; key: string; label: string }
   | { kind: "message"; key: string; message: GuestChatMessage }
@@ -22,6 +24,7 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
   const [session, setSession] = useState(initialSession);
   const [draft, setDraft] = useState("");
   const [pendingText, setPendingText] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<StaffAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLElement>(null);
   const firstScroll = useRef(true);
@@ -45,9 +48,10 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
     firstScroll.current = false;
   }, [session.messages.length, session.tickets.length, pendingText, error]);
 
-  async function post(body: { text?: string; action?: "talk_to_staff" }) {
+  async function post(body: { text?: string; action?: StaffAction }) {
     setError(null);
     setPendingText(body.text ?? null);
+    setPendingAction(body.action ?? null);
     try {
       const res = await fetch(`/api/guest/${encodeURIComponent(reservationId)}`, {
         method: "POST",
@@ -57,6 +61,8 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
         setError(data.error ?? "送信できませんでした。もう一度お試しください。");
+        // 取り消せなかったときは、スタッフが引き受けた状態を画面に反映する
+        if (body.action) await refresh();
         return;
       }
       await refresh();
@@ -64,6 +70,7 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
       setError("通信できませんでした。電波の良い場所でもう一度お試しください。");
     } finally {
       setPendingText(null);
+      setPendingAction(null);
     }
   }
 
@@ -80,22 +87,30 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
   }
 
   const timeline = useMemo(() => buildTimeline(session), [session]);
-  const busy = pendingText !== null;
+  const busy = pendingText !== null || pendingAction !== null;
+  const staffRequest = session.staffRequest;
 
   return (
     <div className="mx-auto flex h-dvh w-full max-w-[430px] flex-col bg-canvas text-ink">
       <header className="flex flex-col gap-2.5 border-b border-line bg-surface px-5 pt-5 pb-3.5">
         <div className="flex items-center justify-between">
           <h1 className="font-mincho text-xl font-semibold tracking-[0.04em]">{session.hotelName}</h1>
-          <button
-            type="button"
-            onClick={() => void post({ action: "talk_to_staff" })}
-            disabled={busy}
-            className="flex min-h-11 items-center gap-1.5 rounded-full border border-line px-3 text-[13px] font-medium disabled:opacity-50"
-          >
-            <PersonIcon />
-            スタッフと話す
-          </button>
+          {staffRequest ? (
+            <span className="flex min-h-11 items-center gap-1.5 rounded-full bg-primary-soft px-3 text-[13px] font-medium text-primary">
+              <PersonIcon />
+              {staffRequest.status === "accepted" ? "スタッフが対応中" : "スタッフに連絡済み"}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void post({ action: "talk_to_staff" })}
+              disabled={busy}
+              className="flex min-h-11 items-center gap-1.5 rounded-full border border-line px-3 text-[13px] font-medium disabled:opacity-50"
+            >
+              <PersonIcon />
+              {pendingAction === "talk_to_staff" ? "おつなぎしています…" : "スタッフと話す"}
+            </button>
+          )}
         </div>
         <div className="flex gap-2 text-xs text-ink-sub">
           <span className="rounded-xl bg-primary-soft px-2.5 py-1 font-medium text-primary">{session.guest.roomNumber}号室</span>
@@ -103,6 +118,25 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
             {formatDay(session.guest.checkIn)} 〜 {formatDay(session.guest.checkOut)}
           </span>
         </div>
+        {staffRequest && (
+          <div className="flex items-center justify-between gap-2 rounded-xl bg-primary-soft py-1 pr-1 pl-3 text-xs text-primary">
+            <span>
+              {staffRequest.status === "accepted"
+                ? "スタッフが対応しています。こちらの画面でお待ちください。"
+                : "スタッフにおつなぎしています。こちらの画面でお待ちください。"}
+            </span>
+            {staffRequest.status === "open" && (
+              <button
+                type="button"
+                onClick={() => void post({ action: "cancel_staff" })}
+                disabled={busy}
+                className="min-h-11 shrink-0 rounded-full px-3 font-medium underline underline-offset-2 disabled:opacity-50"
+              >
+                {pendingAction === "cancel_staff" ? "取り消し中…" : "取り消す"}
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       <main ref={listRef} className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 py-5" aria-live="polite">

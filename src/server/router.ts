@@ -12,7 +12,7 @@ function routeSchema(facilityNames: string[]) {
   return z.object({
     facilities: z
       .array(z.enum(facilityNames as [string, ...string[]]))
-      .describe("質問に関係する施設。言い換えも対応させる（例: プール→屋外プール、お風呂→大浴場、ランチ・ディナー→レストラン）。特定できなければ空"),
+      .describe("質問に関係する施設、または施設の分類（食事など。その分類の施設すべてを指す）。言い換えも対応させる（例: プール→屋外プール、お風呂→大浴場、ランチ・ディナー→レストラン）。特定できなければ空"),
     intents: z
       .array(
         z.object({
@@ -73,16 +73,24 @@ export async function route(
       "- reservation: 予約内容・部屋の変更",
       "- complaint: 不満・苦情（騒音、対応の遅れなど）",
       "部屋番号や挨拶だけの文は要望にしない。1つの要望は1回だけ書く。",
+      "「スタッフと話したい」のように人との会話を求める部分は要望にせず、wants_staff で表す（complaint にしない）。ほかに要望がなければ info とする。",
     ].join("\n"),
     prompt: message,
   });
   return { result: normalize(object, catalog), usage };
 }
 
+// 人との会話を求めるだけの短い要約（「騒音のためスタッフと話したい」のように苦情を含むものは残す）
+const TALK_REQUEST = /(スタッフ|人|係の方)(と|に|との)(話|代わ|つな|会話)/;
+const isTalkRequestOnly = (summary: string) => summary.length <= 15 && TALK_REQUEST.test(summary);
+
 function normalize(raw: RawRoute, catalog: CatalogItem[]): RouteResult {
-  const intents = raw.intents
-    // 他の要望があるときの、中身のない要望（空の要約）は捨てる
-    .filter((intent, _, all) => intent.summary.trim() !== "" || all.length === 1)
+  // 他の要望があるときの、中身のない要望（空の要約）は捨てる
+  const nonEmpty = raw.intents.filter((intent, _, all) => intent.summary.trim() !== "" || all.length === 1);
+  // 指示しても「スタッフと話したい」自体を complaint などの要望にすることがあるため、wants_staff のときは取り除く
+  const withoutTalk = raw.wants_staff ? nonEmpty.filter((intent) => !isTalkRequestOnly(intent.summary)) : nonEmpty;
+  const kept = withoutTalk.length > 0 ? withoutTalk : [{ pattern: "info" as const, summary: "スタッフとの会話を希望" }];
+  const intents = kept
     .map((intent): RouteIntent => {
       if (intent.pattern !== "order") return { pattern: intent.pattern, summary: intent.summary };
       const { items, unsupported } = matchCatalog(intent.requested ?? [], catalog);

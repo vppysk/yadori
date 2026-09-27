@@ -1,12 +1,13 @@
 import { RequestContext } from "@mastra/core/request-context";
 import type { ModelMessage } from "ai";
+import { classifyLlmError, type LlmFailure } from "@/lib/llm/errors";
 import { modelIdFor, type ModelTier } from "@/lib/llm/models";
 import type { LlmUsage } from "@/lib/llm/structured";
 import { generateAnswer, type Answer, type ConciergeContext } from "@/mastra/agents/concierge";
-import { query, queryOne, transaction } from "./db";
+import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
 import { getGuestContext, type GuestContext } from "./guest-context";
 import { checkReply, enabledHandoffCodes, unansweredCount } from "./guardrails";
-import { createHandoff, type HandoffKind } from "./handoffs";
+import { activeGuestRequest, cancelGuestRequest, createHandoff, type GuestRequest, type HandoffKind } from "./handoffs";
 import { currentTimeBand, getAiAgentMemberId, getAssignment, getHotel, localNow, type Hotel, type Pattern } from "./hotel";
 import { fmtDate, noticeCitations, renderFacilities, type Citation } from "./answer-context";
 import { externalCitations, getExternalUpdates, renderExternalUpdates, type ExternalUpdate } from "./external-sources";
@@ -20,8 +21,6 @@ import { route, type RouteResult } from "./router";
 
 const HISTORY_LIMIT = 12;
 export const GUEST_MESSAGE_HEADING = "【ゲストのメッセージ】";
-// クライアントに渡す時刻はISO文字列（UTC）に揃える。文字列のまま比較・並べ替えできる
-export const ISO_TIMESTAMP = (column: string) => `to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 // 回答の主担当を決める優先順（重いものを優先）
 const PATTERN_PRIORITY: Pattern[] = ["complaint", "reservation", "external", "info", "order"];
 
@@ -44,6 +43,8 @@ export type GuestSession = {
   conversationId: string;
   messages: GuestChatMessage[];
   tickets: GuestTicket[];
+  // 対応中の「スタッフと話す」の依頼。ヘッダーのボタンの表示に使う
+  staffRequest: GuestRequest | null;
 };
 
 export async function getGuestSession(reservationId: string): Promise<GuestSession | undefined> {
@@ -51,7 +52,11 @@ export async function getGuestSession(reservationId: string): Promise<GuestSessi
   if (!guest) return undefined;
   const hotel = await getHotel(guest.hotelId);
   const conversationId = await findOrCreateConversation(hotel, guest);
-  const [messages, tickets] = await Promise.all([listMessages(conversationId), listConversationTickets(conversationId)]);
+  const [messages, tickets, staffRequest] = await Promise.all([
+    listMessages(conversationId),
+    listConversationTickets(conversationId),
+    activeGuestRequest(conversationId),
+  ]);
   return {
     hotelName: hotel.name,
     timezone: hotel.timezone,
@@ -60,6 +65,7 @@ export async function getGuestSession(reservationId: string): Promise<GuestSessi
     conversationId,
     messages,
     tickets,
+    staffRequest: staffRequest ?? null,
   };
 }
 
@@ -70,7 +76,22 @@ export async function requestStaff(reservationId: string) {
   const hotel = await getHotel(guest.hotelId);
   const conversationId = await findOrCreateConversation(hotel, guest);
   const band = await currentTimeBand(hotel);
-  return handOffToStaff(hotel, guest, conversationId, "info", band?.id, "ゲストが画面の「スタッフと話す」を押した");
+  return handOffToStaff(hotel, guest, conversationId, "info", band?.id, "ゲストが画面の「スタッフと話す」を押した", { guestRequested: true });
+}
+
+// 「スタッフと話す」の取り消し（押し間違い用）。スタッフが引き受ける前だけ
+export async function cancelStaffRequest(reservationId: string) {
+  const guest = await getGuestContext(reservationId);
+  if (!guest) throw new Error(`予約が見つかりません: ${reservationId}`);
+  const hotel = await getHotel(guest.hotelId);
+  const conversationId = await findOrCreateConversation(hotel, guest);
+  const cancelled = await cancelGuestRequest(conversationId);
+  if (!cancelled) {
+    const accepted = (await activeGuestRequest(conversationId))?.status === "accepted";
+    return { cancelled, error: accepted ? "スタッフがすでに対応を始めているため、取り消せませんでした。" : "取り消せるご依頼はありません。" };
+  }
+  await insertMessage(conversationId, "assistant", "スタッフへのご連絡を取り消しました。引き続きこちらでご質問ください。");
+  return { cancelled };
 }
 
 async function handOffToStaff(
@@ -80,10 +101,24 @@ async function handOffToStaff(
   pattern: Pattern,
   timeBandId: string | undefined,
   summary: string,
-  options: { kind?: HandoffKind; reply?: string } = {},
+  // ordered: 同じ発言のオーダーを受け付け済み（回答でそのことにも触れる）
+  // messageId: 引き継ぎのきっかけになったゲストの発言（ボタンのときはなし）
+  options: { kind?: HandoffKind; reply?: string; guestRequested?: boolean; ordered?: boolean; messageId?: string } = {},
 ) {
-  await createHandoff({ hotelId: hotel.id, kind: options.kind ?? "talk_request", conversationId, roomNumber: guest.roomNumber, summary });
-  const reply = options.reply ?? "承知しました。スタッフにおつなぎします。こちらの画面でそのままお待ちください。";
+  const accepted = options.ordered ? "ご依頼を承りました。" : "";
+  const handoffId = await createHandoff({
+    hotelId: hotel.id, kind: options.kind ?? "talk_request", conversationId, roomNumber: guest.roomNumber, summary, guestRequested: options.guestRequested,
+    messageId: options.messageId,
+  });
+  // すでに依頼を受けている会話では、引き継ぎ・通知・実績を重ねて作らない
+  if (!handoffId) {
+    const reply = `${accepted}すでにスタッフにおつなぎしています。こちらの画面でそのままお待ちください。`;
+    await insertMessage(conversationId, "assistant", reply);
+    return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
+  }
+  const reply = options.reply ?? (options.ordered
+    ? `${accepted}あわせてスタッフにおつなぎします。こちらの画面でそのままお待ちください。`
+    : "承知しました。スタッフにおつなぎします。こちらの画面でそのままお待ちください。");
   await insertMessage(conversationId, "assistant", reply);
   await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern, timeBandId, handlerKind: "human", handler: "引き継ぎ", outcome: "handed_off", signals: { wants_staff: true } });
   return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
@@ -109,22 +144,30 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   if (conditions.has("safety") && routed.result.safety) {
     return handOffToStaff(hotel, guest, conversationId, intents[0].pattern, band?.id, text, {
       kind: "safety",
+      messageId: userMessageId,
       reply: "すぐにスタッフにおつなぎします。命に関わる緊急の場合は、ためらわず119番に通報してください。",
     });
   }
-  if (conditions.has("wants_staff") && routed.result.wants_staff) return handOffToStaff(hotel, guest, conversationId, intents[0].pattern, band?.id, text);
-
   const tickets = await issueOrders(hotel, guest, conversationId, text, intents, band?.id);
   const unsupportedItems = intents.flatMap((i) => i.unsupported_items ?? []);
   const complaints = intents.filter((i) => i.pattern === "complaint");
   // クレームと強い不満は人へ引き継ぐ（AIは一次受け止めのみ。「強い不満」の条件をオフにすると引き継がない）
   if (conditions.has("strong_complaint")) {
     for (const complaint of complaints) {
-      await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: complaint.summary });
+      await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: complaint.summary, messageId: userMessageId });
     }
     if (complaints.length === 0 && routed.result.strong_emotion) {
-      await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: `強い不満: ${text}` });
+      await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: `強い不満: ${text}`, messageId: userMessageId });
     }
+  }
+  // 「スタッフと話したい」: 同じ発言のオーダーとクレームの引き継ぎを済ませてから人へ（AIは回答しない）
+  if (conditions.has("wants_staff") && routed.result.wants_staff) {
+    // オーダーの実績は発行時に記録済みのため、引き継ぎはオーダー以外の要望として数える
+    const pattern = intents.find((i) => i.pattern !== "order")?.pattern ?? "info";
+    const summary = unsupportedItems.length ? `${text}（取り扱いのない品: ${unsupportedItems.join("、")}）` : text;
+    return handOffToStaff(hotel, guest, conversationId, pattern, band?.id, summary, {
+      guestRequested: true, ordered: tickets.length > 0, messageId: userMessageId,
+    });
   }
 
   const primary = PATTERN_PRIORITY.find((p) => intents.some((i) => i.pattern === p)) ?? "info";
@@ -132,7 +175,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
 
   // 人に直接回す設定の業務（オーダーは受付済みなので除く）
   if (assignment.handler === "human" && primary !== "order") {
-    await createHandoff({ hotelId: hotel.id, kind: "talk_request", conversationId, roomNumber: guest.roomNumber, summary: text });
+    await createHandoff({ hotelId: hotel.id, kind: "staff_assigned", conversationId, roomNumber: guest.roomNumber, summary: text, messageId: userMessageId });
     const reply = "担当のスタッフからご案内いたします。少々お待ちください。";
     await insertMessage(conversationId, "assistant", reply);
     await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern: primary, timeBandId: band?.id, handlerKind: "human", handler: "引き継ぎ", outcome: "handed_off" });
@@ -140,7 +183,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   }
 
   const tier: ModelTier = assignment.handler === "human" ? "small" : assignment.handler;
-  const { answer, facilities, externalUpdates } = await draftAnswer({
+  const { answer, facilities, externalUpdates, failure } = await draftAnswer({
     hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, tickets, unsupportedItems,
     hasComplaint: complaints.length > 0, tier, thinking: assignment.thinking,
   });
@@ -158,21 +201,40 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   const generated = (answer?.reply ?? "").replace(/\*\*|__|^#+\s*/gm, "").trim();
   const failed = generated === "";
   if (failed) {
-    await createHandoff({ hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: `AIが回答を作れなかった質問: ${text}` });
+    // 例外がなく回答文だけが空だったときも、期待した出力が得られなかったものとして扱う
+    const { cause, detail } = failure ?? { cause: "invalid_output" as const, detail: "回答文が空だった" };
+    await createHandoff({
+      hotelId: hotel.id, kind: "system_error", conversationId, roomNumber: guest.roomNumber, summary: `AIが回答を作れなかった質問: ${text}`,
+      messageId: userMessageId, failure: { stage: "answer", cause, detail, modelId: usage.modelId },
+    });
   }
   // ガードレール（後）: してはいけないことに反する回答はゲストに出さず、人に引き継ぐ
   const check = failed ? ({ ok: true } as const) : await checkReply(hotel.id, generated, conversationId);
   if (!check.ok) {
     console.warn("[guest-chat] ガードレールで回答を止めた", { rule: check.rule, reason: check.reason, generated });
-    await createHandoff({
-      hotelId: hotel.id, kind: "talk_request", conversationId, roomNumber: guest.roomNumber,
-      summary: `AIの回答が決まり「${check.rule}」に反したため止めた。ゲストの発言: ${text}`,
-    });
+    // チェック自体が失敗したときはシステムの不具合、違反と判定したときはガードレールによる引き継ぎ
+    await createHandoff(
+      check.failure
+        ? {
+            hotelId: hotel.id, kind: "system_error", conversationId, roomNumber: guest.roomNumber,
+            summary: `AIの回答を確認できなかったため、ゲストに出していない。ゲストの発言: ${text}`, messageId: userMessageId,
+            failure: { stage: "guardrail", cause: check.failure.cause, detail: `${check.failure.detail}\n止めた回答: ${generated}`, modelId: modelIdFor("medium") },
+          }
+        : {
+            hotelId: hotel.id, kind: "guardrail_blocked", conversationId, roomNumber: guest.roomNumber,
+            summary: `AIの回答が決まり「${check.rule}」に反したため止めた。ゲストの発言: ${text}`, messageId: userMessageId,
+            failure: { detail: `理由: ${check.reason}\n止めた回答: ${generated}` },
+          },
+    );
   }
   // 同じ会話で2回答えられなかったら人へ
   const isUnanswered = failed || unanswered.length > 0;
-  if (isUnanswered && conditions.has("unanswered_twice") && (await unansweredCount(conversationId)) >= 1) {
-    await createHandoff({ hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: `同じ会話で2回答えられなかった。直近の質問: ${text}` });
+  // 回答を作れなかったときはシステムの不具合として引き継ぎ済みのため重ねない
+  if (!failed && isUnanswered && conditions.has("unanswered_twice") && (await unansweredCount(conversationId)) >= 1) {
+    await createHandoff({
+      hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: `同じ会話で2回答えられなかった。直近の質問: ${text}`,
+      messageId: userMessageId,
+    });
   }
   const reply = failed ? "確認してすぐにご連絡いたします。少々お待ちください。" : !check.ok ? "担当のスタッフから改めてご案内いたします。少々お待ちください。" : generated;
   const citations = failed ? [] : [...buildCitations(facilities, routed.result.facilities, reply, guest, today), ...externalCitations(externalUpdates, answer?.used_sources)];
@@ -240,7 +302,7 @@ export async function draftAnswer(params: {
   thinking: boolean;
   // 保存前の指示で試すとき（「過去の会話で試す」）に、DBの指示の代わりに使う
   instructionOverrides?: InstructionOverrides;
-}): Promise<{ answer: Answer | undefined; facilities: FacilityInfo[]; externalUpdates: ExternalUpdate[] }> {
+}): Promise<{ answer: Answer | undefined; facilities: FacilityInfo[]; externalUpdates: ExternalUpdate[]; failure?: LlmFailure }> {
   const { hotel, guest, text, history, routed, tier, thinking } = params;
   const intents = routed.intents;
   // 回答に使う知識をゲストの滞在日で取得する（ご滞在中は今日から、ご到着前は滞在期間。チェックアウト日の朝食なども含める）
@@ -282,7 +344,7 @@ export async function draftAnswer(params: {
     return { answer, facilities, externalUpdates };
   } catch (error) {
     console.warn("[guest-chat] 回答を作れなかった", { modelId: modelIdFor(tier), error });
-    return { answer: undefined, facilities, externalUpdates };
+    return { answer: undefined, facilities, externalUpdates, failure: classifyLlmError(error) };
   }
 }
 
@@ -320,7 +382,7 @@ async function buildInstructions(params: {
 
   return [
     `あなたは「${hotel.name}」のゲスト向けアシスタント。日本語だけで、ゲストに直接話しかける文章だけを書く。`,
-    "施設の営業時間・メニュー・特記事項は、ゲストの発言の前に付いている【最新の館内情報】だけを根拠に答える。書かれていないことは推測せず、スタッフに確認してご連絡すると伝える。",
+    "施設の営業時間・メニューなどの情報と特記事項は、ゲストの発言の前に付いている【最新の館内情報】だけを根拠に答える。書かれていないことは推測せず、スタッフに確認してご連絡すると伝える。",
     "日付の指定がなければ、ご滞在中なら今日、ご到着前ならご滞在の期間の情報で答える。期間によって違う場合は、どの日がどうなるかを分けて伝える。",
     "【特記事項】は通常の営業情報より優先する。特記事項がある日は、特記事項の内容で答え、通常との違いも伝える。",
     "「情報なし」の施設・項目について聞かれたら、時間などを推測せず、スタッフに確認してご連絡すると伝える。「情報なし」「特記事項」などの内部の表記はそのまま言わない。",
@@ -390,8 +452,10 @@ function withLatestKnowledge(params: {
 // ゲスト向けの根拠表示: 関係する施設の特記事項と、ご到着前なら滞在日で答えたこと
 function buildCitations(facilities: FacilityInfo[], requested: string[], reply: string, guest: GuestContext, today: string): Citation[] {
   const citations: Citation[] = noticeCitations(facilities, requested, reply);
-  if (guest.checkIn > today && facilities.some((f) => f.hours.length + f.offerings.length > 0)) {
-    const periods = [...new Set(facilities.flatMap((f) => f.hours.map((h) => `${fmtDate(h.from)}〜${fmtDate(h.to)}`)))];
+  const fields = facilities.flatMap((f) => f.fields);
+  if (guest.checkIn > today && fields.some((x) => x.values.length > 0)) {
+    // 適用期間は最初の項目（営業時間など）から出す。メニューの提供期間まで並べると読みにくいため
+    const periods = [...new Set(facilities.flatMap((f) => (f.fields[0]?.values ?? []).map((v) => `${fmtDate(v.from)}〜${v.to ? fmtDate(v.to) : ""}`)))];
     citations.push({ kind: "stay_date", label: `ご滞在日の情報で回答${periods.length ? `・適用期間 ${periods.join("、")}` : ""}` });
   }
   return citations;

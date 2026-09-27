@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
+import { HANDOFF_LABELS } from "@/lib/handoff-kinds";
 import type { LoadSummary, MyTicket, OpenHandoff, SlotOption } from "@/server/staff-work";
 import {
   acceptHandoffAction,
@@ -22,14 +23,6 @@ const WEIGHT = {
   2: { label: "中", className: "bg-weight-mid text-weight-mid-ink" },
   3: { label: "重", className: "bg-weight-mid-ink text-white" },
 } as const;
-
-const HANDOFF_LABELS: Record<string, string> = {
-  talk_request: "スタッフとの会話を希望",
-  complaint: "クレーム",
-  overdue_order: "オーダー遅延",
-  unanswerable: "AIが回答できない質問",
-  safety: "安全に関わる内容",
-};
 
 const DECLINE_REASONS = ["別件で手が離せない", "在庫・備品が見つからない", "担当エリア外"];
 

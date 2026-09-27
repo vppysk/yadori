@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import type { Member } from "./auth";
-import { query, queryOne, transaction } from "./db";
+import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
 import { getAiAgentMemberId, getHotel, localNow, type Hotel } from "./hotel";
 import { recordWorkEvent } from "./metrics";
 import { pickAssignee, roomFloor } from "./orders";
@@ -229,7 +229,7 @@ export async function acceptHandoff(member: Member, handoffId: string) {
 }
 
 export async function closeHandoff(member: Member, handoffId: string) {
-  await query("update handoffs set status = 'closed', closed_at = now() where id = $1 and hotel_id = $2 and status <> 'closed'", [
+  await query("update handoffs set status = 'closed', closed_at = now() where id = $1 and hotel_id = $2 and status in ('open', 'accepted')", [
     handoffId, member.hotel_id,
   ]);
 }
@@ -265,9 +265,40 @@ export async function markNotificationsRead(memberId: string) {
   await query("update notifications set read_at = now() where member_id = $1 and read_at is null", [memberId]);
 }
 
-// ---------- 引き継ぎ・クレーム履歴（管理PC） ----------
+// ---------- 対応アラート（管理PC） ----------
 
 export type HandoffHistoryRow = {
+  id: string;
+  kind: string;
+  status: string;
+  room_number: string | null;
+  summary: string;
+  accepted_by_name: string | null;
+  created_at: string;
+  failure_stage: string | null;
+  failure_cause: string | null;
+  // 同じ原因のシステムの不具合が、この引き継ぎまでの24時間に何件あったか（この行を含む）
+  same_cause_24h: number | null;
+};
+
+// kinds: 表示する種類（分類で絞り込む。オーダー遅延は含めない）
+export async function listHandoffHistory(hotelId: string, filters: { kinds: string[]; status?: string }, limit = 100): Promise<HandoffHistoryRow[]> {
+  return query<HandoffHistoryRow>(
+    `select h.id, h.kind, h.status, h.room_number, h.summary, m.display_name accepted_by_name, ${ISO_TIMESTAMP("h.created_at")} created_at,
+       h.failure_stage, h.failure_cause,
+       case when h.kind = 'system_error' then (
+         select count(*)::int from handoffs x
+         where x.hotel_id = h.hotel_id and x.kind = 'system_error' and x.failure_cause is not distinct from h.failure_cause
+           and x.created_at between h.created_at - interval '24 hours' and h.created_at
+       ) end same_cause_24h
+     from handoffs h left join members m on m.id = h.accepted_by
+     where h.hotel_id = $1 and h.kind = any($2) and ($3::text is null or h.status = $3)
+     order by h.created_at desc limit $4`,
+    [hotelId, filters.kinds, filters.status ?? null, limit],
+  );
+}
+
+export type HandoffDetail = {
   id: string;
   kind: string;
   status: string;
@@ -278,21 +309,33 @@ export type HandoffHistoryRow = {
   accepted_at: string | null;
   closed_at: string | null;
   write_status: string | null;
-  messages: { role: string; content: string }[];
+  failure_stage: string | null;
+  failure_cause: string | null;
+  failure_detail: string | null;
+  model_id: string | null;
+  conversation_id: string | null;
+  // 会話パネルでスクロールする先。記録がなければ、引き継いだ時点で最後だったメッセージ
+  target_message_id: string | null;
+  messages: { id: string; role: "user" | "assistant" | "staff"; content: string; created_at: string }[];
 };
 
-export async function listHandoffHistory(hotelId: string, filters: { kind?: string; status?: string }, limit = 100): Promise<HandoffHistoryRow[]> {
-  return query<HandoffHistoryRow>(
-    `select h.id, h.kind, h.status, h.room_number, h.summary, m.display_name accepted_by_name, h.created_at, h.accepted_at, h.closed_at,
+// 管理PCの会話パネル: 引き継ぎの中身と、そのゲストとの会話の全体
+export async function getHandoffDetail(hotelId: string, handoffId: string): Promise<HandoffDetail | undefined> {
+  return queryOne<HandoffDetail>(
+    `select h.id, h.kind, h.status, h.room_number, h.summary, m.display_name accepted_by_name,
+       ${ISO_TIMESTAMP("h.created_at")} created_at, ${ISO_TIMESTAMP("h.accepted_at")} accepted_at, ${ISO_TIMESTAMP("h.closed_at")} closed_at,
        (select w.status from integration_writes w where w.handoff_id = h.id order by w.created_at desc limit 1) write_status,
+       h.failure_stage, h.failure_cause, h.failure_detail, h.model_id, h.conversation_id,
+       coalesce(h.message_id, (
+         select x.id from messages x where x.conversation_id = h.conversation_id and x.role in ('user', 'assistant', 'staff') and x.created_at <= h.created_at
+         order by x.created_at desc limit 1
+       )) target_message_id,
        coalesce((
-         select json_agg(json_build_object('role', x.role, 'content', x.content) order by x.created_at)
-         from (select role, content, created_at from messages where conversation_id = h.conversation_id and role in ('user', 'assistant', 'staff')
-               order by created_at desc limit 8) x
+         select json_agg(json_build_object('id', x.id, 'role', x.role, 'content', x.content, 'created_at', ${ISO_TIMESTAMP("x.created_at")}) order by x.created_at)
+         from messages x where x.conversation_id = h.conversation_id and x.role in ('user', 'assistant', 'staff')
        ), '[]') messages
      from handoffs h left join members m on m.id = h.accepted_by
-     where h.hotel_id = $1 and ($2::text is null or h.kind = $2) and ($3::text is null or h.status = $3)
-     order by h.created_at desc limit $4`,
-    [hotelId, filters.kind ?? null, filters.status ?? null, limit],
+     where h.id = $1 and h.hotel_id = $2`,
+    [handoffId, hotelId],
   );
 }

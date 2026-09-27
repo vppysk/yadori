@@ -1,12 +1,12 @@
-import { can, requireMember } from "@/server/auth";
-import { listDocuments } from "@/server/documents";
-import { DocumentsView } from "./documents-view";
+import { redirect } from "next/navigation";
+import { requireMember } from "@/server/auth";
+import { queryOne } from "@/server/db";
 
 export const dynamic = "force-dynamic";
 
-// 館内案内・マニュアル（RAG）の登録（plan 4.1）。日付で変わらない説明文だけを入れる（期間で変わる情報は施設・営業情報へ）
-export default async function DocumentsPage() {
+// 館内案内・マニュアルは「館内の情報」の「全体」欄に統合した
+export default async function DocumentsRedirect() {
   const member = await requireMember("/admin/documents");
-  if (!(await can(member.id, "knowledge.document.register"))) return <main className="p-8 text-sm text-ink-sub">館内案内・マニュアルの権限がありません</main>;
-  return <DocumentsView documents={await listDocuments(member.hotel_id)} />;
+  const global = await queryOne<{ id: string }>("select id from facilities where hotel_id = $1 and kind = 'global'", [member.hotel_id]);
+  redirect(global ? `/admin/knowledge/${global.id}` : "/admin/knowledge");
 }

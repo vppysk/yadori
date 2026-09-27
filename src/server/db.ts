@@ -51,3 +51,6 @@ export function addDays(date: string, days: number): string {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+
+// クライアントに渡す時刻はISO文字列（UTC）に揃える。文字列のまま比較・並べ替えできる
+export const ISO_TIMESTAMP = (column: string) => `to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;

@@ -16,6 +16,7 @@ export default async function HandoffPage({ params }: PageProps<"/staff/handoffs
     [id, member.hotel_id],
   );
   if (!handoff) notFound();
+  const active = handoff.status === "open" || handoff.status === "accepted";
   const messages = handoff.conversation_id
     ? await query<{ id: string; role: string; content: string }>(
         "select id, role, content from messages where conversation_id = $1 and role in ('user', 'assistant', 'staff') order by created_at desc limit 20",
@@ -50,8 +51,11 @@ export default async function HandoffPage({ params }: PageProps<"/staff/handoffs
           ))}
         </ol>
       </main>
-      {handoff.conversation_id && handoff.status !== "closed" && <ReplyForm handoffId={handoff.id} />}
-      {handoff.status !== "closed" && (
+      {handoff.status === "cancelled" && (
+        <p className="bg-surface px-4 py-3 text-center text-sm text-ink-sub">ゲストがスタッフへの依頼を取り消しました。対応は不要です。</p>
+      )}
+      {handoff.conversation_id && active && <ReplyForm handoffId={handoff.id} />}
+      {active && (
         <form action={closeHandoffAction.bind(null, handoff.id)} className="bg-surface px-4 pb-2">
           <button type="submit" className="min-h-11 w-full rounded-lg border border-line-input text-sm">
             対応完了にする

@@ -1,139 +1,134 @@
 import { generateText } from "ai";
 import { extractText, getDocumentProxy } from "unpdf";
-import { z } from "zod";
-import { getVisionModel, llmMode, registerMockToolFixture, VISION_MODEL_ID } from "@/lib/llm/models";
-import { generateStructured } from "@/lib/llm/structured";
+import { getVisionModel, llmMode, VISION_MODEL_ID } from "@/lib/llm/models";
 import type { Member } from "./auth";
-import { parseDateRange, query, queryOne, transaction } from "./db";
+import { query, queryOne } from "./db";
+import { effectivePeriods, type FieldWithValues, type InfoValue, overlaps, parseValidRange, periodText } from "./facility-fields";
 import { getHotel, localNow } from "./hotel";
 import { recordLlmCall } from "./metrics";
 
 // 更新から長く経った項目に「要確認」を出す日数（plan 4.1 品質管理）
 export const STALE_DAYS = 90;
 
-export type FacilityListItem = { id: string; name: string; kind: "facility" | "global"; notices: number; needs_check: boolean };
+export type FacilityListItem = {
+  id: string;
+  name: string;
+  kind: "facility" | "global";
+  category: string | null;
+  notices: number;
+  needs_check: boolean;
+};
 
+// サイドメニュー用。「全体」→ カテゴリ順 → 施設順
 export async function listFacilitiesForAdmin(hotelId: string): Promise<FacilityListItem[]> {
   return query<FacilityListItem>(
-    `select f.id, f.name, f.kind,
+    `select f.id, f.name, f.kind, c.name category,
        (select count(*)::int from special_notices n where n.facility_id = f.id and n.ends_at > now()) notices,
        (exists (select 1 from facility_period_overlaps o where o.facility_id = f.id)
-        or exists (select 1 from facility_hours h where h.facility_id = f.id and h.updated_at < now() - make_interval(days => $2))
-        or exists (select 1 from facility_offerings o where o.facility_id = f.id and o.updated_at < now() - make_interval(days => $2))) needs_check
-     from facilities f where f.hotel_id = $1 order by f.kind = 'global' desc, f.sort`,
+        or exists (select 1 from facility_values v where v.facility_id = f.id and v.status = 'approved'
+                   and v.updated_at < now() - make_interval(days => $2))) needs_check
+     from facilities f left join facility_categories c on c.id = f.category_id
+     where f.hotel_id = $1 order by f.kind = 'global' desc, c.sort, f.sort`,
     [hotelId, STALE_DAYS],
   );
 }
 
-export type HourRow = { label: string; opens: string | null; closes: string | null; closed: boolean; note: string | null; from: string; to: string; draft: boolean };
-export type OfferingRow = { name: string; description: string | null; price_jpy: number | null; from: string; to: string; draft: boolean };
-export type NoticeRow = { id: string; body: string; starts_at: string; ends_at: string; created_by: string | null };
+export type NoticeRow = { id: string; body: string; starts_at: string; ends_at: string; created_by: string | null; overrides: string[] };
 
-export type FacilityEditorData = {
+// 施設の画面に出す値: 期間ごとに、優先される値に覆われた期間を除いたもの（overriddenBy はどの値に譲ったか）
+export type FacilityValueView = InfoValue & { overriddenBy: string[] };
+
+export type FacilityViewData = {
   id: string;
   name: string;
   kind: "facility" | "global";
+  category: string | null;
   updatedAt: string;
-  updatedBy: string | null;
-  hours: HourRow[];
-  offerings: OfferingRow[];
+  fields: FieldWithValues<FacilityValueView>[];
   notices: NoticeRow[];
   timezone: string;
   today: string;
 };
 
-export async function getFacilityEditor(hotelId: string, facilityId: string): Promise<FacilityEditorData | undefined> {
-  const facility = await queryOne<{ id: string; name: string; kind: "facility" | "global"; updated_at: string; updated_by: string | null }>(
-    `select f.id, f.name, f.kind, to_char(f.updated_at at time zone h.timezone, 'MM/DD') updated_at, m.display_name updated_by
-     from facilities f join hotels h on h.id = f.hotel_id left join members m on m.id = f.updated_by
+export async function listCategoryFields(categoryId: string | null) {
+  if (!categoryId) return [];
+  return query<{ id: string; name: string }>(
+    "select i.id, i.name from category_fields cf join info_fields i on i.id = cf.field_id where cf.category_id = $1 order by cf.sort",
+    [categoryId],
+  );
+}
+
+async function loadApprovedValues(facilityId: string) {
+  const rows = await query<{ id: string; field_id: string; title: string | null; body: string; valid: string; priority: number; source_title: string | null }>(
+    `select v.id, v.field_id, v.title, v.body, v.valid, v.priority, s.title source_title
+     from facility_values v left join info_sources s on s.id = v.source_id
+     where v.facility_id = $1 and v.status = 'approved' order by lower(v.valid), v.title`,
+    [facilityId],
+  );
+  return rows.map((v) => ({ fieldId: v.field_id, id: v.id, title: v.title, body: v.body, ...parseValidRange(v.valid), priority: v.priority, sourceTitle: v.source_title }));
+}
+
+const valueLabel = (fieldName: string, v: { title: string | null }) => (v.title ? `${fieldName}「${v.title}」` : fieldName);
+
+export async function getFacilityView(hotelId: string, facilityId: string): Promise<FacilityViewData | undefined> {
+  const facility = await queryOne<{ id: string; name: string; kind: "facility" | "global"; category_id: string | null; category: string | null; updated_at: string }>(
+    `select f.id, f.name, f.kind, f.category_id, c.name category, to_char(f.updated_at at time zone h.timezone, 'MM/DD') updated_at
+     from facilities f join hotels h on h.id = f.hotel_id left join facility_categories c on c.id = f.category_id
      where f.id = $1 and f.hotel_id = $2`,
     [facilityId, hotelId],
   );
   if (!facility) return undefined;
   const hotel = await getHotel(hotelId);
-  const [hours, offerings, notices] = await Promise.all([
-    query<{ label: string; opens: string | null; closes: string | null; closed: boolean; note: string | null; valid: string; status: string }>(
-      `select label, to_char(opens_at, 'HH24:MI') opens, to_char(closes_at, 'HH24:MI') closes, closed, note, valid, status
-       from facility_hours where facility_id = $1 order by lower(valid), label`,
-      [facilityId],
-    ),
-    query<{ name: string; description: string | null; price_jpy: number | null; valid: string; status: string }>(
-      "select name, description, price_jpy, valid, status from facility_offerings where facility_id = $1 order by lower(valid), name",
-      [facilityId],
-    ),
-    query<NoticeRow>(
-      `select n.id, n.body, to_char(n.starts_at at time zone $2, 'YYYY-MM-DD"T"HH24:MI') starts_at,
-         to_char(n.ends_at at time zone $2, 'YYYY-MM-DD"T"HH24:MI') ends_at, m.display_name created_by
-       from special_notices n left join members m on m.id = n.created_by
-       where n.facility_id = $1 and n.ends_at > now() order by n.starts_at`,
-      [facilityId, hotel.timezone],
-    ),
+  const [fields, values, notices] = await Promise.all([
+    listCategoryFields(facility.category_id),
+    loadApprovedValues(facilityId),
+    listNotices(facilityId, hotel.timezone),
   ]);
+  const withFields = fields.map((f) => ({
+    fieldId: f.id,
+    name: f.name,
+    values: effectivePeriods(values.filter((v) => v.fieldId === f.id)).map((v) => ({
+      ...v,
+      overriddenBy: v.overriddenBy.map((w) => `${w.sourceTitle ?? "導入時の設定"}（${periodText(w)}）`),
+    })),
+  }));
   return {
     id: facility.id,
     name: facility.name,
     kind: facility.kind,
+    category: facility.category,
     updatedAt: facility.updated_at,
-    updatedBy: facility.updated_by,
-    hours: hours.map((h) => ({ label: h.label, opens: h.opens, closes: h.closes, closed: h.closed, note: h.note, ...parseDateRange(h.valid), draft: h.status === "draft" })),
-    offerings: offerings.map((o) => ({ name: o.name, description: o.description, price_jpy: o.price_jpy, ...parseDateRange(o.valid), draft: o.status === "draft" })),
-    notices,
+    fields: withFields,
+    notices: notices.map((n) => ({ ...n, overrides: overriddenByNotice(withFields, n.starts_at, n.ends_at) })),
     timezone: hotel.timezone,
     today: localNow(hotel.timezone).date,
   };
 }
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const TIME = /^\d{1,2}:\d{2}$/;
+async function listNotices(facilityId: string, timezone: string) {
+  return query<Omit<NoticeRow, "overrides">>(
+    `select n.id, n.body, to_char(n.starts_at at time zone $2, 'YYYY-MM-DD"T"HH24:MI') starts_at,
+       to_char(n.ends_at at time zone $2, 'YYYY-MM-DD"T"HH24:MI') ends_at, m.display_name created_by
+     from special_notices n left join members m on m.id = n.created_by
+     where n.facility_id = $1 and n.ends_at > now() order by n.starts_at`,
+    [facilityId, timezone],
+  );
+}
 
-export const saveFacilitySchema = z.object({
-  hours: z.array(
-    z.object({
-      label: z.string().trim().min(1).max(40),
-      opens: z.string().regex(TIME).nullable(),
-      closes: z.string().regex(TIME).nullable(),
-      closed: z.boolean(),
-      note: z.string().max(200).nullable(),
-      from: z.string().regex(DATE),
-      to: z.string().regex(DATE),
-    }).refine((h) => h.from <= h.to, "適用期間の開始が終了より後になっています")
-      .refine((h) => h.closed || (h.opens && h.closes), "営業時間を「11:30〜14:00」の形か「休業」で入力してください"),
-  ),
-  offerings: z.array(
-    z.object({
-      name: z.string().trim().min(1).max(80),
-      description: z.string().max(400).nullable(),
-      price_jpy: z.number().int().min(0).nullable(),
-      from: z.string().regex(DATE),
-      to: z.string().regex(DATE),
-    }).refine((o) => o.from <= o.to, "提供期間の開始が終了より後になっています"),
-  ),
-});
+// 特記事項は最優先。期間（日付）が重なる施設の値を「〜より優先します」として見せる
+function overriddenByNotice(fields: { name: string; values: { title: string | null; from: string; to: string | null }[] }[], startsAt: string, endsAt: string): string[] {
+  const span = { from: startsAt.slice(0, 10), to: endsAt.slice(0, 10) };
+  return [...new Set(fields.flatMap((f) => f.values.filter((v) => overlaps(v, span)).map((v) => valueLabel(f.name, v))))];
+}
 
-// 保存で下書きも含めてすべて確定（行ごとの承認操作は設けない。plan 4.1）
-export async function saveFacility(member: Member, facilityId: string, data: z.infer<typeof saveFacilitySchema>) {
-  await transaction(async (client) => {
-    const { rowCount } = await client.query("update facilities set updated_at = now(), updated_by = $2 where id = $1 and hotel_id = $3", [
-      facilityId, member.id, member.hotel_id,
-    ]);
-    if (!rowCount) throw new Error("施設が見つかりません");
-    await client.query("delete from facility_hours where facility_id = $1", [facilityId]);
-    await client.query("delete from facility_offerings where facility_id = $1", [facilityId]);
-    for (const h of data.hours) {
-      await client.query(
-        `insert into facility_hours (facility_id, label, opens_at, closes_at, closed, valid, note, status, updated_by)
-         values ($1, $2, $3, $4, $5, daterange($6::date, $7::date, '[]'), $8, 'published', $9)`,
-        [facilityId, h.label, h.closed ? null : h.opens, h.closed ? null : h.closes, h.closed, h.from, h.to, h.note, member.id],
-      );
-    }
-    for (const o of data.offerings) {
-      await client.query(
-        `insert into facility_offerings (facility_id, name, description, price_jpy, valid, status, updated_by)
-         values ($1, $2, $3, $4, daterange($5::date, $6::date, '[]'), 'published', $7)`,
-        [facilityId, o.name, o.description, o.price_jpy, o.from, o.to, member.id],
-      );
-    }
-  });
+// 特記事項の登録前の確認: 優先して案内することになる値と、期間が重なる他の特記事項
+export async function previewNotice(hotelId: string, facilityId: string, startsAt: string, endsAt: string) {
+  const view = await getFacilityView(hotelId, facilityId);
+  if (!view) throw new Error("施設が見つかりません");
+  return {
+    overrides: overriddenByNotice(view.fields, startsAt, endsAt),
+    overlappingNotices: view.notices.filter((n) => n.starts_at < endsAt && startsAt < n.ends_at).map((n) => n.body),
+  };
 }
 
 // 特記事項: 保存すると即反映し、期限で自動的に案内から外れる
@@ -152,72 +147,6 @@ export async function deleteNotice(member: Member, noticeId: string) {
     "delete from special_notices n using facilities f where n.id = $1 and f.id = n.facility_id and f.hotel_id = $2",
     [noticeId, member.hotel_id],
   );
-}
-
-// ---------- PDF・画像から下書きを作る ----------
-
-const draftSchema = z.object({
-  hours: z.array(
-    z.object({
-      label: z.string().describe("時間帯の名前（ランチ、ディナー、営業など）"),
-      closed: z.boolean().describe("その期間は休業なら true"),
-      opens: z.string().optional().describe("開始時刻 HH:MM（休業なら省略）"),
-      closes: z.string().optional().describe("終了時刻 HH:MM（休業なら省略）"),
-      note: z.string().optional().describe("L.O.など時間の補足"),
-      from: z.string().describe("適用期間の開始日 YYYY-MM-DD"),
-      to: z.string().describe("適用期間の終了日 YYYY-MM-DD"),
-    }),
-  ),
-  offerings: z.array(
-    z.object({
-      name: z.string(),
-      description: z.string().optional(),
-      price_jpy: z.number().int().optional().describe("税込の料金（円）"),
-      from: z.string().describe("提供期間の開始日 YYYY-MM-DD"),
-      to: z.string().describe("提供期間の終了日 YYYY-MM-DD"),
-    }),
-  ),
-});
-
-export type ImportedDraft = { fileName: string; hours: HourRow[]; offerings: OfferingRow[] };
-
-// マスタ編集の入力補助（plan 4.1）: 文書を読み取り、この施設の期間付きの表に入る下書きを作る。保存はしない
-export async function draftFromFile(member: Member, facilityId: string, file: File): Promise<ImportedDraft> {
-  const facility = await queryOne<{ name: string }>("select name from facilities where id = $1 and hotel_id = $2", [facilityId, member.hotel_id]);
-  if (!facility) throw new Error("施設が見つかりません");
-  const hotel = await getHotel(member.hotel_id);
-  const today = localNow(hotel.timezone).date;
-  const text = await readDocument(member.hotel_id, file);
-
-  if (llmMode() === "mock") registerMockToolFixture("draft_facility", MOCK_DRAFT);
-  const { object, usage } = await generateStructured({
-    tier: "medium",
-    schema: draftSchema,
-    name: "draft_facility",
-    description: "お知らせ文書から、施設の期間付きの営業時間とメニューを取り出す",
-    system: [
-      `ホテルの「${facility.name}」について書かれた部分だけを取り出す。他の施設のことは入れない。`,
-      `今日は${today}。年が書かれていない日付は、今日以降で最も近い年にする。終了日が開始日より前なら終了日は翌年。`,
-      "「12/31のみ」のような1日だけの期間は from と to を同じ日にする。",
-      "文書に書かれていないことは入れない。",
-    ].join("\n"),
-    prompt: text,
-  });
-  await recordLlmCall({ hotelId: member.hotel_id, purpose: "import_draft", thinking: false, usage });
-
-  const valid = (d: string) => DATE.test(d);
-  return {
-    fileName: file.name,
-    hours: object.hours
-      .filter((h) => valid(h.from) && valid(h.to))
-      .map((h) => ({
-        label: h.label, closed: h.closed, opens: h.closed ? null : (h.opens ?? null), closes: h.closed ? null : (h.closes ?? null),
-        note: h.note ?? null, from: h.from, to: h.to, draft: true,
-      })),
-    offerings: object.offerings
-      .filter((o) => valid(o.from) && valid(o.to))
-      .map((o) => ({ name: o.name, description: o.description ?? null, price_jpy: o.price_jpy ?? null, from: o.from, to: o.to, draft: true })),
-  };
 }
 
 // PDFは埋め込みの文字を取り出す。画像は画像対応モデルで書き起こす（Nemotronに画像対応モデルがないため）
@@ -257,14 +186,6 @@ export async function readDocument(hotelId: string, file: File): Promise<string>
   return result.text.replace(/^[\s\S]*<\/think>/, "").trim();
 }
 
-const MOCK_DRAFT = {
-  hours: [
-    { label: "ランチ", closed: true, from: "2026-10-15", to: "2027-03-31" },
-    { label: "ディナー", closed: false, opens: "17:30", closes: "21:00", note: "L.O. 20:30", from: "2026-10-15", to: "2027-03-31" },
-  ],
-  offerings: [{ name: "冬の鍋会席", price_jpy: 8800, from: "2026-10-15", to: "2027-03-31" }],
-};
-
 // 管理PCホームの「情報の点検」: 長期間未更新、期間の重なり、有効な特記事項
 export type KnowledgeCheck = { facilityId: string; label: string; kind: "stale" | "overlap" };
 
@@ -277,9 +198,7 @@ export async function inspectKnowledge(hotelId: string) {
        where f.hotel_id = $1 group by f.id, f.name
        union all
        select f.id, f.name || ' ・ ' || (current_date - max(x.updated_at)::date) || '日間更新なし', 'stale'
-       from facilities f join (
-         select facility_id, updated_at from facility_hours union all select facility_id, updated_at from facility_offerings
-       ) x on x.facility_id = f.id
+       from facilities f join facility_values x on x.facility_id = f.id and x.status = 'approved'
        where f.hotel_id = $1 group by f.id, f.name having max(x.updated_at) < now() - make_interval(days => $2)`,
       [hotelId, STALE_DAYS],
     ),

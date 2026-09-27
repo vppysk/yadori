@@ -1,5 +1,6 @@
 import { generateText, tool } from "ai";
 import type { z } from "zod";
+import { InvalidOutputError } from "./errors";
 import { getModel, modelIdFor, type ModelOptions, type ModelTier } from "./models";
 
 type StructuredParams<T extends z.ZodType> = {
@@ -62,5 +63,5 @@ export async function generateStructured<T extends z.ZodType>({
     if (parsed.success) return { object: parsed.data, usage, attempts: attempt };
     lastError = parsed.error;
   }
-  throw new Error(`構造化出力の検証に${maxAttempts}回失敗しました: ${String(lastError)}`);
+  throw new InvalidOutputError(`構造化出力の検証に${maxAttempts}回失敗しました: ${String(lastError)}`);
 }

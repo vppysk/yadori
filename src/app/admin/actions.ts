@@ -2,16 +2,18 @@
 
 import { refresh } from "next/cache";
 import type { z } from "zod";
-import { audit, authorize, PermissionError } from "@/server/auth";
+import { audit, authorize, getCurrentMember, PermissionError } from "@/server/auth";
 import { queryOne, transaction } from "@/server/db";
 import { deleteDocument, insertDocument } from "@/server/documents";
 import {
   addBoost, addSource, boostInputSchema, deleteBoost, deleteSource, runSourceChecks, sourceInputSchema, updateSource,
 } from "@/server/external-sources";
-import { addNotice, deleteNotice, draftFromFile, readDocument, saveFacility, saveFacilitySchema, type ImportedDraft } from "@/server/knowledge-admin";
+import { approveSchema, approveSource, createSource, deleteSource as deleteInfoSource, sourceFacilityIds } from "@/server/info-sources";
+import { addNotice, deleteNotice, previewNotice, readDocument } from "@/server/knowledge-admin";
 import { addSlot, deleteSlot, saveItemSettings, type SaveItemsInput } from "@/server/items";
 import { previewOrder, reassignManually, registerOrder, type OrderPreview } from "@/server/order-board";
 import { answerQuestion, dismissQuestion } from "@/server/questions";
+import { acceptHandoff, closeHandoff, replyToGuest } from "@/server/staff-work";
 
 // 管理PCの操作。ログインと権限（範囲付きなら対象の施設）を確認し、監査ログに残す（plan 4.8）
 
@@ -27,28 +29,55 @@ async function guard<T>(fn: () => Promise<T>): Promise<Result<T>> {
   }
 }
 
-export async function saveFacilityAction(facilityId: string, input: unknown): Promise<Result> {
+// ---------- 資料（館内の情報の出どころ）: 登録 → AIの読み取り → 確認して承認 ----------
+
+export async function createInfoSourceAction(formData: FormData): Promise<Result<string>> {
   return guard(async () => {
-    const member = await authorize("knowledge.facility.edit", facilityId);
-    const parsed = saveFacilitySchema.safeParse(input);
-    if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "入力内容を確認してください");
-    await saveFacility(member, facilityId, parsed.data);
-    await audit(member, "knowledge.facility.edit", "facility.save", { type: "facility", id: facilityId }, {
-      hours: parsed.data.hours.length,
-      offerings: parsed.data.offerings.length,
-    });
+    const member = await authorize("knowledge.facility.edit");
+    const file = formData.get("file");
+    let body = String(formData.get("text") ?? "").trim();
+    let fileName: string | null = null;
+    if (file instanceof File && file.size > 0) {
+      fileName = file.name;
+      body = file.type.startsWith("text/") || /\.(txt|md)$/.test(file.name) ? (await file.text()).normalize("NFKC") : await readDocument(member.hotel_id, file);
+    }
+    const title = String(formData.get("title") ?? "").trim().slice(0, 120) || fileName || "";
+    if (!title) throw new Error("資料の名前を入力してください");
+    if (!body.trim()) throw new Error("文章を入力するか、ファイルを選んでください");
+    const id = await createSource(member, { title, fileName, body: body.slice(0, 50_000) });
+    await audit(member, "knowledge.facility.edit", "source.create", { type: "info_source", id }, { title, file: fileName });
+    return id;
+  });
+}
+
+export async function approveInfoSourceAction(sourceId: string, input: unknown): Promise<Result> {
+  return guard(async () => {
+    const data = parseOrThrow(approveSchema, input);
+    // 承認で置き換わる施設（今の値と、確認後の値の両方）すべてに編集の権限が要る
+    const facilityIds = new Set([...(await sourceFacilityIds(sourceId)), ...data.rows.map((r) => r.facilityId)]);
+    let member = await getCurrentMember();
+    for (const id of facilityIds) member = await authorize("knowledge.facility.edit", id);
+    if (!member) throw new PermissionError("ログインしてください");
+    await approveSource(member, sourceId, data);
+    await audit(member, "knowledge.facility.edit", "source.approve", { type: "info_source", id: sourceId }, { values: data.rows.length, winner: data.winner });
     refresh();
   });
 }
 
-export async function importDraftAction(facilityId: string, formData: FormData): Promise<Result<ImportedDraft>> {
+export async function deleteInfoSourceAction(sourceId: string): Promise<Result> {
   return guard(async () => {
-    const member = await authorize("knowledge.facility.edit", facilityId);
-    const file = formData.get("file");
-    if (!(file instanceof File) || file.size === 0) throw new Error("ファイルを選んでください");
-    const draft = await draftFromFile(member, facilityId, file);
-    await audit(member, "knowledge.facility.edit", "facility.import_draft", { type: "facility", id: facilityId }, { file: file.name });
-    return draft;
+    let member = await authorize("knowledge.facility.edit");
+    for (const id of await sourceFacilityIds(sourceId)) member = await authorize("knowledge.facility.edit", id);
+    await deleteInfoSource(member, sourceId);
+    await audit(member, "knowledge.facility.edit", "source.delete", { type: "info_source", id: sourceId });
+    refresh();
+  });
+}
+
+export async function previewNoticeAction(facilityId: string, startsAt: string, endsAt: string): Promise<Result<{ overrides: string[]; overlappingNotices: string[] }>> {
+  return guard(async () => {
+    const member = await authorize("knowledge.notice.edit", facilityId);
+    return previewNotice(member.hotel_id, facilityId, startsAt, endsAt);
   });
 }
 
@@ -244,6 +273,39 @@ export async function deleteBoostAction(boostId: string): Promise<Result> {
     const member = await authorize("knowledge.source.edit");
     await deleteBoost(member, boostId);
     await audit(member, "knowledge.source.edit", "external_source.boost_delete", { type: "external_source_boost", id: boostId });
+    refresh();
+  });
+}
+
+// ---------- 対応アラート: 会話パネルからゲストに応対する ----------
+
+export async function acceptHandoffAdminAction(handoffId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("handling.handoff.accept");
+    await acceptHandoff(member, handoffId);
+    await audit(member, "handling.handoff.accept", "handoff.accept", { type: "handoff", id: handoffId });
+    refresh();
+  });
+}
+
+// 返信すると、まだ誰も引き受けていない引き継ぎは返信した人が引き受けたことにする
+export async function replyHandoffAdminAction(handoffId: string, text: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("handling.handoff.accept");
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    await acceptHandoff(member, handoffId);
+    await replyToGuest(member, handoffId, trimmed.slice(0, 1000));
+    await audit(member, "handling.handoff.accept", "handoff.reply", { type: "handoff", id: handoffId });
+    refresh();
+  });
+}
+
+export async function closeHandoffAdminAction(handoffId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("handling.handoff.accept");
+    await closeHandoff(member, handoffId);
+    await audit(member, "handling.handoff.accept", "handoff.close", { type: "handoff", id: handoffId });
     refresh();
   });
 }

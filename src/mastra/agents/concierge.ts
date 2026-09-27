@@ -3,6 +3,7 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { createTool } from "@mastra/core/tools";
 import type { ModelMessage } from "ai";
 import { z } from "zod";
+import { InvalidOutputError } from "@/lib/llm/errors";
 import { getModel, llmMode, modelIdFor, registerMockToolFixture, type ModelTier } from "@/lib/llm/models";
 import type { LlmUsage } from "@/lib/llm/structured";
 
@@ -77,5 +78,5 @@ export async function generateAnswer(context: ConciergeContext, messages: ModelM
     const parsed = answerSchema.safeParse(call?.payload?.args);
     if (parsed.success && parsed.data.reply.trim()) return { ...parsed.data, usage };
   }
-  throw new Error("回答を作れませんでした");
+  throw new InvalidOutputError(`${MAX_ATTEMPTS}回試しても answer ツールで回答が返らなかった`);
 }
