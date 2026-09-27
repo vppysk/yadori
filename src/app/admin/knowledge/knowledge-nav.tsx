@@ -21,11 +21,10 @@ export function KnowledgeNav({ facilities, showSources, pendingSources }: { faci
         const href = `/admin/knowledge/${f.id}`;
         return (
           <div key={f.id}>
-            {/* カテゴリが変わるところに見出しを出す（「全体」はカテゴリなし） */}
-            {f.kind === "facility" && f.category !== facilities[i - 1]?.category && (
+            {f.kind === "facility" && facilities[i - 1]?.kind === "global" && (
               <>
                 <div className="mx-1 my-1.5 h-px bg-line" />
-                <div className="px-2.5 pb-1.5 text-xs text-ink-sub">{f.category ?? "未分類"}</div>
+                <div className="px-2.5 pb-1.5 text-xs text-ink-sub">施設</div>
               </>
             )}
             <Link href={href} aria-current={pathname === href ? "page" : undefined} className={itemClass(pathname === href)}>

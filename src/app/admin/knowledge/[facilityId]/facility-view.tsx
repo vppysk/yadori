@@ -14,15 +14,13 @@ export function FacilityView({ data, canNotice, children }: { data: FacilityView
       <div className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-1.5">
           <div className="text-xs text-ink-sub">
-            館内の情報{data.category ? ` ／ ${data.category}` : ""} ／ 最終更新 {data.updatedAt}
+            館内の情報 ／ 最終更新 {data.updatedAt}
           </div>
           <h1 className="text-[22px] font-bold">{isGlobal ? "全体" : data.name}</h1>
         </div>
-        {!isGlobal && (
-          <Link href="/admin/knowledge/sources" className="flex min-h-11 items-center rounded-[10px] border border-line-input bg-surface px-4 text-sm font-bold">
-            資料を追加・更新
-          </Link>
-        )}
+        <Link href="/admin/knowledge/sources" className="flex min-h-11 items-center rounded-[10px] border border-line-input bg-surface px-4 text-sm font-bold">
+          資料を追加・更新
+        </Link>
       </div>
 
       {data.fields.map((f) => (
@@ -39,9 +37,14 @@ export function FacilityView({ data, canNotice, children }: { data: FacilityView
               <span className="text-xs text-ink-sub">{v.sourceTitle ?? "導入時の設定"}</span>
             </div>
           ))}
-          {f.values.length === 0 && <p className="border-t border-line px-4 py-3 text-sm text-ink-sub">資料から読み取った内容はありません（AIは「わからない」としてスタッフに確認します）</p>}
+          {f.values.length === 0 && <p className="border-t border-line px-4 py-3 text-sm text-ink-sub">案内している内容はありません</p>}
         </section>
       ))}
+      {data.fields.length === 0 && (
+        <p className="rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-sub">
+          {isGlobal ? "ホテル全体の案内（チェックイン、駐車場など）は、資料から読み取ると表示されます。" : "資料から読み取った内容はありません。聞かれたときは、AIは推測せずスタッフに確認すると答えます。"}
+        </p>
+      )}
 
       <NoticeSection data={data} canNotice={canNotice} />
       {children}

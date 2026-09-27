@@ -122,8 +122,8 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
           <div className="flex items-center justify-between gap-2 rounded-xl bg-primary-soft py-1 pr-1 pl-3 text-xs text-primary">
             <span>
               {staffRequest.status === "accepted"
-                ? "スタッフが対応しています。こちらの画面でお待ちください。"
-                : "スタッフにおつなぎしています。こちらの画面でお待ちください。"}
+                ? "スタッフが対応しています。メッセージはスタッフに届きます。"
+                : "スタッフにおつなぎしています。メッセージはスタッフに届きます。"}
             </span>
             {staffRequest.status === "open" && (
               <button
@@ -199,7 +199,7 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
           type="text"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="ご質問・ご依頼をどうぞ"
+          placeholder={staffRequest ? "スタッフへのメッセージ" : "ご質問・ご依頼をどうぞ"}
           autoComplete="off"
           className="min-h-11 flex-1 rounded-full border border-line-input bg-canvas px-4 text-[15px] outline-none focus:border-primary"
         />

@@ -12,7 +12,7 @@ function routeSchema(facilityNames: string[]) {
   return z.object({
     facilities: z
       .array(z.enum(facilityNames as [string, ...string[]]))
-      .describe("質問に関係する施設、または施設の分類（食事など。その分類の施設すべてを指す）。言い換えも対応させる（例: プール→屋外プール、お風呂→大浴場、ランチ・ディナー→レストラン）。特定できなければ空"),
+      .describe("質問に関係する施設。言い換えも対応させる（例: プール→屋外プール、お風呂→大浴場、ランチ・ディナー→レストラン）。特定できなければ空"),
     intents: z
       .array(
         z.object({

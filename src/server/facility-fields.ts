@@ -70,6 +70,40 @@ export function effectivePeriods<V extends { title: string | null; priority: num
   return result;
 }
 
+// ---------- 名前の照合（施設・項目） ----------
+
+export const normName = (s: string) => s.normalize("NFKC").replace(/\s+/g, "");
+
+// 完全一致 → 空白・全角半角を無視した一致 → 部分一致（1件に絞れるときだけ）。
+// LLMに照合させず、コードで決める（品目の matchCatalog と同じ考え方）
+export function matchName<T extends { name: string }>(items: T[], name: string): T | undefined {
+  const n = normName(name);
+  if (!n) return undefined;
+  const exact = items.find((x) => x.name === name) ?? items.find((x) => normName(x.name) === n);
+  if (exact) return exact;
+  const partial = items.filter((x) => normName(x.name).includes(n) || n.includes(normName(x.name)));
+  return partial.length === 1 ? partial[0] : undefined;
+}
+
+// 資料の行の施設の指し方: 既存の施設は "id:<施設ID>"、まだない施設は "name:<資料での名前>"
+export const facilityRef = { id: (id: string) => `id:${id}`, name: (name: string) => `name:${name}` };
+export const parseFacilityRef = (ref: string) =>
+  ref.startsWith("id:") ? { kind: "existing" as const, id: ref.slice(3) } : { kind: "new" as const, name: ref.replace(/^name:/, "") };
+
+// 項目名 → 既存の項目ならそのID、なければ "new:<正規化した名前>"（重なりの判定に使う）
+export function fieldKey(fields: { id: string; name: string }[], name: string): string {
+  const n = normName(name);
+  return fields.find((f) => normName(f.name) === n)?.id ?? `new:${n}`;
+}
+
+// 資料の行を重なりの判定に使う形にする（施設は ref、項目は既存のIDか "new:<名前>"）。確認画面と承認で同じものを使う
+export function toCandidates(
+  rows: { key: string; facility: string; field: string; title: string | null; from: string; to: string | null }[],
+  fields: { id: string; name: string }[],
+) {
+  return rows.map((r) => ({ key: r.key, facilityId: r.facility, fieldId: fieldKey(fields, r.field), title: r.title, from: r.from, to: r.to }));
+}
+
 // ---------- 承認時の重なりの確認 ----------
 
 // 新しく承認する値（key で識別）と、承認済みの値・同じ資料の他の値との重なり

@@ -132,6 +132,11 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   const conversationId = await findOrCreateConversation(hotel, guest);
   const history = await listMessages(conversationId, HISTORY_LIMIT);
   const userMessageId = await insertMessage(conversationId, "user", text);
+  // スタッフと話している間（ゲストが求めた引き継ぎが未対応・対応中）は、AIは回答せず発言を記録するだけ。
+  // 対応完了やゲストの取り消しでAIの応対に戻る
+  if (await activeGuestRequest(conversationId)) {
+    return { reply: null, citations: [] as Citation[], tickets: await listConversationTickets(conversationId), waitingForStaff: true };
+  }
   const band = await currentTimeBand(hotel);
   const [catalog, facilityNames] = await Promise.all([getCatalog(hotel.id), listFacilityNames(hotel.id)]);
 

@@ -14,21 +14,20 @@ export type FacilityListItem = {
   id: string;
   name: string;
   kind: "facility" | "global";
-  category: string | null;
   notices: number;
   needs_check: boolean;
 };
 
-// サイドメニュー用。「全体」→ カテゴリ順 → 施設順
+// サイドメニュー用。「全体」→ 施設（登録順）
 export async function listFacilitiesForAdmin(hotelId: string): Promise<FacilityListItem[]> {
   return query<FacilityListItem>(
-    `select f.id, f.name, f.kind, c.name category,
+    `select f.id, f.name, f.kind,
        (select count(*)::int from special_notices n where n.facility_id = f.id and n.ends_at > now()) notices,
        (exists (select 1 from facility_period_overlaps o where o.facility_id = f.id)
         or exists (select 1 from facility_values v where v.facility_id = f.id and v.status = 'approved'
                    and v.updated_at < now() - make_interval(days => $2))) needs_check
-     from facilities f left join facility_categories c on c.id = f.category_id
-     where f.hotel_id = $1 order by f.kind = 'global' desc, c.sort, f.sort`,
+     from facilities f
+     where f.hotel_id = $1 order by f.kind = 'global' desc, f.sort`,
     [hotelId, STALE_DAYS],
   );
 }
@@ -42,7 +41,6 @@ export type FacilityViewData = {
   id: string;
   name: string;
   kind: "facility" | "global";
-  category: string | null;
   updatedAt: string;
   fields: FieldWithValues<FacilityValueView>[];
   notices: NoticeRow[];
@@ -50,53 +48,43 @@ export type FacilityViewData = {
   today: string;
 };
 
-export async function listCategoryFields(categoryId: string | null) {
-  if (!categoryId) return [];
-  return query<{ id: string; name: string }>(
-    "select i.id, i.name from category_fields cf join info_fields i on i.id = cf.field_id where cf.category_id = $1 order by cf.sort",
-    [categoryId],
-  );
-}
-
 async function loadApprovedValues(facilityId: string) {
-  const rows = await query<{ id: string; field_id: string; title: string | null; body: string; valid: string; priority: number; source_title: string | null }>(
-    `select v.id, v.field_id, v.title, v.body, v.valid, v.priority, s.title source_title
-     from facility_values v left join info_sources s on s.id = v.source_id
-     where v.facility_id = $1 and v.status = 'approved' order by lower(v.valid), v.title`,
+  const rows = await query<{ id: string; field_id: string; field: string; title: string | null; body: string; valid: string; priority: number; source_title: string }>(
+    `select v.id, v.field_id, i.name field, v.title, v.body, v.valid, v.priority, s.title source_title
+     from facility_values v join info_fields i on i.id = v.field_id join info_sources s on s.id = v.source_id
+     where v.facility_id = $1 and v.status = 'approved' order by i.sort, lower(v.valid), v.title`,
     [facilityId],
   );
-  return rows.map((v) => ({ fieldId: v.field_id, id: v.id, title: v.title, body: v.body, ...parseValidRange(v.valid), priority: v.priority, sourceTitle: v.source_title }));
+  return rows.map((v) => ({
+    fieldId: v.field_id, field: v.field, id: v.id, title: v.title, body: v.body, ...parseValidRange(v.valid), priority: v.priority, sourceTitle: v.source_title,
+  }));
 }
 
 const valueLabel = (fieldName: string, v: { title: string | null }) => (v.title ? `${fieldName}「${v.title}」` : fieldName);
 
 export async function getFacilityView(hotelId: string, facilityId: string): Promise<FacilityViewData | undefined> {
-  const facility = await queryOne<{ id: string; name: string; kind: "facility" | "global"; category_id: string | null; category: string | null; updated_at: string }>(
-    `select f.id, f.name, f.kind, f.category_id, c.name category, to_char(f.updated_at at time zone h.timezone, 'MM/DD') updated_at
-     from facilities f join hotels h on h.id = f.hotel_id left join facility_categories c on c.id = f.category_id
+  const facility = await queryOne<{ id: string; name: string; kind: "facility" | "global"; updated_at: string }>(
+    `select f.id, f.name, f.kind, to_char(f.updated_at at time zone h.timezone, 'MM/DD') updated_at
+     from facilities f join hotels h on h.id = f.hotel_id
      where f.id = $1 and f.hotel_id = $2`,
     [facilityId, hotelId],
   );
   if (!facility) return undefined;
   const hotel = await getHotel(hotelId);
-  const [fields, values, notices] = await Promise.all([
-    listCategoryFields(facility.category_id),
-    loadApprovedValues(facilityId),
-    listNotices(facilityId, hotel.timezone),
-  ]);
-  const withFields = fields.map((f) => ({
-    fieldId: f.id,
-    name: f.name,
-    values: effectivePeriods(values.filter((v) => v.fieldId === f.id)).map((v) => ({
+  const [values, notices] = await Promise.all([loadApprovedValues(facilityId), listNotices(facilityId, hotel.timezone)]);
+  // 項目は、この施設の承認済みの値に出てくるもの（資料から作られる）
+  const withFields = [...new Set(values.map((v) => v.fieldId))].map((fieldId) => ({
+    fieldId,
+    name: values.find((v) => v.fieldId === fieldId)!.field,
+    values: effectivePeriods(values.filter((v) => v.fieldId === fieldId)).map((v) => ({
       ...v,
-      overriddenBy: v.overriddenBy.map((w) => `${w.sourceTitle ?? "導入時の設定"}（${periodText(w)}）`),
+      overriddenBy: v.overriddenBy.map((w) => `${w.sourceTitle}（${periodText(w)}）`),
     })),
   }));
   return {
     id: facility.id,
     name: facility.name,
     kind: facility.kind,
-    category: facility.category,
     updatedAt: facility.updated_at,
     fields: withFields,
     notices: notices.map((n) => ({ ...n, overrides: overriddenByNotice(withFields, n.starts_at, n.ends_at) })),

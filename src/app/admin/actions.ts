@@ -2,12 +2,13 @@
 
 import { refresh } from "next/cache";
 import type { z } from "zod";
-import { audit, authorize, getCurrentMember, PermissionError } from "@/server/auth";
+import { audit, authorize, PermissionError } from "@/server/auth";
 import { queryOne, transaction } from "@/server/db";
 import { deleteDocument, insertDocument } from "@/server/documents";
 import {
   addBoost, addSource, boostInputSchema, deleteBoost, deleteSource, runSourceChecks, sourceInputSchema, updateSource,
 } from "@/server/external-sources";
+import { parseFacilityRef } from "@/server/facility-fields";
 import { approveSchema, approveSource, createSource, deleteSource as deleteInfoSource, sourceFacilityIds } from "@/server/info-sources";
 import { addNotice, deleteNotice, previewNotice, readDocument } from "@/server/knowledge-admin";
 import { addSlot, deleteSlot, saveItemSettings, type SaveItemsInput } from "@/server/items";
@@ -53,13 +54,16 @@ export async function createInfoSourceAction(formData: FormData): Promise<Result
 export async function approveInfoSourceAction(sourceId: string, input: unknown): Promise<Result> {
   return guard(async () => {
     const data = parseOrThrow(approveSchema, input);
-    // 承認で置き換わる施設（今の値と、確認後の値の両方）すべてに編集の権限が要る
-    const facilityIds = new Set([...(await sourceFacilityIds(sourceId)), ...data.rows.map((r) => r.facilityId)]);
-    let member = await getCurrentMember();
+    // 承認で置き換わる既存の施設（今の値と、確認後の値の両方）すべてに編集の権限が要る。新しい施設を作るだけなら範囲の確認は不要
+    const refs = data.rows.map((r) => parseFacilityRef(r.facility));
+    const facilityIds = new Set([...(await sourceFacilityIds(sourceId)), ...refs.flatMap((r) => (r.kind === "existing" ? [r.id] : []))]);
+    let member = await authorize("knowledge.facility.edit");
     for (const id of facilityIds) member = await authorize("knowledge.facility.edit", id);
-    if (!member) throw new PermissionError("ログインしてください");
-    await approveSource(member, sourceId, data);
-    await audit(member, "knowledge.facility.edit", "source.approve", { type: "info_source", id: sourceId }, { values: data.rows.length, winner: data.winner });
+    const result = await approveSource(member, sourceId, data);
+    const created = refs.filter((r) => r.kind === "new").map((r) => r.name);
+    await audit(member, "knowledge.facility.edit", "source.approve", { type: "info_source", id: sourceId }, {
+      values: data.rows.length, winner: data.winner, newFacilities: [...new Set(created)], facilities: result.facilityIds,
+    });
     refresh();
   });
 }

@@ -3,12 +3,18 @@ import { llmMode, registerMockToolFixture } from "@/lib/llm/models";
 import { generateStructured } from "@/lib/llm/structured";
 import type { Member } from "./auth";
 import { query, queryOne, transaction } from "./db";
-import { assignPriorities, type Conflict, findConflicts, parseValidRange } from "./facility-fields";
+import {
+  assignPriorities, type Conflict, facilityRef, fieldKey, findConflicts, matchName, normName, parseFacilityRef, parseValidRange, toCandidates,
+} from "./facility-fields";
 import { getHotel, localNow } from "./hotel";
 import { recordLlmCall } from "./metrics";
 
-// 資料（docs/002_facility_master_design.md）: スタッフは資料を入れるだけ。AIが施設・項目ごとの値に読み取り、
-// スタッフが内容と期間の重なり（どちらを優先するか）を確認して承認する。回答に使うのは承認済みの値だけ
+// 資料（docs/002_facility_master_design.md）: スタッフは資料を入れるだけ。AIが施設・項目・内容・期間を読み取り、
+// スタッフが「新しい施設・項目か、既存と同じか」と内容・期間の重なりを確認して承認する。施設も項目も事前には決めない。
+// 回答に使うのは承認済みの値だけ
+
+// 「全体」欄（施設に属さないホテル全体の案内。チェックイン、駐車場など）を資料の中で指す名前
+export const GLOBAL_NAME = "全体";
 
 export type SourceListItem = { id: string; title: string; file_name: string | null; status: "pending" | "approved"; created_at: string; created_by: string | null; facilities: string[] };
 
@@ -22,169 +28,179 @@ export async function listSources(hotelId: string): Promise<SourceListItem[]> {
   );
 }
 
-type Structure = { facilities: { id: string; name: string; fields: { id: string; name: string }[] }[] };
+type Named = { id: string; name: string };
+type FacilityName = Named & { kind: "facility" | "global" };
 
-async function loadStructure(hotelId: string): Promise<Structure> {
-  const rows = await query<{ facility_id: string; facility: string; field_id: string | null; field: string | null }>(
-    `select f.id facility_id, f.name facility, i.id field_id, i.name field
-     from facilities f
-     left join facility_categories c on c.id = f.category_id
-     left join category_fields cf on cf.category_id = c.id
-     left join info_fields i on i.id = cf.field_id
-     where f.hotel_id = $1 and f.kind = 'facility' order by c.sort, f.sort, cf.sort`,
-    [hotelId],
-  );
-  const facilities: Structure["facilities"] = [];
-  for (const r of rows) {
-    let f = facilities.find((x) => x.id === r.facility_id);
-    if (!f) facilities.push((f = { id: r.facility_id, name: r.facility, fields: [] }));
-    if (r.field_id && r.field) f.fields.push({ id: r.field_id, name: r.field });
-  }
-  return { facilities };
+async function loadNames(hotelId: string): Promise<{ facilities: FacilityName[]; fields: Named[] }> {
+  const [facilities, fields] = await Promise.all([
+    query<FacilityName>("select id, name, kind from facilities where hotel_id = $1 order by kind = 'global' desc, sort", [hotelId]),
+    query<Named>("select id, name from info_fields where hotel_id = $1 order by sort, name", [hotelId]),
+  ]);
+  return { facilities, fields };
 }
 
 // ---------- 読み取り ----------
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+const listSchema = z.object({
+  facilities: z.array(z.string()).describe("資料に出てくる施設の名前（資料の表記のまま）"),
+});
+
 // 施設ごとに読み取る。資料全体から全施設を一度に読み取らせると、資料の主な施設（レストランなど）に引っ張られ、
 // ほかの施設の記述（「大浴場は6:00〜24:00」）を落とすことがあった（2026-09-28 検証）。
 // ほかの施設の時間を取り違えることもあったため、この施設について書かれた文（quotes）を先に抜き出させ、
 // 内容の時刻・金額がその中にない件は採用しない（grounded）。
-// 項目名は選択肢（enum）にしない。短く書かれると検証で弾かれ、再試行で内容ごと落とすことがあるため。照合はコード側（matchName）
+// 項目名は選択肢（enum）にしない。短く書かれると検証で弾かれ、再試行で内容ごと落とすことがあるため
 const extractSchema = z.object({
   quotes: z.array(z.string()).describe("まず、この施設について書かれた文・表の行を、資料からそのまま抜き出す"),
   items: z.array(
     z.object({
-      field: z.string().describe("項目名（この施設で使う項目の名前）"),
-      title: z.string().optional().describe("時間帯・メニュー名など、同じ項目の中で区別する名前（ランチ、ディナー、冬の鍋会席、お子様メニューなど）。メニュー・プランでは必ず付ける。営業時間が1つしかなければ省略"),
+      field: z.string().describe("項目名（営業時間、メニュー・プラン、予約方法、利用条件、貸し出し品など。既存の項目名に同じものがあればそれを使う）"),
+      title: z.string().optional().describe("同じ項目の中で区別する名前（ランチ、ディナー、冬の鍋会席、お子様メニューなど）。1つしかなければ省略"),
       body: z.string().describe("内容を短く。時間なら「11:30〜14:00（L.O. 13:30）」、休みなら「休業」、料金なら「大人 8,800円、子ども（小学生）4,400円」のように書く"),
       from: z.string().describe("適用期間の開始日 YYYY-MM-DD"),
       to: z.string().optional().describe("適用期間の終了日 YYYY-MM-DD。書かれていなければ省略（終了日なし）"),
     }),
   ),
-  unplaced: z.array(z.string()).describe("この施設についてゲストへの案内に使えそうだが、項目のどれにも当てはまらない内容（予約方法、貸し出し品、一時的なお知らせなど）"),
 });
 
-const norm = (s: string) => s.normalize("NFKC").replace(/\s+/g, "");
-
-// 内容に出てくる時刻・金額・日付の数字が、この施設について抜き出した文にすべてあるか（ほかの施設の取り違えを防ぐ）
-function grounded(body: string, quotes: string[]): boolean {
-  const text = norm(quotes.join(" ")).replace(/,/g, "");
-  const tokens = norm(body).replace(/,/g, "").match(/\d{1,2}:\d{2}|\d{3,}/g) ?? [];
+// 読み取った1件が、この施設について抜き出した文（資料に実際にある文だけ）に根拠があるか。ほかの施設の取り違えを防ぐ。
+// 時刻・金額の数字、タイトル（ランチなど）、「休」がすべて抜き出した文にあること
+// （施設ごとに読ませると「大浴場は通常どおり営業」の資料で、大浴場に「ランチ 休業」を入れることがあった）
+function grounded(item: { title?: string; body: string }, quotes: string[], doc: string): boolean {
+  const source = normName(doc);
+  const text = normName(quotes.filter((q) => source.includes(normName(q).slice(0, 12))).join(" ")).replace(/,/g, "");
+  const body = normName(item.body).replace(/,/g, "");
+  const tokens = [...(body.match(/\d{1,2}:\d{2}|\d{3,}/g) ?? []), ...(body.includes("休") ? ["休"] : []), ...(item.title ? [normName(item.title)] : [])];
   return tokens.every((t) => text.includes(t));
 }
 
-// 名前の照合: 完全一致 → 空白・全角半角を無視した一致 → 部分一致（1件に絞れるときだけ）
-function matchName<T extends { name: string }>(items: T[], name: string): T | undefined {
-  const n = norm(name);
-  const exact = items.find((x) => x.name === name) ?? items.find((x) => norm(x.name) === n);
-  if (exact) return exact;
-  const partial = items.filter((x) => norm(x.name).includes(n) || n.includes(norm(x.name)));
-  return partial.length === 1 ? partial[0] : undefined;
-}
+// 読み取った1件。facility は "id:<施設ID>"（登録済み）か "name:<資料での名前>"（新しい施設の候補）
+export type DraftRow = { key: string; facility: string; field: string; title: string | null; body: string; from: string; to: string | null };
 
-// 資料に出てくる施設: 施設名か、その語の一部（「大浴場 せせらぎ」なら「大浴場」「せせらぎ」）が本文にあるもの。
-// 1つも見つからなければ（名前を書かない資料）、全施設を対象にする
-const mentions = (facility: { name: string }, text: string) =>
-  [facility.name, ...facility.name.split(/[\s　・]+/)].some((w) => norm(w).length >= 2 && norm(text).includes(norm(w)));
-
-function mentionedFacilities<T extends { name: string }>(facilities: T[], text: string): T[] {
-  const found = facilities.filter((f) => mentions(f, text));
-  return found.length ? found : facilities;
-}
-
-type ExtractedRow = { facilityId: string; fieldId: string; title: string | null; body: string; from: string; to: string | null };
-
-async function extract(member: Member, title: string, body: string): Promise<{ rows: ExtractedRow[]; unplaced: { facility: string | null; text: string }[] }> {
-  const structure = await loadStructure(member.hotel_id);
-  const all = structure.facilities.filter((f) => f.fields.length > 0);
-  if (all.length === 0) throw new Error("館内の情報の項目が設定されていません");
+async function extract(member: Member, title: string, body: string): Promise<DraftRow[]> {
+  const { facilities, fields } = await loadNames(member.hotel_id);
   const hotel = await getHotel(member.hotel_id);
   const today = localNow(hotel.timezone).date;
-  // 承認済みのタイトル。同じものを指すときに同じタイトルを使わせ、期間の重なりを見逃さないようにする
-  const titles = await query<{ facility_id: string; field: string; titles: string[] }>(
-    `select v.facility_id, i.name field, array_agg(distinct v.title) titles
-     from facility_values v join facilities f on f.id = v.facility_id join info_fields i on i.id = v.field_id
-     where f.hotel_id = $1 and v.status = 'approved' and v.title is not null group by v.facility_id, i.name`,
-    [member.hotel_id],
-  );
-  if (llmMode() === "mock") registerMockToolFixture("read_facility_info", mockExtract);
+  const doc = `【資料】${title}\n${body.slice(0, 20_000)}`;
+  const global = facilities.find((f) => f.kind === "global");
+  const known = facilities.filter((f) => f.kind === "facility");
+  if (llmMode() === "mock") {
+    registerMockToolFixture("list_facilities", mockList);
+    registerMockToolFixture("read_facility_info", mockExtract);
+  }
 
-  const rows: ExtractedRow[] = [];
-  const unplaced: { facility: string | null; text: string }[] = [];
+  // 1. 資料に出てくる施設を洗い出し、登録済みの施設と照合する（照合はコード）
+  const listed = await generateStructured({
+    tier: "medium",
+    schema: listSchema,
+    name: "list_facilities",
+    description: "ホテルの資料に出てくる施設を洗い出す",
+    system: [
+      "ホテルの資料に出てくる、ゲストが利用する館内の施設（レストラン、大浴場、プール、スパなど）の名前を挙げる。",
+      `施設に属さないホテル全体の案内（チェックイン・チェックアウト、駐車場、Wi-Fi など）があれば「${GLOBAL_NAME}」も挙げる。`,
+      ...(known.length ? [`登録済みの施設: ${known.map((f) => f.name).join("、")}（同じ施設ならこの名前で挙げる）`] : []),
+      "ゲストへの案内（時間・料金・利用方法など）が書かれていない施設は挙げない。",
+    ].join("\n"),
+    prompt: doc,
+  });
+  await recordLlmCall({ hotelId: member.hotel_id, purpose: "source_extract", thinking: false, usage: listed.usage });
+  const targets = new Map<string, { ref: string; name: string; id: string | null }>();
+  // 「全体」（チェックイン・駐車場など）は挙げられないことがあったため、毎回読み取りの対象にする
+  if (global) targets.set(facilityRef.id(global.id), { ref: facilityRef.id(global.id), name: global.name, id: global.id });
+  for (const name of listed.object.facilities.map((n) => n.trim()).filter(Boolean)) {
+    const existing = normName(name) === normName(GLOBAL_NAME) ? global : matchName(known, name);
+    const target = existing ? { ref: facilityRef.id(existing.id), name: existing.name, id: existing.id } : { ref: facilityRef.name(name), name, id: null };
+    targets.set(target.ref, target);
+  }
+
+  // 2. 施設ごとに並行して読み取る
   const results = await Promise.all(
-    mentionedFacilities(all, body).map(async (facility) => {
-      const used = titles.filter((t) => t.facility_id === facility.id);
+    [...targets.values()].map(async (target) => {
+      const isGlobal = target.id !== null && target.id === global?.id;
+      const others = [...targets.values()].filter((t) => t.ref !== target.ref).map((t) => t.name);
+      const titles = target.id
+        ? await query<{ field: string; titles: string[] }>(
+            `select i.name field, array_agg(distinct v.title) titles from facility_values v join info_fields i on i.id = v.field_id
+             where v.facility_id = $1 and v.title is not null group by i.name`,
+            [target.id],
+          )
+        : [];
       const { object, usage } = await generateStructured({
         tier: "medium",
         schema: extractSchema,
         name: "read_facility_info",
-        description: `ホテルの資料から「${facility.name}」の期間付きの案内を取り出す`,
+        description: `ホテルの資料から「${target.name}」の期間付きの案内を取り出す`,
         system: [
-          `ホテルの資料から「${facility.name}」について書かれた部分だけを取り出す。書かれていなければ、どちらも空の配列にする。`,
-          `ほかの施設（${all.filter((f) => f.id !== facility.id).map((f) => f.name).join("、")}）の時間・メニューを「${facility.name}」のものとして入れない。`,
-          "「通常どおり営業」「変更なし」のように、時間も休みも書かれていない記述は取り出さない。「休業」は内容なので必ず取り出す（例: 「ランチ 休業」→ タイトル ランチ、内容 休業）。",
-          `この施設で使う項目: ${facility.fields.map((x) => x.name).join("、")}`,
-          ...(used.length ? ["すでに使っているタイトル（同じものを指すときは同じタイトルにする）:", ...used.map((t) => `・${t.field}: ${t.titles.join("、")}`)] : []),
+          isGlobal
+            ? "ホテルの資料から、特定の施設に属さないホテル全体の案内（チェックイン・チェックアウト、駐車場、Wi-Fi など）だけを取り出す。書かれていなければ、どちらも空の配列にする。"
+            : `ホテルの資料から「${target.name}」について書かれた部分だけを取り出す。書かれていなければ、どちらも空の配列にする。`,
+          ...(others.length ? [`ほかの施設（${others.join("、")}）のことを「${target.name}」のものとして入れない。`] : []),
+          ...(fields.length ? [`既存の項目名: ${fields.map((f) => f.name).join("、")}（同じものを指すときはこの名前にする。なければ内容に合う短い項目名を付ける）`] : []),
+          ...(titles.length ? ["すでに使っているタイトル（同じものを指すときは同じタイトルにする）:", ...titles.map((t) => `・${t.field}: ${t.titles.join("、")}`)] : []),
           `今日は${today}。資料の日付に年がなければ、今日以降で最も近い年にする。終了日が開始日より前なら終了日は翌年。`,
           "適用期間の開始日が書かれていない通常の案内は、今日を開始日にする。終了日が書かれていなければ to を省略する。「12/31のみ」は from と to を同じ日にする。",
-          "時間帯やメニューごとに1件にする（ランチとディナーは別の件）。料金が複数あれば body に並べて書く。メニューや料金は「メニュー・プラン」に入れる。",
-          "項目に当てはまらないが案内に使える内容は、捨てずに unplaced に入れる。挨拶・署名など案内に使わない文は入れない。資料に書かれていないことは入れない。",
+          "1件には1つの内容だけを書く。時間帯やメニューごとに1件にし（ランチとディナーは別の件）、営業時間と料金のように種類の違う内容は別の項目の件にする。同じものの料金が複数あれば body に並べて書く。",
+          "「通常どおり営業」「変更なし」のように、時間も休みも書かれていない記述は取り出さない。「休業」は内容なので必ず取り出す（例: 「ランチ 休業」→ タイトル ランチ、内容 休業）。",
+          "挨拶・署名など案内に使わない文は入れない。資料に書かれていないことは入れない。",
         ].join("\n"),
-        prompt: `【資料】${title}\n${body.slice(0, 20_000)}`,
+        prompt: doc,
       });
       await recordLlmCall({ hotelId: member.hotel_id, purpose: "source_extract", thinking: false, usage });
-      return { facility, object };
+      return { target, object };
     }),
   );
-  for (const { facility, object } of results) {
-    // ほかの施設の名前だけが出てくる文は、その施設の読み取りに任せる（同じ文が二重に出ないように）
-    const others = results.map((r) => r.facility).filter((f) => f.id !== facility.id);
-    const aboutOther = (text: string) => !mentions(facility, text) && others.some((f) => mentions(f, text));
-    unplaced.push(...object.unplaced.filter((t) => t.trim() && !aboutOther(t)).map((text) => ({ facility: facility.name, text })));
+
+  // 既存の値のタイトルが1種類だけの項目（屋外プールの営業時間「営業」など）は、タイトルのない新しい値にも同じタイトルを付ける。
+  // タイトルが違うと期間の重なりを見つけられないため
+  const singleTitles = await query<{ facility_id: string; field: string; title: string }>(
+    `select v.facility_id, i.name field, min(v.title) title from facility_values v join info_fields i on i.id = v.field_id
+     join facilities f on f.id = v.facility_id where f.hotel_id = $1
+     group by v.facility_id, i.name having count(distinct coalesce(v.title, '')) = 1 and min(v.title) is not null`,
+    [member.hotel_id],
+  );
+  // 「全体」は毎回読むため、ほかの施設の件（冬季のレストランの営業時間など）を重ねて拾うことがある。
+  // ほかの施設の件と同じタイトル・内容のものは「全体」から外す
+  const namedItems = results.filter((r) => r.target.id !== global?.id).flatMap((r) => r.object.items);
+  const duplicatesOther = (item: { title?: string; body: string }) =>
+    namedItems.some((o) => (item.title && o.title && normName(o.title) === normName(item.title)) || normName(o.body) === normName(item.body));
+
+  const rows: DraftRow[] = [];
+  for (const { target, object } of results) {
     for (const item of object.items) {
-      if (!grounded(item.body, object.quotes)) {
-        // 抜き出した文にない時刻・金額は、ほかの施設の記述を取り違えた可能性が高いため捨てる
-        console.warn("[info-sources] 根拠のない読み取りを除外", { facility: facility.name, item, quotes: object.quotes });
-        continue;
-      }
-      const field = matchName(facility.fields, item.field);
+      if (target.id !== null && target.id === global?.id && duplicatesOther(item)) continue;
+      // 「通常どおり営業」「変更なし」だけの内容は案内に使わない（指示しても取り出すことがあるため、コードで外す）
+      if (/^(通常(どおり|通り)|変更(なし|ありません))/.test(normName(item.body))) continue;
       const to = item.to && DATE.test(item.to) ? item.to : null;
-      if (!field || !DATE.test(item.from) || (to && to < item.from)) {
-        unplaced.push({ facility: facility.name, text: `${item.field}${item.title ? `「${item.title}」` : ""}: ${item.body}` });
+      if (!item.field.trim() || !item.body.trim() || !DATE.test(item.from) || (to && to < item.from)) continue;
+      if (!grounded(item, object.quotes, body)) {
+        // 抜き出した文にない時刻・金額は、ほかの施設の記述を取り違えた可能性が高いため捨てる
+        console.warn("[info-sources] 根拠のない読み取りを除外", { facility: target.name, item, quotes: object.quotes });
         continue;
       }
-      rows.push({ facilityId: facility.id, fieldId: field.id, title: item.title?.trim() || null, body: item.body.trim(), from: item.from, to });
+      // 項目名は既存の名前に寄せる（「営業」→「営業時間」のように1件に絞れるときだけ）。新しい名前は確認画面でスタッフが確かめる
+      const field = matchName(fields, item.field.trim())?.name ?? item.field.trim();
+      const inherited = !item.title?.trim() && target.id ? singleTitles.find((t) => t.facility_id === target.id && normName(t.field) === normName(field))?.title : undefined;
+      rows.push({ key: `r${rows.length + 1}`, facility: target.ref, field, title: item.title?.trim() || inherited || null, body: item.body.trim(), from: item.from, to });
     }
   }
-  return { rows, unplaced };
+  return rows;
 }
 
-// 資料を登録して読み取る。読み取った値は確認待ちとして入れる
+// 資料を登録して読み取る。読み取り結果は承認まで資料の draft に持つ（新しい施設・項目は承認まで作らない）
 export async function createSource(member: Member, input: { title: string; fileName: string | null; body: string }): Promise<string> {
-  const { rows, unplaced } = await extract(member, input.title, input.body);
-  return transaction(async (client) => {
-    const { rows: created } = await client.query<{ id: string }>(
-      "insert into info_sources (hotel_id, title, file_name, body, unplaced, created_by) values ($1, $2, $3, $4, $5, $6) returning id",
-      [member.hotel_id, input.title, input.fileName, input.body, JSON.stringify(unplaced), member.id],
-    );
-    const id = created[0].id;
-    for (const r of rows) {
-      await client.query(
-        `insert into facility_values (facility_id, field_id, source_id, title, body, valid, status, updated_by)
-         values ($1, $2, $3, $4, $5, daterange($6::date, $7::date, '[]'), 'pending', $8)`,
-        [r.facilityId, r.fieldId, id, r.title, r.body, r.from, r.to, member.id],
-      );
-    }
-    return id;
-  });
+  const rows = await extract(member, input.title, input.body);
+  const created = await queryOne<{ id: string }>(
+    "insert into info_sources (hotel_id, title, file_name, body, draft, created_by) values ($1, $2, $3, $4, $5, $6) returning id",
+    [member.hotel_id, input.title, input.fileName, input.body, JSON.stringify({ rows }), member.id],
+  );
+  return created!.id;
 }
 
 // ---------- 確認 ----------
 
-export type ReviewRow = { key: string; facilityId: string; fieldId: string; title: string | null; body: string; from: string; to: string | null };
-export type ExistingValue = ReviewRow & { priority: number; sourceTitle: string };
+export type ExistingValue = { key: string; facilityId: string; fieldId: string; title: string | null; body: string; from: string; to: string | null; priority: number; sourceTitle: string };
 
 export type SourceReview = {
   id: string;
@@ -192,44 +208,50 @@ export type SourceReview = {
   fileName: string | null;
   body: string;
   status: "pending" | "approved";
-  unplaced: { facility: string | null; text: string }[];
-  structure: Structure;
-  rows: ReviewRow[];
-  // 同じ施設で承認済みの、他の資料の値（期間の重なりの確認に使う）
+  facilities: FacilityName[];
+  fields: Named[];
+  rows: DraftRow[];
+  // ほかの資料の承認済みの値（期間の重なりの確認に使う。facilityId は "id:<施設ID>"）
   existing: ExistingValue[];
 };
 
 export async function getSourceReview(hotelId: string, sourceId: string): Promise<SourceReview | undefined> {
-  const source = await queryOne<{ id: string; title: string; file_name: string | null; body: string; status: "pending" | "approved"; unplaced: SourceReview["unplaced"] }>(
-    "select id, title, file_name, body, status, unplaced from info_sources where id = $1 and hotel_id = $2",
+  const source = await queryOne<{ id: string; title: string; file_name: string | null; body: string; status: "pending" | "approved"; draft: { rows: DraftRow[] } | null }>(
+    "select id, title, file_name, body, status, draft from info_sources where id = $1 and hotel_id = $2",
     [sourceId, hotelId],
   );
   if (!source) return undefined;
-  const [structure, values, existing] = await Promise.all([
-    loadStructure(hotelId),
-    query<{ id: string; facility_id: string; field_id: string; title: string | null; body: string; valid: string }>(
-      "select id, facility_id, field_id, title, body, valid from facility_values where source_id = $1 order by facility_id, field_id, lower(valid)",
+  const [names, approved, existing] = await Promise.all([
+    loadNames(hotelId),
+    query<{ id: string; facility_id: string; field: string; title: string | null; body: string; valid: string }>(
+      `select v.id, v.facility_id, i.name field, v.title, v.body, v.valid from facility_values v join info_fields i on i.id = v.field_id
+       where v.source_id = $1 order by lower(v.valid)`,
       [sourceId],
     ),
-    query<{ id: string; facility_id: string; field_id: string; title: string | null; body: string; valid: string; priority: number; source_title: string | null }>(
+    query<{ id: string; facility_id: string; field_id: string; title: string | null; body: string; valid: string; priority: number; source_title: string }>(
       `select v.id, v.facility_id, v.field_id, v.title, v.body, v.valid, v.priority, s.title source_title
-       from facility_values v join facilities f on f.id = v.facility_id left join info_sources s on s.id = v.source_id
-       where f.hotel_id = $1 and v.status = 'approved' and v.source_id is distinct from $2`,
+       from facility_values v join info_sources s on s.id = v.source_id
+       where s.hotel_id = $1 and v.source_id <> $2`,
       [hotelId, sourceId],
     ),
   ]);
+  // 確認待ちなら読み取り結果、承認済みなら今の値を開き直す
+  const rows: DraftRow[] =
+    source.status === "pending" && source.draft
+      ? source.draft.rows
+      : approved.map((v) => ({ key: v.id, facility: facilityRef.id(v.facility_id), field: v.field, title: v.title, body: v.body, ...parseValidRange(v.valid) }));
   return {
     id: source.id,
     title: source.title,
     fileName: source.file_name,
     body: source.body,
     status: source.status,
-    unplaced: source.unplaced,
-    structure,
-    rows: values.map((v) => ({ key: v.id, facilityId: v.facility_id, fieldId: v.field_id, title: v.title, body: v.body, ...parseValidRange(v.valid) })),
+    facilities: names.facilities,
+    fields: names.fields,
+    rows,
     existing: existing.map((v) => ({
-      key: v.id, facilityId: v.facility_id, fieldId: v.field_id, title: v.title, body: v.body, ...parseValidRange(v.valid),
-      priority: v.priority, sourceTitle: v.source_title ?? "導入時の設定",
+      key: v.id, facilityId: facilityRef.id(v.facility_id), fieldId: v.field_id, title: v.title, body: v.body, ...parseValidRange(v.valid),
+      priority: v.priority, sourceTitle: v.source_title,
     })),
   };
 }
@@ -240,10 +262,10 @@ export const approveSchema = z.object({
   rows: z.array(
     z.object({
       key: z.string().min(1),
-      facilityId: z.string().min(1),
-      fieldId: z.string().min(1),
+      facility: z.string().min(1),
+      field: z.string().trim().min(1, "項目名を入力してください").max(40),
       title: z.string().trim().max(80).nullable(),
-      body: z.string().trim().max(1000),
+      body: z.string().trim().min(1, "内容が空の行があります").max(1000),
       from: z.string().regex(DATE),
       to: z.string().regex(DATE).nullable(),
     }).refine((r) => !r.to || r.from <= r.to, "期間の開始が終了より後になっています"),
@@ -252,39 +274,76 @@ export const approveSchema = z.object({
   winner: z.record(z.string(), z.string()),
 });
 
-// 確認した内容で置き換えて承認する。重なりはすべて選ばれている必要がある。
-// 他の資料の値の優先度は変えず、その間に入るように新しい値の優先度を決める
-export async function approveSource(member: Member, sourceId: string, input: z.infer<typeof approveSchema>): Promise<{ facilities: string[] }> {
+// 確認した内容で承認する。新しい施設・項目名を作り、この資料の値を置き換える。
+// 重なりはすべて選ばれている必要がある。他の資料の値の優先度は変えず、その間に入るように新しい値の優先度を決める
+export async function approveSource(member: Member, sourceId: string, input: z.infer<typeof approveSchema>): Promise<{ facilityIds: string[] }> {
   const review = await getSourceReview(member.hotel_id, sourceId);
   if (!review) throw new Error("資料が見つかりません");
-  for (const r of input.rows) {
-    const facility = review.structure.facilities.find((f) => f.id === r.facilityId);
-    if (!facility?.fields.some((x) => x.id === r.fieldId)) throw new Error("施設で使わない項目が含まれています");
-  }
   const rows = input.rows.map((r) => ({ ...r, title: r.title || null }));
-  const conflicts: Conflict[] = findConflicts(rows, review.existing);
+  for (const r of rows) {
+    const ref = parseFacilityRef(r.facility);
+    if (ref.kind === "existing" && !review.facilities.some((f) => f.id === ref.id)) throw new Error("施設が見つかりません");
+    if (ref.kind === "new" && !ref.name.trim()) throw new Error("新しい施設の名前を入力してください");
+  }
+  const conflicts: Conflict[] = findConflicts(toCandidates(rows, review.fields), review.existing);
   const missing = conflicts.filter((c) => ![c.a, c.b].includes(input.winner[c.key]));
   if (missing.length) throw new Error(`期間が重なっている${missing.length}件で、優先する方を選んでください`);
   const priorities = assignPriorities(rows, new Map(review.existing.map((e) => [e.key, e.priority])), conflicts, input.winner);
   if (!priorities) throw new Error("優先する方の選び方が矛盾しています（AよりB、BよりC、CよりA のようになっています）");
 
-  await transaction(async (client) => {
+  return transaction(async (client) => {
+    // 新しい施設（同じ名前がすでにあればそれを使う）
+    const facilityIds = new Map<string, string>();
+    for (const ref of new Set(rows.map((r) => r.facility))) {
+      const parsed = parseFacilityRef(ref);
+      if (parsed.kind === "existing") {
+        facilityIds.set(ref, parsed.id);
+        continue;
+      }
+      const same = review.facilities.find((f) => normName(f.name) === normName(parsed.name));
+      if (same) {
+        facilityIds.set(ref, same.id);
+        continue;
+      }
+      const { rows: created } = await client.query<{ id: string }>(
+        `insert into facilities (hotel_id, kind, name, sort, updated_by)
+         values ($1, 'facility', $2, (select coalesce(max(sort), 0) + 1 from facilities where hotel_id = $1), $3) returning id`,
+        [member.hotel_id, parsed.name.trim(), member.id],
+      );
+      facilityIds.set(ref, created[0].id);
+    }
+    // 新しい項目名（空白・全角半角だけ違う既存の名前があればそれを使う）
+    const fieldIds = new Map<string, string>();
+    for (const name of new Set(rows.map((r) => r.field))) {
+      const key = fieldKey(review.fields, name);
+      if (!key.startsWith("new:")) {
+        fieldIds.set(name, key);
+        continue;
+      }
+      const { rows: created } = await client.query<{ id: string }>(
+        `insert into info_fields (hotel_id, name, sort) values ($1, $2, (select coalesce(max(sort), 0) + 1 from info_fields where hotel_id = $1))
+         on conflict (hotel_id, name) do update set name = excluded.name returning id`,
+        [member.hotel_id, name],
+      );
+      fieldIds.set(name, created[0].id);
+    }
+
     await client.query("delete from facility_values where source_id = $1", [sourceId]);
     for (const r of rows) {
       await client.query(
         `insert into facility_values (facility_id, field_id, source_id, title, body, valid, priority, status, updated_by)
          values ($1, $2, $3, $4, $5, daterange($6::date, $7::date, '[]'), $8, 'approved', $9)`,
-        [r.facilityId, r.fieldId, sourceId, r.title, r.body, r.from, r.to, priorities.get(r.key) ?? 0, member.id],
+        [facilityIds.get(r.facility), fieldIds.get(r.field), sourceId, r.title, r.body, r.from, r.to, priorities.get(r.key) ?? 0, member.id],
       );
     }
-    await client.query("update info_sources set status = 'approved', approved_by = $2, approved_at = now() where id = $1", [sourceId, member.id]);
-    const facilityIds = [...new Set(rows.map((r) => r.facilityId))];
-    await client.query("update facilities set updated_at = now(), updated_by = $2 where id = any ($1)", [facilityIds, member.id]);
+    await client.query("update info_sources set status = 'approved', draft = null, approved_by = $2, approved_at = now() where id = $1", [sourceId, member.id]);
+    const ids = [...new Set(facilityIds.values())];
+    await client.query("update facilities set updated_at = now(), updated_by = $2 where id = any ($1)", [ids, member.id]);
+    return { facilityIds: ids };
   });
-  return { facilities: [...new Set(rows.map((r) => r.facilityId))] };
 }
 
-// 資料を消すと、読み取った値も消える（案内から外れる）
+// 資料を消すと、読み取った値も消える（案内から外れる）。施設と項目名は残す（特記事項や権限の範囲が付くため）
 export async function deleteSource(member: Member, sourceId: string) {
   await query("delete from info_sources where id = $1 and hotel_id = $2", [sourceId, member.hotel_id]);
 }
@@ -294,9 +353,13 @@ export async function sourceFacilityIds(sourceId: string): Promise<string[]> {
   return rows.map((r) => r.facility_id);
 }
 
-// モック: デモの冬季営業のお知らせ（レストラン）の読み取り結果。それ以外は項目に入らない内容として返す
-function mockExtract(text: string) {
-  if (!text.includes("冬季") || !text.includes("レストラン")) return { quotes: [], items: [], unplaced: [] };
+// ---------- モック（LLM費用なし）: デモの冬季営業のお知らせ ----------
+
+function mockList(text: string) {
+  return { facilities: text.includes("冬季") ? ["レストラン"] : [] };
+}
+
+function mockExtract() {
   const winter = { from: "2026-10-15", to: "2027-03-31" };
   return {
     quotes: ["ランチ 休業", "ディナー 17:30〜21:00（L.O. 20:30）", "冬の鍋会席 10/15〜3/31 8,800円", "年越しそば御膳 12/31のみ 3,300円"],
@@ -306,6 +369,5 @@ function mockExtract(text: string) {
       { field: "メニュー・プラン", title: "冬の鍋会席", body: "8,800円（税込）", ...winter },
       { field: "メニュー・プラン", title: "年越しそば御膳", body: "3,300円（税込）", from: "2026-12-31", to: "2026-12-31" },
     ],
-    unplaced: [],
   };
 }

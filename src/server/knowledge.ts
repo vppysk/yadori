@@ -4,44 +4,35 @@ import { effectivePeriods, type FieldWithValues, type InfoValue, overlaps, parse
 
 export type FacilityInfo = {
   facility: string;
-  category: string | null;
-  // カテゴリの項目順。値のない項目も入れる（回答で「情報なし」と明示するため）。
+  // その施設の承認済みの値に出てくる項目（項目の並び順）。滞在期間にかかる値がない項目も入れる（回答で「情報なし」と明示するため）。
   // 値は、優先される値に覆われた期間を除き、滞在期間にかかるものだけ
   fields: FieldWithValues[];
   // 有効期間中は通常の営業情報より優先する
   notices: { body: string; starts_at: string; ends_at: string; updated_at: string }[];
 };
 
-// 期間 [from, to]（現地の日付、両端を含む）にかかる館内の情報と特記事項。季節をまたぐ滞在は複数の期間が返る。
-// names には施設名かカテゴリ名を渡せる（カテゴリなら属する施設すべて）
+// 期間 [from, to]（現地の日付、両端を含む）にかかる館内の情報と特記事項。季節をまたぐ滞在は複数の期間が返る
 export async function getFacilityInfo(
   hotelId: string,
   { facilities: names, from, to, timezone }: { facilities?: string[]; from: string; to: string; timezone: string },
 ): Promise<FacilityInfo[]> {
-  // 施設を指定しても「全体」欄（館内全体のお知らせ）は常に含める
-  const facilities = await query<{ id: string; name: string; kind: string; category_id: string | null; category: string | null }>(
-    `select f.id, f.name, f.kind, f.category_id, c.name category
-     from facilities f left join facility_categories c on c.id = f.category_id
-     where f.hotel_id = $1 and ($2::text[] is null or f.kind = 'global' or f.name = any ($2) or c.name = any ($2))
-     order by c.sort nulls first, f.sort`,
+  // 施設を指定しても「全体」欄（ホテル全体の案内・お知らせ）は常に含める
+  const facilities = await query<{ id: string; name: string; kind: string }>(
+    `select id, name, kind from facilities
+     where hotel_id = $1 and ($2::text[] is null or kind = 'global' or name = any ($2))
+     order by kind = 'global' desc, sort`,
     [hotelId, names?.length ? names : null],
   );
   const ids = facilities.map((f) => f.id);
   if (ids.length === 0) return [];
 
-  const [fields, values, notices] = await Promise.all([
-    query<{ category_id: string; field_id: string; name: string }>(
-      `select cf.category_id, i.id field_id, i.name
-       from category_fields cf join info_fields i on i.id = cf.field_id
-       where cf.category_id = any ($1) order by cf.sort`,
-      [[...new Set(facilities.map((f) => f.category_id).filter((c): c is string => c !== null))]],
-    ),
+  const [values, notices] = await Promise.all([
     // 優先度の判定には滞在期間の外の値も要るため、承認済みの値をすべて取る（施設ごとに数十件程度）
-    query<{ id: string; facility_id: string; field_id: string; title: string | null; body: string; valid: string; priority: number; source_title: string | null }>(
-      `select v.id, v.facility_id, v.field_id, v.title, v.body, v.valid, v.priority, s.title source_title
-       from facility_values v left join info_sources s on s.id = v.source_id
+    query<{ id: string; facility_id: string; field_id: string; field: string; title: string | null; body: string; valid: string; priority: number; source_title: string }>(
+      `select v.id, v.facility_id, v.field_id, i.name field, v.title, v.body, v.valid, v.priority, s.title source_title
+       from facility_values v join info_fields i on i.id = v.field_id join info_sources s on s.id = v.source_id
        where v.facility_id = any ($1) and v.status = 'approved'
-       order by lower(v.valid), v.title`,
+       order by i.sort, lower(v.valid), v.title`,
       [ids],
     ),
     // 期限を過ぎた特記事項は案内に使わない（自動消去）
@@ -60,41 +51,32 @@ export async function getFacilityInfo(
   const stay = { from, to };
 
   return facilities
-    .map((f) => ({
-      facility: f.kind === "global" ? "館内全体のお知らせ" : f.name,
-      category: f.category,
-      fields: fields
-        .filter((x) => x.category_id === f.category_id)
-        .map((x) => ({
-          fieldId: x.field_id,
-          name: x.name,
+    .map((f) => {
+      const own = values.filter((v) => v.facility_id === f.id);
+      const fieldIds = [...new Set(own.map((v) => v.field_id))];
+      return {
+        facility: f.kind === "global" ? "館内全体" : f.name,
+        fields: fieldIds.map((fieldId) => ({
+          fieldId,
+          name: own.find((v) => v.field_id === fieldId)!.field,
           values: effectivePeriods(
-            values
-              .filter((v) => v.facility_id === f.id && v.field_id === x.field_id)
+            own
+              .filter((v) => v.field_id === fieldId)
               .map((v): InfoValue => ({ id: v.id, title: v.title, body: v.body, ...parseValidRange(v.valid), priority: v.priority, sourceTitle: v.source_title })),
           ).filter((v) => overlaps(v, stay)),
         })),
-      notices: notices
-        .filter((n) => n.facility_id === f.id)
-        .map((n) => ({ body: n.body, starts_at: n.starts_at, ends_at: n.ends_at, updated_at: n.updated_at })),
-    }))
-    // 指定された施設は値がなくても残す（項目ごとに「情報なし」と渡すため）。全施設のときと「全体」欄は、情報のあるものだけ
+        notices: notices
+          .filter((n) => n.facility_id === f.id)
+          .map((n) => ({ body: n.body, starts_at: n.starts_at, ends_at: n.ends_at, updated_at: n.updated_at })),
+      };
+    })
+    // 指定された施設は情報がなくても残す（「情報なし」と渡すため）。全施設のときと「全体」欄は、滞在期間の情報があるものだけ
     .filter((f, i) => (names?.length && facilities[i].kind === "facility") || f.fields.some((x) => x.values.length > 0) || f.notices.length > 0);
 }
 
-// ルーターの選択肢: 施設名とカテゴリ名（「食事はどこで？」はカテゴリで受け、属する施設をすべて引く）
+// ルーターの選択肢: 施設名
 export async function listFacilityNames(hotelId: string): Promise<string[]> {
-  const rows = await query<{ name: string }>(
-    `select name from (
-       select f.name, 1 grp, c.sort csort, f.sort from facilities f left join facility_categories c on c.id = f.category_id
-       where f.hotel_id = $1 and f.kind = 'facility'
-       union all
-       select c.name, 2, c.sort, 0 from facility_categories c
-       where c.hotel_id = $1 and exists (select 1 from facilities f where f.category_id = c.id)
-         and not exists (select 1 from facilities f where f.hotel_id = $1 and f.name = c.name)
-     ) x order by grp, csort, sort`,
-    [hotelId],
-  );
+  const rows = await query<{ name: string }>("select name from facilities where hotel_id = $1 and kind = 'facility' order by sort", [hotelId]);
   return rows.map((r) => r.name);
 }
 

@@ -7,20 +7,21 @@ export type Citation = { kind: "notice" | "stay_date" | "document" | "web"; labe
 
 export const fmtDate = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 
-// 小型モデルでも取り違えないよう、施設ごとに「特記事項（優先）→ カテゴリの項目順に値」の文章にする。
-// 滞在日に値のない項目も「情報なし」と明示する（データのない項目を推測で答えさせないため）
+// 小型モデルでも取り違えないよう、施設ごとに「特記事項（優先）→ 項目順に値」の文章にする。
+// 施設に情報が1件もないときや、項目はあるが滞在日の値がないときは「情報なし」と明示する（推測で答えさせないため）
 export function renderFacilities(facilities: FacilityInfo[], requested: string[]): string {
   const lines: string[] = [];
   for (const f of facilities) {
-    lines.push(`■${f.facility}${f.category ? `（${f.category}）` : ""}`);
+    lines.push(`■${f.facility}`);
     for (const n of f.notices) lines.push(`  【特記事項・最優先】${n.body}（${n.starts_at}〜${n.ends_at} の間有効）`);
     for (const field of f.fields) {
       if (field.values.length === 0) lines.push(`  ${field.name}: 情報なし`);
       for (const v of field.values) lines.push(`  ${describeValue(field.name, v)}`);
     }
+    if (f.fields.length === 0 && f.notices.length === 0) lines.push("  情報なし");
   }
   for (const name of requested) {
-    if (!facilities.some((f) => f.facility === name || f.category === name)) lines.push(`■${name}`, "  情報なし");
+    if (!facilities.some((f) => f.facility === name)) lines.push(`■${name}`, "  情報なし");
   }
   return lines.length ? lines.join("\n") : "情報なし";
 }
@@ -28,8 +29,7 @@ export function renderFacilities(facilities: FacilityInfo[], requested: string[]
 // 特記事項の根拠は、質問に関係する施設（ルーターが選んだ施設・回答に名前が出た施設・館内全体）のものだけ
 export function noticeCitations(facilities: FacilityInfo[], requested: string[], reply: string): Citation[] {
   const citations: Citation[] = [];
-  const related = (f: FacilityInfo) =>
-    requested.includes(f.facility) || (f.category !== null && requested.includes(f.category)) || reply.includes(f.facility) || f.facility === "館内全体のお知らせ";
+  const related = (f: FacilityInfo) => requested.includes(f.facility) || reply.includes(f.facility) || f.facility === "館内全体";
   for (const f of facilities.filter(related)) {
     for (const n of f.notices) {
       citations.push({ kind: "notice", label: `${f.facility}の特記事項を反映（${fmtDate(n.updated_at.slice(0, 10))} ${n.updated_at.slice(11)} 更新）` });

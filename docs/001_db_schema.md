@@ -16,9 +16,9 @@
 ### 期間付き知識（4.1）
 | テーブル | 役割 |
 |---|---|
-| `facilities` | 施設。`kind='global'` の1行がマスタの「全体」欄。`category_id` でカテゴリに属する（「全体」は null） |
-| `facility_categories` / `info_fields` / `category_fields` | カテゴリ（食事・温浴…）、項目（営業時間・メニュー・プラン…）、カテゴリで使う項目と並び順。導入時に設定する（`docs/002_facility_master_design.md`） |
-| `info_sources` | 資料。読み取った本文と状態（確認待ち／承認済み）、どの項目にも入らなかった内容 |
+| `facilities` | 施設。`kind='global'` の1行が「全体」欄（ホテル全体の案内・お知らせ）。ほかの施設は資料の承認で作る（`docs/002_facility_master_design.md`） |
+| `info_fields` | 項目名の一覧（ホテル全体で1つ）。資料の承認で作る |
+| `info_sources` | 資料。読み取った本文、状態（確認待ち／承認済み）、確認待ちの読み取り結果（`draft`。新しい施設・項目は承認まで作らない） |
 | `facility_values` | 施設 × 項目 × 期間の値。タイトル（任意）＋本文（自由文）、`valid daterange`（終了日なし可）、優先度（期間が重なるとき大きい方で案内。承認時にスタッフが選ぶ）、出どころの資料、状態（確認待ち／承認済み） |
 | `special_notices` | 特記事項。施設（または「全体」）に紐づき、`ends_at` を過ぎたら案内に使わない |
 | `source_files` | PDF・画像の元ファイル（Supabase Storage）。下書きの出どころ |
@@ -109,3 +109,4 @@
 - `20260929000000_handoff_guest_request.sql`: `handoffs.guest_requested`（ゲスト自身が求めた引き継ぎ。「スタッフと話す」ボタンと「スタッフと話したい」の発言）と状態 `cancelled`（引き受け前にゲストが取り消した）。1つの会話で対応中（`open`／`accepted`）のゲストの依頼は1件までの部分一意索引 `handoffs_active_guest_request`。書き戻しの時点で取り消し済みならお客様メモに書かないが、書き戻しは応答直後に走るため、通常は取り消し前に書かれる
 - `20260930000000_info_sources.sql`: 資料 `info_sources` を追加。`facility_values` を型なし（`title`・`body`）にし、`source_id`・`priority` を追加、状態を `pending`／`approved` に変更、`value`・`source_file_id` と `info_fields.value_type` を削除。`facility_period_overlaps` を「優先度が同じ重なり」に作り直した
 - `20260930010000_handoff_reasons.sql`: 引き継ぎの種類をきっかけごとに分けた（`staff_assigned`＝担当が人、`guardrail_blocked`＝禁止事項で回答を止めた、`system_error`＝回答の生成・禁止事項のチェックの失敗）。システムの不具合の中身（`failure_stage`・`failure_cause`・`failure_detail`・`model_id`。禁止事項で止めたときは `failure_detail` に理由と止めた回答）と、引き継いだ時点のメッセージ `message_id` を追加。既存の行は要約の書き出しで移し替え、担当が人は確実に見分けられないため、ゲストの依頼でない `talk_request` をまとめて寄せた。管理PCの対応アラートでの分類は `src/lib/handoff-kinds.ts`
+- `20261001000000_facilities_from_sources.sql`: カテゴリ（`facility_categories`・`category_fields`・`facilities.category_id`）を削除。確認待ちの読み取り結果を `info_sources.draft` に持ち、`facility_values` は承認済みだけにした（`unplaced` を削除）。資料のない値を「導入時の設定」の資料に紐づけ、`facility_values.source_id` を必須にした
