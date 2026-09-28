@@ -1,6 +1,6 @@
-import { permissionKeys, requireMember } from "@/server/auth";
+import { can, requireMember } from "@/server/auth";
 import { getHotel } from "@/server/hotel";
-import { getMyDuties, listMyTickets, listOpenHandoffs, loadSummary } from "@/server/staff-work";
+import { getMyDuties, listMyTickets, loadSummary } from "@/server/staff-work";
 import { OrdersView } from "./orders-view";
 
 export const dynamic = "force-dynamic";
@@ -12,13 +12,11 @@ function requestTime() {
 
 export default async function StaffOrdersPage() {
   const member = await requireMember("/staff/orders");
-  const keys = await permissionKeys(member.id);
-  const canHandoff = keys.has("handling.handoff.accept");
-  const [duties, tickets, load, handoffs, hotel] = await Promise.all([
-    keys.has("order.assignable") ? getMyDuties(member) : null,
+  const assignable = await can(member.id, "order.assignable");
+  const [duties, tickets, load, hotel] = await Promise.all([
+    assignable ? getMyDuties(member) : null,
     listMyTickets(member.id),
     loadSummary(member),
-    canHandoff ? listOpenHandoffs(member.hotel_id) : [],
     getHotel(member.hotel_id),
   ]);
   return (
@@ -27,8 +25,6 @@ export default async function StaffOrdersPage() {
       duties={duties}
       tickets={tickets}
       load={load ?? null}
-      // 他の人が引き受けた引き継ぎは表示しない
-      handoffs={handoffs.filter((h) => h.status === "open" || h.accepted_by_name === member.display_name)}
       serverNow={requestTime()}
       timezone={hotel.timezone}
     />

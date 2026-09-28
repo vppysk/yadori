@@ -23,6 +23,30 @@ const getReservation = createTool({
   },
 });
 
+const searchReservations = createTool({
+  id: "search_reservations",
+  description: "期間に滞在がかかる予約を探す。query を渡すと、お名前（空白は無視）か部屋番号で絞る",
+  inputSchema: z.object({
+    hotel_id: z.string(),
+    from: z.string().describe("この日以降にチェックアウトする予約（YYYY-MM-DD）"),
+    to: z.string().describe("この日以前にチェックインする予約（YYYY-MM-DD）"),
+    query: z.string().optional(),
+  }),
+  execute: async ({ hotel_id, from, to, query: q }) => {
+    const text = q?.replace(/\s/g, "") || null;
+    return {
+      reservations: await query(
+        `select id reservation_id, hotel_id, guest_name, room_id, room_number, check_in::text, check_out::text, adults, plan_name
+         from mock_pms.reservations
+         where hotel_id = $1 and check_out >= $2::date and check_in <= $3::date
+           and ($4::text is null or replace(guest_name, ' ', '') ilike '%' || $4 || '%' or room_number = $4)
+         order by check_in limit 200`,
+        [hotel_id, from, to, text],
+      ),
+    };
+  },
+});
+
 const listGuestNotes = createTool({
   id: "list_guest_notes",
   description: "お客様メモ（記念日・お好み・引き継ぎなど）の一覧",
@@ -74,6 +98,7 @@ export const pmsMcpServer = new MCPServer({
   version: "1.0.0",
   tools: {
     get_reservation: getReservation,
+    search_reservations: searchReservations,
     list_guest_notes: listGuestNotes,
     list_request_history: listRequestHistory,
     append_guest_note: appendGuestNote,

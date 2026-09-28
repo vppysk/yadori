@@ -15,7 +15,7 @@ export function PhoneNav({ unread }: { unread: number }) {
   return (
     <nav aria-label="スタッフメニュー" className="grid grid-cols-3 border-t border-line bg-surface px-2 pt-1.5 pb-6">
       {TABS.map(({ href, label, Icon }) => {
-        const active = pathname.startsWith(href) || (href === "/staff/orders" && pathname.startsWith("/staff/handoffs"));
+        const active = pathname.startsWith(href);
         return (
           <Link
             key={href}

@@ -1,12 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { HANDOFF_LABELS } from "@/lib/handoff-kinds";
-import type { LoadSummary, MyDuties, MyTicket, OpenHandoff } from "@/server/staff-work";
+import type { LoadSummary, MyDuties, MyTicket } from "@/server/staff-work";
 import {
-  acceptHandoffAction,
   completeTicketAction,
   declineTicketAction,
   endShiftAction,
@@ -32,12 +29,11 @@ type Props = {
   duties: MyDuties | null; // 担当になれる人だけ
   tickets: MyTicket[];
   load: LoadSummary | null;
-  handoffs: OpenHandoff[];
   serverNow: number;
   timezone: string;
 };
 
-export function OrdersView({ memberName, duties, tickets, load, handoffs, serverNow, timezone }: Props) {
+export function OrdersView({ memberName, duties, tickets, load, serverNow, timezone }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<"new" | "doing">("new");
   const [now, setNow] = useState(serverNow);
@@ -102,32 +98,6 @@ export function OrdersView({ memberName, duties, tickets, load, handoffs, server
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3.5">
-        {handoffs.map((h) => (
-          <div key={h.id} className="flex items-center gap-2.5 rounded-xl border border-line bg-surface px-3.5 py-3">
-            <div className="flex flex-1 flex-col gap-1">
-              <strong className={`text-sm ${h.kind === "overdue_order" || h.kind === "complaint" ? "text-danger" : ""}`}>
-                {h.room_number ? `${h.room_number}号室 ` : ""}
-                {HANDOFF_LABELS[h.kind] ?? h.kind}
-              </strong>
-              <span className="text-xs leading-normal text-ink-sub">AI要約：{h.summary}</span>
-            </div>
-            {h.status === "open" ? (
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => run(() => acceptHandoffAction(h.id))}
-                className="flex min-h-11 shrink-0 items-center rounded-lg bg-dark px-3 text-[13px] font-bold text-white disabled:opacity-50"
-              >
-                対応する
-              </button>
-            ) : (
-              <Link href={`/staff/handoffs/${h.id}`} className="flex min-h-11 shrink-0 items-center rounded-lg border border-dark px-3 text-[13px] font-bold">
-                開く
-              </Link>
-            )}
-          </div>
-        ))}
-
         {duties && !onShift && (
           <section className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3.5">
             <h2 className="text-sm font-bold">出勤してください</h2>

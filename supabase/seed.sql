@@ -32,7 +32,7 @@ insert into permission_groups (id, hotel_id, name, is_preset) values
 -- プリセットの中身（plan 4.8 の表）
 insert into group_permissions (group_id, permission_key)
 select '00000000-0000-0000-0000-00000000b001'::uuid, k
-from unnest(array['order.assignable', 'handling.consult', 'handling.handoff.accept']) k
+from unnest(array['order.assignable', 'handling.consult', 'handling.consult.guest', 'handling.handoff.accept']) k
 union all
 select '00000000-0000-0000-0000-00000000b002', k
 from unnest(array[

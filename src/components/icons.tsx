@@ -61,3 +61,36 @@ export function UploadIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+export function MenuIcon({ size = 22 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" strokeWidth="1.8" {...base}>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  );
+}
+
+export function PlusIcon({ size = 22 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" strokeWidth="1.8" {...base}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+export function PersonIcon({ size = 22 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" strokeWidth="1.8" {...base}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </svg>
+  );
+}
+
+export function CloseIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" strokeWidth="1.8" {...base}>
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}

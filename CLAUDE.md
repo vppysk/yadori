@@ -32,7 +32,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `src/server/orders.ts`: チケットの割り当ては機械ロジック（同じ棟・フロアのまとめ → 担当量最小 → 最後の割り当てが古い順）。LLMは使わない。お届けの希望日時があるチケットは前倒しの時刻まで割り当てを保留し、`/api/cron/tickets` で割り当てる
 - オーダーの受付（`docs/005_order.md`）: `order-match.ts`（ゲストの言い方→品目の候補。名前・別名の一致 → 分類 → 部分一致）、`order-drafts.ts`（ゲストの選択欄。確定でチケットを作る。オーダーだけの発言は回答係を呼ばず定型文）。部屋は客室ID（`rooms.id`）で持ち、`room_number` 列には表示名を入れる。担当はスタッフごとの役割×エリアの担当表（`member_duties`、管理PC `/admin/orders/duties`、`duties.ts`）で、出勤はオン／オフだけ（`member_shifts`）。枠・担当席（共有アカウント）は廃止した。期限切れ・ゲストの「状況を確認する」・上長の依頼は `order-checks.ts` で担当者に状況の確認を送る（期限切れで自動の割り当て直しはしない。オーダー遅延の引き継ぎは作らず、催促が続いたらクレームにする）
 - `src/server/auth.ts`: `requireMember`（画面）と `authorize(権限キー, 対象ID)`（サーバーアクション）。操作は必ず `authorize` → 処理 → `audit` の順
-- `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`info-sources.ts`（資料: 施設ごとの読み取り・根拠の確認・承認と優先度）、`facility-fields.ts`（値の期間・重なり・優先度の純粋関数。確認画面でも使う）、`questions.ts`（未回答の質問の一覧と回答。期間のない回答はよくある質問（RAG）、期間のある回答は資料へ）、`knowledge-review.ts`（会話ログの定期評価で未回答の質問を見つける。`/api/cron/knowledge-review`）、`staff-ask.ts`（スタッフのAI相談）
+- `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`info-sources.ts`（資料: 施設ごとの読み取り・根拠の確認・承認と優先度）、`facility-fields.ts`（値の期間・重なり・優先度の純粋関数。確認画面でも使う）、`questions.ts`（未回答の質問の一覧と回答。期間のない回答はよくある質問（RAG）、期間のある回答は資料へ）、`knowledge-review.ts`（会話ログの定期評価で未回答の質問を見つける。`/api/cron/knowledge-review`）、`staff-ask.ts`（スタッフのAI相談。1人が複数の会話を持ち、削除は `archived_at`）、`staff-ask-guests.ts`（AI相談でのゲストの言及。画面で選ぶか文の部屋番号・お名前・予約番号をコードで照合し、予約・客室管理システム（`pms.ts` の `searchReservations` など）と対応アラートから【話題のゲスト】を作る。言及がなければ直前の質問のゲストを引き継ぐ。権限 `handling.consult.guest`）
 - サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）。管理PCのサイドバーは `src/app/admin/nav-items.ts`（ホームはなく、`/admin` は一番上へ移る。オーダー管理と案内情報は中に左の一覧を持つ: `orders/orders-nav.tsx`・`knowledge/knowledge-nav.tsx`）、`src/app/manage/actions.ts`（経営）
 - MCP: `src/mcp/pms-server.ts`（予約・客室管理のモック、`/api/mcp/pms`）と `src/mcp/work-events-server.ts`（実績の出力口、`/api/mcp/work-events`）。どちらもBearerトークン必須。予約情報の読み書きは必ず `src/server/integrations/pms.ts`（変換層）を通し、項目ルールとAIの権限を確認する
 - `src/server/source-fetch.ts`: URLの資料（管理PCの案内情報 → 資料）。反映のしかたを資料ごとに選ぶ（`reflect_mode`）。自動反映は値に読み取らず、取得のたびに中型で要約・影響判定して【自動取得の最新情報】として回答に渡し、変わったら管理PCのバッジ（`unseen_update`）と、影響があれば現場スマホに通知する。以下は承認して反映の場合: 登録時に `integrations/web-fetch.ts`（Tavily Extract）で取得して読み取り、確認・承認する。定期取得（`/api/cron/sources`、検索はしない）で本文が変わったら読み直して「更新の確認待ち」（`update_pending`）にし、承認で差し替える（承認までは前の版で案内）。資料を承認できる人に通知。期間限定で頻度を上げられる（`info_source_boosts`）。定期取得はAIの権限 `integration.web_fetch.read` と項目 `external_updates` の読み取りを確認する。旧「外部の情報源」（`external-sources.ts`・【外部の最新情報】）は統合して削除した（`docs/006_guide_info.md`）
@@ -99,7 +99,7 @@ TypeScriptで統一: Next.js（App Router）＋ Mastra（Next.jsに組み込み�
 - **権限は機能（MCPツール1つ＝権限1つ）単位**で、人・AIエージェント・外部システムを同じ「メンバー」として扱う。実効権限は所属グループと個別付与の合計（拒否なし、範囲は広い方が有効）（4.8）
 - **人のシフト・配置最適化は作らない**。実績を標準形式（CSV/JSON・Webhook・MCP）で出力し、将来の配置エンジンと疎結合にする（4.5, 11章）
 - **既存システムとの境界**: ゲスト文脈の取得と引き継ぎの書き戻しは、予約・客室管理システムへのMCP経由（デモはモックMCP）。内部モデルは自前仕様、入口は変換層で既存に合わせる
-- スタッフ画面は2系統: **現場スマホ**（オーダー・AI相談・引き継ぎ。編集機能なし）と**管理PC**（マスタ・特記事項編集など）。特記事項を含む情報編集はPCのみ（4.6）
+- スタッフ画面は2系統: **現場スマホ**（オーダー・AI相談・通知。編集機能なし。対応アラート（引き継ぎ）は載せず、通知もしない。管理PCで受ける）と**管理PC**（マスタ・特記事項編集など）。特記事項を含む情報編集はPCのみ（4.6）
 
 ## 作業上の注意
 

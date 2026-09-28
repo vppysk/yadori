@@ -1,5 +1,4 @@
 import { after } from "next/server";
-import { HANDOFF_LABELS } from "@/lib/handoff-kinds";
 import type { LlmFailureCause } from "@/lib/llm/errors";
 import { query, queryOne } from "./db";
 import { writeBackHandoff } from "./integrations/pms";
@@ -47,12 +46,7 @@ export async function createHandoff(params: {
   // 同じ会話に対応中の依頼がすでにある（連打・複数タブ）
   if (!row) return undefined;
   const { id } = row;
-  await query(
-    `insert into notifications (member_id, kind, title, body, ref_type, ref_id)
-     select m.id, 'handoff', $2, $3, 'handoff', $4
-     from members m where m.hotel_id = $1 and m.kind = 'human' and m.active and has_permission(m.id, 'handling.handoff.accept')`,
-    [params.hotelId, `${params.roomNumber ? `${params.roomNumber}号室 ` : ""}${HANDOFF_LABELS[params.kind]}`, params.summary, id],
-  );
+  // 現場スマホには通知しない（対応アラートは管理PCで受ける）
   scheduleWriteBack(params.hotelId, id);
   return id;
 }
@@ -104,10 +98,7 @@ export async function cancelGuestRequest(conversationId: string): Promise<boolea
      where conversation_id = $1 and guest_requested and status = 'open' returning id`,
     [conversationId],
   );
-  if (!row) return false;
-  // 取り消した依頼の通知は既読にして、未読の数に残さない
-  await query("update notifications set read_at = now() where ref_type = 'handoff' and ref_id = $1 and read_at is null", [row.id]);
-  return true;
+  return !!row;
 }
 
 export async function waitForBackgroundTasks() {

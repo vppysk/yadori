@@ -3,17 +3,16 @@
 import { cookies } from "next/headers";
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
-import { audit, authorize, getCurrentMember, MEMBER_COOKIE } from "@/server/auth";
+import { audit, authorize, can, getCurrentMember, MEMBER_COOKIE } from "@/server/auth";
+import { getHotel, localNow } from "@/server/hotel";
 import { replyCheck, type CheckReply } from "@/server/order-checks";
-import { askAi } from "@/server/staff-ask";
+import { archiveAskSession, askAi } from "@/server/staff-ask";
+import { searchGuests, type GuestSearchResult } from "@/server/staff-ask-guests";
 import {
-  acceptHandoff,
-  closeHandoff,
   completeTicket,
   declineTicket,
   endShift,
   markNotificationsRead,
-  replyToGuest,
   startShift,
   startTicket,
 } from "@/server/staff-work";
@@ -64,29 +63,6 @@ export async function replyCheckAction(ticketId: string, reply: CheckReply, etaM
   refresh();
 }
 
-export async function acceptHandoffAction(handoffId: string) {
-  const member = await authorize("handling.handoff.accept");
-  await acceptHandoff(member, handoffId);
-  await audit(member, "handling.handoff.accept", "handoff.accept", { type: "handoff", id: handoffId });
-  redirect(`/staff/handoffs/${handoffId}`);
-}
-
-export async function closeHandoffAction(handoffId: string) {
-  const member = await authorize("handling.handoff.accept");
-  await closeHandoff(member, handoffId);
-  await audit(member, "handling.handoff.accept", "handoff.close", { type: "handoff", id: handoffId });
-  redirect("/staff/orders");
-}
-
-export async function replyToGuestAction(handoffId: string, text: string) {
-  const member = await authorize("handling.handoff.accept");
-  const trimmed = text.trim();
-  if (!trimmed) return;
-  await replyToGuest(member, handoffId, trimmed.slice(0, 1000));
-  await audit(member, "handling.handoff.accept", "handoff.reply", { type: "handoff", id: handoffId });
-  refresh();
-}
-
 export async function markNotificationsReadAction() {
   // 自分宛ての通知を既読にするだけなので、ログインしていれば権限は問わない
   const member = await getCurrentMember();
@@ -99,16 +75,45 @@ export async function logoutAction() {
   redirect("/staff/login");
 }
 
-export async function askAiAction(text: string): Promise<{ ok: boolean; error?: string }> {
+// AIに相談。sessionId がなければ新しい会話を作る。ゲストの参照は権限がある人だけ（なければ選択も文からの照合もしない）
+export async function askAiAction(
+  sessionId: string | null,
+  text: string,
+  guestIds: string[],
+): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
   const member = await authorize("handling.consult");
   const trimmed = text.trim();
   if (!trimmed) return { ok: false, error: "質問を入力してください" };
+  const canViewGuests = await can(member.id, "handling.consult.guest");
   try {
-    await askAi(member, trimmed.slice(0, 1000));
+    const result = await askAi(member, { sessionId, text: trimmed.slice(0, 1000), guestIds: canViewGuests ? guestIds.slice(0, 3) : [], canViewGuests });
+    for (const m of result.mentions) {
+      await audit(member, "handling.consult.guest", "ask.guest_reference", { type: "reservation", id: m.reservationId }, { sessionId: result.sessionId });
+    }
     refresh();
-    return { ok: true };
+    return { ok: true, sessionId: result.sessionId };
   } catch (error) {
     console.error("[askAiAction]", error);
     return { ok: false, error: "いま答えられません。時間をおいてお試しください。" };
   }
+}
+
+export async function searchGuestsAction(text: string): Promise<{ ok: boolean; guests?: GuestSearchResult[]; error?: string }> {
+  const member = await authorize("handling.consult.guest");
+  try {
+    const hotel = await getHotel(member.hotel_id);
+    const guests = await searchGuests(hotel.id, localNow(hotel.timezone).date, text.slice(0, 50));
+    await audit(member, "handling.consult.guest", "ask.guest_search", undefined, { query: text.slice(0, 50), hits: guests.length });
+    return { ok: true, guests };
+  } catch (error) {
+    console.error("[searchGuestsAction]", error);
+    return { ok: false, error: "予約・客室管理システムに接続できませんでした" };
+  }
+}
+
+export async function archiveAskSessionAction(sessionId: string) {
+  const member = await authorize("handling.consult");
+  await archiveAskSession(member, sessionId);
+  await audit(member, "handling.consult", "ask.session_archive", { type: "conversation", id: sessionId });
+  refresh();
 }

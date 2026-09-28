@@ -227,26 +227,6 @@ export async function notifySupervisors(client: PoolClient, hotelId: string, tit
 
 // ---------- 引き継ぎ ----------
 
-export type OpenHandoff = {
-  id: string;
-  kind: string;
-  room_number: string | null;
-  summary: string;
-  status: "open" | "accepted";
-  accepted_by_name: string | null;
-  created_at: string;
-};
-
-export async function listOpenHandoffs(hotelId: string): Promise<OpenHandoff[]> {
-  return query<OpenHandoff>(
-    `select h.id, h.kind, h.room_number, h.summary, h.status, m.display_name accepted_by_name, h.created_at
-     from handoffs h left join members m on m.id = h.accepted_by
-     where h.hotel_id = $1 and h.status in ('open', 'accepted')
-     order by h.status, h.created_at desc`,
-    [hotelId],
-  );
-}
-
 export async function acceptHandoff(member: Member, handoffId: string) {
   await query(
     "update handoffs set status = 'accepted', accepted_by = $2, accepted_at = now() where id = $1 and hotel_id = $3 and status = 'open'",

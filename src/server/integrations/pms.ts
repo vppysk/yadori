@@ -120,6 +120,39 @@ export async function getGuestContext(reservationId: string): Promise<GuestConte
   return context;
 }
 
+// 滞在中の依頼履歴（読み取りが許可されている場合のみ。許可されていなければ undefined）
+export async function getRequestHistory(reservationId: string): Promise<{ body: string; createdAt: string }[] | undefined> {
+  const integration = await pmsIntegration();
+  if (!(await aiMayUse(integration.hotel_id, "integration.pms.read"))) return undefined;
+  if (!(await fieldRules(integration.id)).get("request_history")?.can_read) return undefined;
+  const { history } = await callTool<{ history: { body: string; created_at: string }[] }>("list_request_history", { reservation_id: reservationId });
+  return history.map((h) => ({ body: h.body, createdAt: h.created_at }));
+}
+
+export type GuestSummary = { reservationId: string; guestName: string; roomNumber: string; checkIn: string; checkOut: string };
+
+// 予約を探す（スタッフのAI相談でゲストを指定するため）。期間に滞在がかかる予約を、お名前か部屋番号で絞る
+export async function searchReservations(hotelId: string, params: { from: string; to: string; query?: string }): Promise<GuestSummary[]> {
+  const integration = await pmsIntegration();
+  if (integration.hotel_id !== hotelId) return [];
+  if (!(await aiMayUse(hotelId, "integration.pms.read"))) throw new Error("AIエージェントに予約情報の読み取り権限がありません");
+  if (!(await fieldRules(integration.id)).get("reservation")?.can_read) throw new Error("予約内容の読み取りが許可されていません");
+  const { reservations } = await callTool<{ reservations: RawReservation[] }>("search_reservations", { hotel_id: hotelId, ...params });
+  const labels = new Map(
+    (await query<{ id: string; label: string }>("select id, label from rooms where hotel_id = $1 and id = any($2)", [
+      hotelId, reservations.map((r) => r.room_id).filter(Boolean),
+    ])).map((r) => [r.id, r.label]),
+  );
+  // 変換層: 料金などは落とし、部屋は自前の表示名（棟＋部屋番号）にする
+  return reservations.map((r) => ({
+    reservationId: r.reservation_id,
+    guestName: r.guest_name,
+    roomNumber: (r.room_id && labels.get(r.room_id)) || r.room_number,
+    checkIn: r.check_in,
+    checkOut: r.check_out,
+  }));
+}
+
 export async function readRuleText(): Promise<string | undefined> {
   const integration = await pmsIntegration();
   const row = await queryOne<{ body: string }>("select body from ai_instructions where integration_id = $1 and scope = 'integration_read'", [integration.id]);
