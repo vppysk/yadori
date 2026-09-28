@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import type { AssignCandidate, AssignmentPreview, Board, BoardTicket, OrderForm, SlotSummary } from "@/server/order-board";
+import type { AreaSummary, AssignCandidate, AssignmentPreview, Board, BoardTicket, OrderForm } from "@/server/order-board";
 import { assignManuallyAction, previewAssignmentAction, registerOrderAction, requestCheckAction } from "../actions";
 
 const WEIGHT = {
@@ -15,117 +15,150 @@ const SOURCE: Record<string, string> = { ai_chat: "AIチャット", phone: "電�
 const REFRESH_MS = 20_000;
 
 type Props = {
-  slots: SlotSummary[];
-  slotId: string;
+  areas: AreaSummary[];
+  areaId: string | null; // null はすべてのエリア
   board: Board;
   candidates: AssignCandidate[];
   form: OrderForm | null; // オーダーを登録する権限があるとき
-  canReassign: boolean;
+  reassignableSlots: string[]; // 手動割り当て・担当者に確認ができる枠
   timezone: string;
 };
 
-export function OrderBoard({ slots, slotId, board, candidates, form, canReassign, timezone }: Props) {
+export function OrderBoard({ areas, areaId, board, candidates, form, reassignableSlots, timezone }: Props) {
   const router = useRouter();
+  const [registerOpen, setRegisterOpen] = useState(false);
   useEffect(() => {
     const timer = setInterval(() => router.refresh(), REFRESH_MS);
     return () => clearInterval(timer);
   }, [router]);
-  const maxPoints = Math.max(board.averagePoints * 2, ...board.columns.map((c) => c.points), 1);
+  const canReassign = (t: BoardTicket) => t.slot_id !== null && reassignableSlots.includes(t.slot_id);
+  const areaLinks = [{ id: null, name: "すべて" }, ...areas];
 
   return (
     <main className="flex min-w-0 flex-1 flex-col gap-3.5 px-6 py-5.5">
-      <h1 className="text-[22px] font-bold">オーダー</h1>
-
-      {form && <RegisterForm form={form} />}
-
-      {/* 枠の切り替えはボードの表示だけ。登録したオーダーの枠は、部屋と品目から自動で決まる */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <h2 className="text-base font-bold">担当者別のボード</h2>
-        <nav aria-label="ボードに表示する枠" className="flex flex-wrap items-center gap-1.5 text-[13px]">
-          <span className="mr-1 text-xs text-ink-sub">表示する枠</span>
-          {slots.map((s) => (
-            <Link
-              key={s.id}
-              href={`/admin/orders?slot=${s.id}`}
-              aria-current={s.id === slotId ? "page" : undefined}
-              className={`flex min-h-10 items-center rounded-lg border px-3.5 ${s.id === slotId ? "border-primary bg-primary-soft font-bold text-primary" : "border-line-input bg-surface"}`}
-            >
-              {s.label}
-              <span className="ml-1.5 text-xs font-normal text-ink-sub">{s.members}名</span>
-            </Link>
-          ))}
-        </nav>
-      </div>
-
-      <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <section className="flex flex-col gap-2.5 rounded-xl bg-danger-soft p-3">
-          <h2 className="text-sm font-bold text-danger">要対応</h2>
-          {board.attention.map((t) => (
-            <AttentionCard key={t.id} ticket={t} slotId={slotId} candidates={candidates} canReassign={canReassign} timezone={timezone} />
-          ))}
-          {board.attention.length === 0 && <p className="text-xs text-ink-sub">ありません</p>}
-        </section>
-        {board.scheduled.length > 0 && (
-          <section className="flex flex-col gap-2.5 rounded-xl border border-line bg-canvas p-3">
-            <h2 className="text-sm font-bold">時間指定（割り当て前）</h2>
-            {board.scheduled.map((t) => (
-              <div key={t.id} className="flex flex-col gap-1 rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[13px]">
-                <div className="flex justify-between">
-                  <strong>{t.room_number}</strong>
-                  <span className="font-bold text-primary">{fmtTime(t.requested_for!, timezone)} にお届け</span>
-                </div>
-                <span>{t.items}</span>
-                {t.note && <span className="text-xs text-ink-sub">備考：{t.note}</span>}
-              </div>
-            ))}
-          </section>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-[22px] font-bold">オーダー</h1>
+        {form && (
+          <button type="button" onClick={() => setRegisterOpen(true)} className="min-h-11 rounded-lg bg-primary px-5 text-sm font-bold text-white">
+            ＋ オーダーを登録
+          </button>
         )}
-        {board.columns.map((c) => (
-          <section key={c.memberId} className="flex flex-col gap-2.5 rounded-xl border border-line bg-surface p-3">
-            <h2 className="flex justify-between text-sm font-bold">
-              {c.name}
-              <span className="font-normal text-ink-sub">本日 {c.points}pt</span>
-            </h2>
-            <div className="h-1.5 overflow-hidden rounded-sm bg-muted">
-              <div className="h-full bg-[#7FB5AF]" style={{ width: `${(c.points / maxPoints) * 100}%` }} />
-            </div>
-            {c.tickets.map((t) => (
-              <div key={t.id} className="flex flex-col gap-1 rounded-[10px] border border-line px-3 py-2.5 text-[13px]">
-                <div className="flex justify-between">
-                  <strong>{t.room_number}</strong>
-                  <WeightBadge weight={t.weight} />
-                </div>
-                <span>
-                  {t.items} ・ {t.status === "doing" ? "対応中" : "未着手"}
-                </span>
-                {t.requested_for && <span className="text-xs font-bold text-primary">{fmtTime(t.requested_for, timezone)} にお届け</span>}
-                {t.note && <span className="text-xs text-ink-sub">備考：{t.note}</span>}
-                <CheckLine ticket={t} timezone={timezone} />
-                <span className="text-[11px] text-ink-sub">
-                  {SOURCE[t.source] ?? t.source}
-                  {t.source !== "ai_chat" && t.created_by_name ? `（${t.created_by_name}）` : ""}
-                  {t.last_reason?.includes("同じフロア") ? " ・ 同フロアでまとめ" : ""}
-                  {t.last_event === "reassigned" && t.last_reason?.includes("手動で割り当て") ? " ・ 手動割り当て" : ""}
-                </span>
-              </div>
-            ))}
-            {c.tickets.length === 0 && <p className="text-xs text-ink-sub">オーダーはありません</p>}
-          </section>
-        ))}
-        {board.columns.length === 0 && <p className="self-center text-sm text-ink-sub">この枠に出勤している人はいません</p>}
       </div>
+
+      {/* エリアは部屋のエリアで絞り込む（担当の枠ではない） */}
+      <nav aria-label="表示するエリア" className="flex flex-wrap items-center gap-1.5 text-[13px]">
+        <span className="mr-1 text-xs text-ink-sub">エリア</span>
+        {areaLinks.map((a) => (
+          <Link
+            key={a.id ?? "all"}
+            href={a.id ? `/admin/orders?area=${a.id}` : "/admin/orders"}
+            aria-current={a.id === areaId ? "page" : undefined}
+            className={`flex min-h-10 items-center rounded-lg border px-3.5 ${a.id === areaId ? "border-primary bg-primary-soft font-bold text-primary" : "border-line-input bg-surface"}`}
+          >
+            {a.name}
+          </Link>
+        ))}
+      </nav>
+
+      {/* 未完了の列は期限の近い順。期限超過・返事待ち・クレームはカードで示す */}
+      <div className="grid flex-1 grid-cols-[repeat(4,minmax(250px,1fr))] items-start gap-3 overflow-x-auto pb-2">
+        {LANES.map((lane) => (
+          <Lane
+            key={lane.key}
+            title={lane.title}
+            tickets={board[lane.key]}
+            muted={lane.key === "done"}
+            render={(t) => <TicketCard key={t.id} ticket={t} candidates={candidates} canReassign={canReassign(t)} timezone={timezone} />}
+          />
+        ))}
+      </div>
+
+      {form && (
+        <RegisterPanel open={registerOpen} onClose={() => setRegisterOpen(false)}>
+          <RegisterForm form={form} />
+        </RegisterPanel>
+      )}
     </main>
   );
 }
 
-function groupBySlot(candidates: AssignCandidate[]) {
+const LANES = [
+  { key: "unassigned", title: "未アサイン" },
+  { key: "waiting", title: "未着手" },
+  { key: "doing", title: "対応中" },
+  { key: "done", title: "本日の完了" },
+] as const;
+
+// 遅延: 未完了は期限超過、完了は期限より遅れて完了したもの
+const isLate = (t: BoardTicket) => t.overdue_minutes > 0 || t.late_minutes > 0;
+
+// 遅延の絞り込みはレーンごとに独立して切り替える
+function Lane({ title, tickets, muted, render }: { title: string; tickets: BoardTicket[]; muted?: boolean; render: (t: BoardTicket) => React.ReactNode }) {
+  const [lateOnly, setLateOnly] = useState(false);
+  const lateCount = tickets.filter(isLate).length;
+  const shown = lateOnly ? tickets.filter(isLate) : tickets;
+  return (
+    <section className={`flex min-w-0 flex-col gap-2.5 rounded-xl border border-line p-3 ${muted ? "bg-canvas" : "bg-surface"}`}>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-sm font-bold">
+          {title}
+          <span className="ml-1.5 font-normal text-ink-sub">{tickets.length}件</span>
+        </h2>
+        <button
+          type="button"
+          aria-pressed={lateOnly}
+          onClick={() => setLateOnly((v) => !v)}
+          className={`min-h-9 rounded-full border px-3 text-xs ${lateOnly ? "border-danger bg-danger-soft font-bold text-danger" : "border-line-input text-ink-sub"}`}
+        >
+          遅延のみ {lateCount}
+        </button>
+      </div>
+      {shown.map(render)}
+      {shown.length === 0 && <p className="text-xs text-ink-sub">{lateOnly ? "遅延はありません" : "ありません"}</p>}
+    </section>
+  );
+}
+
+// 登録フォームは右から出るパネルに置き、カンバンの表示領域を広くとる
+function RegisterPanel({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+  return (
+    <>
+      <div aria-hidden onClick={onClose} className={`fixed inset-0 z-40 bg-black/25 transition-opacity ${open ? "opacity-100" : "pointer-events-none opacity-0"}`} />
+      {/* 閉じても中身は残す（入力途中で閉じても消えない） */}
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="オーダーを登録"
+        inert={!open}
+        className={`fixed top-0 right-0 z-50 flex h-full w-full max-w-xl flex-col overflow-y-auto bg-surface shadow-xl transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}
+      >
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <h2 className="text-base font-bold">オーダーを登録</h2>
+          <button type="button" onClick={onClose} className="min-h-11 px-3 text-sm text-ink-sub">
+            閉じる
+          </button>
+        </div>
+        {children}
+      </aside>
+    </>
+  );
+}
+
+// チケットの枠の人を先に、ほかの枠に出勤している人をその後に（選ぶとチケットをその枠に移す）
+function groupBySlot(candidates: AssignCandidate[], slotId: string | null) {
   const groups: { slotId: string; slotLabel: string; sameSlot: boolean; members: AssignCandidate[] }[] = [];
   for (const c of candidates) {
     const group = groups.find((g) => g.slotId === c.slotId);
     if (group) group.members.push(c);
-    else groups.push({ slotId: c.slotId, slotLabel: c.slotLabel, sameSlot: c.sameSlot, members: [c] });
+    else groups.push({ slotId: c.slotId, slotLabel: c.slotLabel, sameSlot: c.slotId === slotId, members: [c] });
   }
-  return groups;
+  return groups.sort((a, b) => Number(b.sameSlot) - Number(a.sameSlot));
 }
 
 function fmtTime(iso: string, timeZone: string): string {
@@ -157,15 +190,14 @@ function CheckLine({ ticket: t, timezone }: { ticket: BoardTicket; timezone: str
   );
 }
 
-function AttentionCard({
+// 期限を過ぎたら赤枠。完了は期限より遅れたものに印を付ける
+function TicketCard({
   ticket: t,
-  slotId,
   candidates,
   canReassign,
   timezone,
 }: {
   ticket: BoardTicket;
-  slotId: string;
   candidates: AssignCandidate[];
   canReassign: boolean;
   timezone: string;
@@ -174,9 +206,9 @@ function AttentionCard({
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const done = t.status === "done";
   const overdue = t.overdue_minutes > 0;
   const checkPending = t.check_requested_at !== null && t.check_reply === null;
-  const state = overdue ? `期限超過 ${t.overdue_minutes}分` : !t.assignee_id ? "担当者なし" : checkPending ? "返事待ち" : t.complaint ? "クレーム" : "再割り当て中";
   const others = candidates.filter((c) => c.id !== t.assignee_id);
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>) =>
     startTransition(async () => {
@@ -189,33 +221,60 @@ function AttentionCard({
       }
     });
   return (
-    <div className={`flex flex-col gap-1.5 rounded-[10px] bg-surface p-3 ${overdue ? "border-2 border-danger" : "border border-line"}`}>
-      <div className="flex items-center justify-between">
-        <strong className="text-base">{t.room_number}</strong>
-        <span className={`text-xs text-danger ${overdue ? "font-bold" : ""}`}>{state}</span>
+    <div className={`flex flex-col gap-1 rounded-[10px] bg-surface px-3 py-2.5 text-[13px] ${overdue ? "border-2 border-danger" : "border border-line"}`}>
+      <div className="flex items-center justify-between gap-2">
+        <strong className="text-[15px]">{t.room_number}</strong>
+        <span className="flex items-center gap-1.5">
+          {overdue && <span className="text-xs font-bold text-danger">期限超過 {t.overdue_minutes}分</span>}
+          {done && t.late_minutes > 0 && <span className="text-xs font-bold text-danger">{t.late_minutes}分遅れ</span>}
+          <WeightBadge weight={t.weight} />
+        </span>
       </div>
-      <span className="text-[13px]">{t.items}</span>
+      <span>{t.items}</span>
       {t.note && <span className="text-xs text-ink-sub">備考：{t.note}</span>}
-      <span className="text-xs text-ink-sub">
-        {t.assignee_name ? `担当：${t.assignee_name}（${t.status === "doing" ? "対応中" : "未着手"}）` : "担当：なし"}
-        {t.last_reason && t.last_event === "reassigned" ? ` ・ ${t.last_reason}` : ""}
-      </span>
-      <CheckLine ticket={t} timezone={timezone} />
+      {done ? (
+        <span className="text-xs text-ink-sub">
+          {t.done_at && `${fmtTime(t.done_at, timezone)} 完了`}（期限 {fmtTime(t.due_at, timezone)}）
+        </span>
+      ) : (
+        <span className={`text-xs ${t.requested_for ? "font-bold text-primary" : "text-ink-sub"}`}>
+          {t.requested_for ? `${fmtTime(t.requested_for, timezone)} にお届け` : `期限 ${fmtTime(t.due_at, timezone)}`}
+        </span>
+      )}
+      {t.dispatch_at ? (
+        <span className="text-xs text-ink-sub">時間指定：{fmtTime(t.dispatch_at, timezone)} に割り当て予定</span>
+      ) : (
+        <span className="text-xs text-ink-sub">
+          担当：{t.assignee_name ?? "なし"}
+          {t.last_reason && t.last_event === "reassigned" ? ` ・ ${t.last_reason}` : ""}
+        </span>
+      )}
+      {!done && <CheckLine ticket={t} timezone={timezone} />}
       {(t.guest_nudges > 0 || t.complaint) && (
         <span className="text-xs text-danger">
           {t.guest_nudges > 0 ? `ゲストの催促 ${t.guest_nudges}回` : ""}
           {t.complaint ? `${t.guest_nudges > 0 ? " ・ " : ""}クレームとして引き継ぎ済み（対応アラート）` : ""}
         </span>
       )}
-      {canReassign && mode === "none" && (
+      <span className="text-[11px] text-ink-sub">
+        {[t.area_name, t.slot_label].filter(Boolean).join(" ・ ")}
+        {" ・ "}
+        {SOURCE[t.source] ?? t.source}
+        {t.source !== "ai_chat" && t.created_by_name ? `（${t.created_by_name}）` : ""}
+      </span>
+      {!done && canReassign && mode === "none" && (
         <div className="flex gap-1.5">
           {t.assignee_id && !checkPending && (
             <button type="button" onClick={() => setMode("check")} className="min-h-9 flex-1 rounded-lg border border-line-input text-[13px]">
               担当者に確認
             </button>
           )}
-          <button type="button" onClick={() => setMode("assign")} className="min-h-9 flex-1 rounded-lg border border-danger text-[13px] font-bold text-danger">
-            手動で割り当てる
+          <button
+            type="button"
+            onClick={() => setMode("assign")}
+            className={`min-h-9 flex-1 rounded-lg border text-[13px] ${t.assignee_id ? "border-line-input" : "border-danger font-bold text-danger"}`}
+          >
+            {t.assignee_id ? "割り当て直す" : "手動で割り当てる"}
           </button>
         </div>
       )}
@@ -223,7 +282,7 @@ function AttentionCard({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            run(() => requestCheckAction(t.id, slotId, message));
+            run(() => requestCheckAction(t.id, message));
           }}
           className="flex flex-col gap-1.5"
         >
@@ -246,16 +305,15 @@ function AttentionCard({
               {t.assignee_name}さんが対応中です。割り当て直すと、{t.assignee_name}さんには「対応不要」と通知します。{checkPending ? "" : "先に「担当者に確認」もできます。"}
             </span>
           )}
-          {/* 表示中の枠の人を先に、ほかの枠に出勤している人をその後に（選ぶとチケットをその枠に移す） */}
-          {groupBySlot(others).map((group) => (
+          {groupBySlot(others, t.slot_id).map((group) => (
             <div key={group.slotId} className="flex flex-col gap-1">
-              <span className="text-[11px] text-ink-sub">{group.sameSlot ? "この枠" : `ほかの枠：${group.slotLabel}`}</span>
+              <span className="text-[11px] text-ink-sub">{group.sameSlot ? `この枠：${group.slotLabel}` : `ほかの枠：${group.slotLabel}`}</span>
               {group.members.map((c) => (
                 <button
                   key={`${c.slotId}-${c.id}`}
                   type="button"
                   disabled={pending}
-                  onClick={() => run(() => assignManuallyAction(t.id, slotId, c.id, c.slotId))}
+                  onClick={() => run(() => assignManuallyAction(t.id, c.id, c.slotId))}
                   className="min-h-9 rounded-lg border border-line-input text-[13px]"
                 >
                   {c.name}に割り当てる
@@ -339,12 +397,9 @@ function RegisterForm({ form }: { form: OrderForm }) {
         e.preventDefault();
         register();
       }}
-      className="flex flex-col gap-3 rounded-xl border border-line bg-surface px-4 py-3.5"
+      className="flex flex-col gap-3 px-4 py-3.5"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-base font-bold">オーダーを登録</h2>
-        <span className="text-xs text-ink-sub">担当の枠は部屋と品目から自動で決まります</span>
-      </div>
+      <span className="text-xs text-ink-sub">担当の枠は部屋と品目から自動で決まります</span>
       <div className="flex flex-wrap items-end gap-2.5">
         <label className="flex w-36 flex-col gap-1 text-xs text-ink-sub">
           部屋

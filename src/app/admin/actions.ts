@@ -13,7 +13,7 @@ import { approveSchema, approveSource, createSource, deleteSource as deleteInfoS
 import { addNotice, deleteNotice, previewNotice, readDocument } from "@/server/knowledge-admin";
 import { addArea, addSlot, deleteArea, deleteSlot, saveItemSettings, setFloorArea, setSeats, type SaveItemsInput } from "@/server/items";
 import { requestCheckBySupervisor } from "@/server/order-checks";
-import { assignManually, previewAssignment, registerOrder, type AssignmentPreview, type RegisterOrderInput } from "@/server/order-board";
+import { assignManually, previewAssignment, registerOrder, ticketSlot, type AssignmentPreview, type RegisterOrderInput } from "@/server/order-board";
 import { answerGap, dismissGap, getConversationMessages, type AnswerResult, type ConversationMessage } from "@/server/questions";
 import { acceptHandoff, closeHandoff, replyToGuest } from "@/server/staff-work";
 
@@ -172,8 +172,9 @@ export async function registerOrderAction(input: RegisterOrderInput): Promise<Re
 }
 
 // 手動割り当て。ほかの枠の人に割り当てるときは、移す先の枠の権限も確認する
-export async function assignManuallyAction(ticketId: string, slotId: string, toMemberId: string, toSlotId: string): Promise<Result> {
+export async function assignManuallyAction(ticketId: string, toMemberId: string, toSlotId: string): Promise<Result> {
   return guard(async () => {
+    const slotId = await ticketSlot(ticketId);
     const member = await authorize("order.reassign", slotId);
     if (toSlotId !== slotId) await authorize("order.reassign", toSlotId);
     await assignManually(member, ticketId, toMemberId, toSlotId);
@@ -183,9 +184,9 @@ export async function assignManuallyAction(ticketId: string, slotId: string, toM
 }
 
 // 上長の「担当者に確認」。担当者に状況の確認を送る（docs/005_order.md 6章）
-export async function requestCheckAction(ticketId: string, slotId: string, message: string): Promise<Result> {
+export async function requestCheckAction(ticketId: string, message: string): Promise<Result> {
   return guard(async () => {
-    const member = await authorize("order.reassign", slotId);
+    const member = await authorize("order.reassign", await ticketSlot(ticketId));
     await requestCheckBySupervisor(member, ticketId, message.slice(0, 200));
     await audit(member, "order.reassign", "ticket.request_check", { type: "ticket", id: ticketId }, { message });
     refresh();
