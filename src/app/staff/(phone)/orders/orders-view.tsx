@@ -205,7 +205,8 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
                   >
                     {t.status === "new" ? "向かう" : "届けた"}
                   </button>
-                  {t.status === "new" && (
+                  {/* 状況の確認が来ているときは、確認のパネルの「対応できない」を使う */}
+                  {t.status === "new" && !t.check_pending && (
                     <button
                       type="button"
                       onClick={() => setDeclining(t.id)}

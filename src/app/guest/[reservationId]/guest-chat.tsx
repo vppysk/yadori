@@ -152,7 +152,14 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
           )}
         </div>
         {ordersOpen && openTickets.length > 0 && (
-          <OpenOrders tickets={openTickets} timezone={session.timezone} reservationId={reservationId} onChange={refresh} />
+          <OpenOrders
+            tickets={openTickets}
+            timezone={session.timezone}
+            today={session.today}
+            checkOut={session.guest.checkOut}
+            reservationId={reservationId}
+            onChange={refresh}
+          />
         )}
         {staffRequest && (
           <div className="flex items-center justify-between gap-2 rounded-xl bg-primary-soft py-1 pr-1 pl-3 text-xs text-primary">
@@ -311,18 +318,37 @@ function ticketStatus(t: GuestTicket, timezone: string): string {
 }
 
 // 未完了のご依頼の一覧。メッセージを書かなくても「状況を確認する」で担当者に確認できる
-function OpenOrders({ tickets, timezone, reservationId, onChange }: { tickets: GuestTicket[]; timezone: string; reservationId: string; onChange: () => Promise<void> }) {
+function OpenOrders({
+  tickets,
+  timezone,
+  today,
+  checkOut,
+  reservationId,
+  onChange,
+}: {
+  tickets: GuestTicket[];
+  timezone: string;
+  today: string;
+  checkOut: string;
+  reservationId: string;
+  onChange: () => Promise<void>;
+}) {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<string | null>(null);
+  // 時間を変更中のご依頼と、選んだ日時
+  const [editing, setEditing] = useState<{ ticketId: string; date: string; time: string } | null>(null);
+  const tomorrow = addDay(today);
+  const dates = [today, ...(tomorrow <= checkOut ? [tomorrow] : [])];
 
-  async function nudge(ticketId: string) {
+  async function nudge(ticketId: string, extra?: { action: "reschedule_order"; deliver: { date: string; time: string } }) {
     setPending(ticketId);
     try {
       const res = await fetch(`/api/guest/${encodeURIComponent(reservationId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "nudge_order", ticketId }),
+        body: JSON.stringify({ action: "nudge_order", ticketId, ...extra }),
       });
+      if (extra && res.ok) setEditing(null);
       const data = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
       setNotes((n) => ({ ...n, [ticketId]: data.message ?? data.error ?? "確認できませんでした" }));
       await onChange();
@@ -340,14 +366,64 @@ function OpenOrders({ tickets, timezone, reservationId, onChange }: { tickets: G
           <span className="text-sm">{t.lines.map((l) => `${l.item} × ${l.quantity}`).join("、")}</span>
           <span className="text-xs text-primary">{ticketStatus(t, timezone)}</span>
           {notes[t.id] && <span className="text-xs text-ink-sub">{notes[t.id]}</span>}
-          <button
-            type="button"
-            onClick={() => void nudge(t.id)}
-            disabled={pending !== null || t.check_pending || t.nudge_cooling}
-            className="min-h-11 rounded-full border border-line text-[13px] font-medium disabled:opacity-40"
-          >
-            {pending === t.id ? "確認しています…" : "状況を確認する"}
-          </button>
+          {editing?.ticketId === t.id ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex gap-1.5">
+                <select
+                  aria-label="お届けの日"
+                  value={editing.date}
+                  onChange={(e) => setEditing({ ...editing, date: e.target.value })}
+                  className="min-h-11 flex-1 rounded-[10px] border border-line-input bg-canvas px-2 text-[15px]"
+                >
+                  {dates.map((d) => (
+                    <option key={d} value={d}>
+                      {d === today ? "本日" : "明日"}（{formatDay(d)}）
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="time"
+                  aria-label="お届けの時刻"
+                  step={600}
+                  value={editing.time}
+                  onChange={(e) => setEditing({ ...editing, time: e.target.value })}
+                  className="min-h-11 flex-1 rounded-[10px] border border-line-input bg-canvas px-2 text-[15px]"
+                />
+              </div>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void nudge(t.id, { action: "reschedule_order", deliver: { date: editing.date, time: editing.time } })}
+                  disabled={pending !== null || !editing.time}
+                  className="min-h-11 flex-1 rounded-full bg-primary text-[13px] font-bold text-white disabled:opacity-40"
+                >
+                  {pending === t.id ? "変更しています…" : "この時間に変更する"}
+                </button>
+                <button type="button" onClick={() => setEditing(null)} className="min-h-11 px-3 text-[13px] text-ink-sub">
+                  やめる
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => void nudge(t.id)}
+                disabled={pending !== null || t.check_pending || t.nudge_cooling}
+                className="min-h-11 rounded-full border border-line text-[13px] font-medium disabled:opacity-40"
+              >
+                {pending === t.id ? "確認しています…" : "状況を確認する"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing({ ticketId: t.id, date: today, time: "" })}
+                disabled={pending !== null}
+                className="min-h-11 rounded-full border border-line text-[13px] font-medium disabled:opacity-40"
+              >
+                時間を変更
+              </button>
+            </div>
+          )}
         </div>
       ))}
     </section>

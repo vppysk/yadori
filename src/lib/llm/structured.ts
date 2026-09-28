@@ -12,6 +12,8 @@ type StructuredParams<T extends z.ZodType> = {
   system: string;
   prompt: string;
   maxAttempts?: number;
+  // 出力の上限。同じ内容を繰り返して止まらないときに早めに打ち切る（再試行する）
+  maxOutputTokens?: number;
 } & ModelOptions;
 
 // コスト計測（plan 4.3）の元データ。再試行分も合算する
@@ -39,6 +41,7 @@ export async function generateStructured<T extends z.ZodType>({
   system,
   prompt,
   maxAttempts = 2,
+  maxOutputTokens,
   thinking,
 }: StructuredParams<T>): Promise<StructuredResult<z.infer<T>>> {
   const usage: LlmUsage = { modelId: modelIdFor(tier), inputTokens: 0, outputTokens: 0, reasoningTokens: 0, ms: 0 };
@@ -46,13 +49,22 @@ export async function generateStructured<T extends z.ZodType>({
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const startedAt = performance.now();
-    const result = await generateText({
-      model: getModel(tier, { thinking }),
-      system,
-      prompt,
-      tools: { [name]: tool({ description, inputSchema: schema }) },
-      toolChoice: { type: "tool", toolName: name },
-    });
+    let result;
+    try {
+      result = await generateText({
+        model: getModel(tier, { thinking }),
+        system,
+        prompt,
+        tools: { [name]: tool({ description, inputSchema: schema }) },
+        toolChoice: { type: "tool", toolName: name },
+        maxOutputTokens,
+      });
+    } catch (error) {
+      // Lightningが同じ要素を繰り返して上限で止まり、ツール呼び出しを文字で書くことがある（ToolChoiceViolation）。再試行する
+      usage.ms += Math.round(performance.now() - startedAt);
+      lastError = error;
+      continue;
+    }
     usage.ms += Math.round(performance.now() - startedAt);
     usage.inputTokens += result.usage.inputTokens ?? 0;
     usage.outputTokens += result.usage.outputTokens ?? 0;

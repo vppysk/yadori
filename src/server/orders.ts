@@ -263,6 +263,17 @@ export function fmtLocal(iso: string, timezone: string): string {
   return at.date === now.date ? at.time : `${Number(at.date.slice(5, 7))}/${Number(at.date.slice(8))} ${at.time}`;
 }
 
+// 会話の未完了のご依頼の品（ルーターが催促と新しい依頼を見分けるために使う）
+export async function listOpenOrderItems(conversationId: string): Promise<{ itemId: string; name: string; category: string; quantity: number }[]> {
+  return query(
+    `select i.id "itemId", i.name, i.category, sum(l.quantity)::int quantity
+     from tickets t join ticket_lines l on l.ticket_id = t.id join order_items i on i.id = l.order_item_id
+     where t.conversation_id = $1 and t.status in ('new', 'doing')
+     group by i.id, i.name, i.category`,
+    [conversationId],
+  );
+}
+
 // ---------- ゲスト画面 ----------
 
 export type GuestTicket = {

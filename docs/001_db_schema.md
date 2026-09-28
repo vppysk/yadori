@@ -45,7 +45,7 @@
 
 - **割り当ては `member_daily_load` ビューを使う**: 「本日の累計pt＋未完了pt」が最小の人。同点なら `last_assigned_at` が古い人。同フロアのまとめなどの細かいルールはアプリ側で書く
 - **実測の対応時間**: `ticket_events` と `tickets` の時刻から計算する（想定値→実測値の補正、4.4）
-- **期限切れの昇格**: `due_at` 超過を定期実行で検出し、`escalated_at` を記録して `handoffs(kind='overdue_order')` を作る
+- **期限切れ**: `due_at` 超過を定期実行で検出し、`escalated_at` を記録して担当者に状況の確認（`tickets.check_*`）を送る。`overdue_order` の引き継ぎは作らない（`docs/005_order.md` 6章）
 
 ### 会話・計測・実績（4.3, 4.5）
 | テーブル | 役割 |
@@ -115,3 +115,5 @@
 - `20261003000000_orders_v2.sql`: オーダーの改修（`docs/005_order.md`）。`order_items` に分類 `category` と状態 `status`（`active` を置き換え）。`rooms` の主キーを客室ID `id` にし、棟 `building`・エリア `area_id`・表示名 `label` を追加（`areas` のフロアの範囲は削除）。`members.seat_slot_id`・`seat_no`（担当席）。`tickets` に `room_id`・`note`・`requested_for`・`dispatched_at`（品目ごとの補足 `ticket_lines.note` は `note` にまとめて削除）。`hotels.order_schedule_lead_minutes`、`order_drafts`、引き継ぎの種類 `order_unavailable`。`mock_pms.reservations.room_id`
 - `20261004000000_guide_info_sources.sql`: 館内の情報と外部の情報源を「案内情報」に統合した（`docs/006_guide_info.md`）。`info_sources` にURL・外部情報のフラグ（`is_external`）・見る内容・取得の設定と状態・版（`content_hash`・`pending_body`・`pending_hash`・`dismissed_hash`）を追加し、状態に `update_pending`（更新の確認待ち）を足した。`external_sources` の行を移し、`external_source_boosts` は `info_source_boosts` に改名。`external_snapshots`・`external_sources` を削除。権限 `knowledge.source.edit` を廃止し、持っていたグループ・メンバーに `knowledge.facility.edit` を付けた
 - `20261005000000_auto_reflect.sql`: URLの資料に反映のしかた（`reflect_mode`: `approval`／`auto`）を追加。自動反映の要約・影響・スタッフへの配信文・変わった日時と、管理PCで未確認の印（`unseen_update`）。自動反映はURLのときだけ
+- `20261006000000_order_checks.sql`: オーダーの状況の確認と催促。`tickets` に `assignment_mode`（`auto`／`manual`。手動は自動の再割り当てをしない）、状況の確認（`check_requested_at`・`check_source`・`check_requested_by`・`check_message`・`check_replied_at`・`check_reply`・`check_eta_at`・`check_reply_note`）、ゲストの催促（`guest_nudges`・`last_nudged_at`）。`ticket_events.type` に `check_requested`／`check_replied`／`guest_nudged`
+- `20261007000000_order_reschedule.sql`: `ticket_events.type` に `rescheduled`（ゲストがお届け時間を変えた）

@@ -1,4 +1,4 @@
-import { cancelOrder, cancelStaffRequest, getGuestSession, handleGuestMessage, nudgeOrder, requestStaff, submitOrder } from "@/server/guest-chat";
+import { cancelOrder, cancelStaffRequest, getGuestSession, handleGuestMessage, nudgeOrder, requestStaff, rescheduleOrder, submitOrder } from "@/server/guest-chat";
 import type { SubmitOrderInput } from "@/server/order-drafts";
 
 // デモ用: 予約番号をそのままゲストの識別に使う（認証は未実装）
@@ -13,9 +13,10 @@ export async function POST(request: Request, { params }: RouteContext<"/api/gues
   const { reservationId } = await params;
   const body = (await request.json()) as {
     text?: string;
-    action?: "talk_to_staff" | "cancel_staff" | "submit_order" | "cancel_order" | "nudge_order";
+    action?: "talk_to_staff" | "cancel_staff" | "submit_order" | "cancel_order" | "nudge_order" | "reschedule_order";
     draftId?: string;
     ticketId?: string;
+    deliver?: { date: string; time: string };
     order?: SubmitOrderInput;
   };
   if (body.action === "talk_to_staff") return Response.json(await requestStaff(reservationId));
@@ -27,6 +28,16 @@ export async function POST(request: Request, { params }: RouteContext<"/api/gues
     } catch (error) {
       console.warn("[api/guest] 状況の確認に失敗", error);
       return Response.json({ error: error instanceof Error ? error.message : "確認できませんでした" }, { status: 409 });
+    }
+  }
+  // 未完了のご依頼の「時間を変更」
+  if (body.action === "reschedule_order") {
+    if (!body.ticketId || !body.deliver) return Response.json({ error: "お届けの日時をお選びください" }, { status: 400 });
+    try {
+      return Response.json(await rescheduleOrder(reservationId, body.ticketId, String(body.deliver.date), String(body.deliver.time)));
+    } catch (error) {
+      console.warn("[api/guest] お届け時間の変更に失敗", error);
+      return Response.json({ error: error instanceof Error ? error.message : "変更できませんでした" }, { status: 409 });
     }
   }
   // お届けの依頼の選択欄（docs/005_order.md 2章）

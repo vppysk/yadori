@@ -30,7 +30,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `src/lib/llm/structured.ts`: 構造化出力は `generateStructured`（強制ツール呼び出し＋Zod検証＋再試行）を使う。Token Factoryの`json_schema`はNemotronでスキーマを保証しないため、MastraやAI SDKの`output`／`structuredOutput`は使わない
 - `src/server/`: 業務ロジック（DBは `db.ts` の `pg` で直接SQL）。`guest-chat.ts` がゲスト1通の処理の流れ（ルーター → お届けの選択欄 → 知識の取得 → 回答 → 計測の記録）
 - `src/server/orders.ts`: チケットの割り当ては機械ロジック（同じ棟・フロアのまとめ → 担当量最小 → 最後の割り当てが古い順）。LLMは使わない。お届けの希望日時があるチケットは前倒しの時刻まで割り当てを保留し、`/api/cron/tickets` で割り当てる
-- オーダーの受付（`docs/005_order.md`）: `order-match.ts`（ゲストの言い方→品目の候補。名前・別名の一致 → 分類 → 部分一致）、`order-drafts.ts`（ゲストの選択欄。確定でチケットを作る。オーダーだけの発言は回答係を呼ばず定型文）。部屋は客室ID（`rooms.id`）で持ち、`room_number` 列には表示名を入れる。担当席は `members.seat_slot_id` の共有アカウント（`items.ts` の `setSeats`）
+- オーダーの受付（`docs/005_order.md`）: `order-match.ts`（ゲストの言い方→品目の候補。名前・別名の一致 → 分類 → 部分一致）、`order-drafts.ts`（ゲストの選択欄。確定でチケットを作る。オーダーだけの発言は回答係を呼ばず定型文）。部屋は客室ID（`rooms.id`）で持ち、`room_number` 列には表示名を入れる。担当席は `members.seat_slot_id` の共有アカウント（`items.ts` の `setSeats`）。期限切れ・ゲストの「状況を確認する」・上長の依頼は `order-checks.ts` で担当者に状況の確認を送る（期限切れで自動の割り当て直しはしない。オーダー遅延の引き継ぎは作らず、催促が続いたらクレームにする）
 - `src/server/auth.ts`: `requireMember`（画面）と `authorize(権限キー, 対象ID)`（サーバーアクション）。操作は必ず `authorize` → 処理 → `audit` の順
 - `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`info-sources.ts`（資料: 施設ごとの読み取り・根拠の確認・承認と優先度）、`facility-fields.ts`（値の期間・重なり・優先度の純粋関数。確認画面でも使う）、`questions.ts`（未回答の質問の一覧と回答。期間のない回答はよくある質問（RAG）、期間のある回答は資料へ）、`knowledge-review.ts`（会話ログの定期評価で未回答の質問を見つける。`/api/cron/knowledge-review`）、`staff-ask.ts`（スタッフのAI相談）
 - サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）。管理PCのサイドバーは `src/app/admin/nav-items.ts`（ホームはなく、`/admin` は一番上へ移る）、`src/app/manage/actions.ts`（経営）
@@ -66,6 +66,9 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - 実績の記録（`recordWorkEvent`）のたびにWebhookを `after()` で送る。本文のHMAC-SHA256を `X-Hotel-Agent-Signature` に付ける
 - 案内の回答は中型（Super）が既定。小型（Lightning）はデータのない項目（朝食時間など）を推測で答えた。ルーターは小型で可
 - ルーターは「スタッフと話したい」自体を complaint の要望にすることがある。指示で禁止し、`wants_staff` のときは短い要約の会話希望を要望から除いている（`router.ts` の `isTalkRequestOnly`）。人への引き継ぎは、同じ発言のオーダー発行とクレームの引き継ぎを済ませてから行う
+- ルーターには会話の未完了のご依頼を渡し、「タオルまだ？」のような催促（`order_follow_up`）を新しい依頼と見分ける。Lightningは「もう1枚追加で」を催促にしたり、催促の品を order にしたり、発言にない品を order に入れたりとぶれたため、催促の言葉・未完了の品との一致・発言に品名があるかをコードで判定している（`router.ts` の `normalize`）。お届け時間の変更（`order_reschedule`）も、時刻が「数字＋:／時」で発言にあり追加の言葉がないときだけにしている（「20分以内」を 0:20 と読んだ）
+- 回答係はお届けの時刻を約束しがち（チケットは変わっていないのに「8:30〜40にお届けします」と答えた）。指示で禁止し、未完了のご依頼の状況だけを渡している
+- Lightningはルーターで同じ要望を延々と繰り返し、出力の上限で止まってツール呼び出しを文字で書くことがある（`ToolChoiceViolation`）。`generateStructured` はこの例外も再試行し、ルーターは `maxOutputTokens` で早めに打ち切る
 - ルーターのLLMは品名・数量・備考・希望の時刻（本日／明日＋時刻）の読み取りだけ。品目との照合は `order-match.ts` のコードで行い、候補を広めに出してゲストが選択欄で確定する。LLMに照合させると、別名にある品をマスタにないと判断したり、ない品を既存品目に当てはめたりした
 - Tavily Extract は古い版を返すことがある（気象庁の予報JSONが5日前の版だった）。JavaScriptで中身を読み込むページ（JR北海道の運行情報など）は本文が取れないので、元のJSONのURLを登録する
 - 資料の読み取り（`info-sources.ts`）は、施設の洗い出し → 施設ごとに1回ずつ（「全体」は毎回）。全施設を一度に読ませると主な施設に引っ張られてほかの施設の記述を落とした。施設ごとだと別の施設の内容を取り違える（大浴場に「ランチ 休業」など）ので、先に該当する文（`quotes`）を抜き出させ、時刻・金額・タイトル・「休」がその中にない件、「全体」でほかの施設と同じ件、「通常どおり」だけの件はコードで捨てる。施設名・項目名は enum にせずコードで照合する（enum だと短く書かれて弾かれ、再試行で内容ごと落とした）。指示だけでは防げなかったものはコードの規則にしている

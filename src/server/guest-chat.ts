@@ -4,7 +4,7 @@ import { classifyLlmError, type LlmFailure } from "@/lib/llm/errors";
 import { modelIdFor, type ModelTier } from "@/lib/llm/models";
 import type { LlmUsage } from "@/lib/llm/structured";
 import { generateAnswer, type Answer, type ConciergeContext } from "@/mastra/agents/concierge";
-import { ISO_TIMESTAMP, query, queryOne } from "./db";
+import { addDays, ISO_TIMESTAMP, query, queryOne } from "./db";
 import { getGuestContext, type GuestContext } from "./guest-context";
 import { checkReply, enabledHandoffCodes, unansweredCount } from "./guardrails";
 import { activeGuestRequest, cancelGuestRequest, createHandoff, type GuestRequest, type HandoffKind } from "./handoffs";
@@ -14,8 +14,8 @@ import { autoUpdateCitations, getAutoUpdates, renderAutoUpdates, type AutoUpdate
 import { getFacilityInfo, listFacilityNames, searchDocuments, type FacilityInfo } from "./knowledge";
 import { recordLlmCall, recordWorkEvent } from "./metrics";
 import { cancelDraft, listOpenDrafts, orderInstructions, orderReply, proposeOrder, submitDraft, type GuestOrderDraft, type OrderSummary, type SubmitOrderInput } from "./order-drafts";
-import { checkOpenTicketsForComplaint, nudgeFromGuest } from "./order-checks";
-import { getCatalog, listConversationTickets, type GuestTicket } from "./orders";
+import { checkOpenTicketsForComplaint, describeOpenTickets, followUpOrders, nudgeFromGuest, rescheduleOrders, rescheduleTicket } from "./order-checks";
+import { getCatalog, listConversationTickets, listOpenOrderItems, type GuestTicket } from "./orders";
 import { readRuleText } from "./integrations/pms";
 import { externalReadRule } from "./integrations/web-fetch";
 import { route, type RouteResult } from "./router";
@@ -108,6 +108,15 @@ export async function submitOrder(reservationId: string, draftId: string, input:
   return submitDraft({ hotel, guest, conversationId, draftId, input });
 }
 
+// 未完了のご依頼の「時間を変更」（docs/005_order.md 6章）
+export async function rescheduleOrder(reservationId: string, ticketId: string, date: string, time: string) {
+  const guest = await getGuestContext(reservationId);
+  if (!guest) throw new Error(`予約が見つかりません: ${reservationId}`);
+  const hotel = await getHotel(guest.hotelId);
+  const conversationId = await findOrCreateConversation(hotel, guest);
+  return { message: await rescheduleTicket(hotel, { conversationId, ticketId, date, time, checkOut: guest.checkOut }) };
+}
+
 // 未完了のご依頼の「状況を確認する」（docs/005_order.md 6章）。担当者に状況を確認し、遅れていればクレームとして引き継ぐ
 export async function nudgeOrder(reservationId: string, ticketId: string) {
   const guest = await getGuestContext(reservationId);
@@ -167,21 +176,34 @@ export async function handleGuestMessage(reservationId: string, text: string) {
     return { reply: null, citations: [] as Citation[], tickets: await listConversationTickets(conversationId), waitingForStaff: true };
   }
   const band = await currentTimeBand(hotel);
-  const [catalog, facilityNames] = await Promise.all([getCatalog(hotel.id), listFacilityNames(hotel.id)]);
+  const [catalog, facilityNames, openOrders] = await Promise.all([getCatalog(hotel.id), listFacilityNames(hotel.id), listOpenOrderItems(conversationId)]);
 
-  const routed = await route(text, catalog, facilityNames);
+  // 未完了のご依頼を渡し、「タオルまだ？」のような催促を新しい依頼と取り違えないようにする
+  const routed = await route(text, catalog, facilityNames, openOrders);
   await recordLlmCall({ hotelId: hotel.id, conversationId, messageId: userMessageId, purpose: "router", thinking: false, usage: routed.usage });
   const { intents } = routed.result;
   const conditions = await enabledHandoffCodes(hotel.id);
 
   // ガードレール（前）: 必ず人に引き継ぐ条件
   if (conditions.has("safety") && routed.result.safety) {
-    return handOffToStaff(hotel, guest, conversationId, intents[0].pattern, band?.id, text, {
+    return handOffToStaff(hotel, guest, conversationId, intents[0]?.pattern ?? "order", band?.id, text, {
       kind: "safety",
       messageId: userMessageId,
       reply: "すぐにスタッフにおつなぎします。命に関わる緊急の場合は、ためらわず119番に通報してください。",
     });
   }
+  // 未完了のご依頼への催促: 「状況を確認する」と同じく担当者に確認し、遅れていればクレームとして引き継ぐ（docs/005_order.md 6章）
+  const reschedule = routed.result.order_reschedule;
+  const today = localNow(hotel.timezone).date;
+  // 未完了のご依頼のお届け時間の変更（日付は本日／明日だけ読み取らせ、ここで決める）
+  const rescheduled = reschedule
+    ? await rescheduleOrders(hotel, {
+        conversationId, date: reschedule.day === "today" ? today : addDays(today, 1), time: reschedule.time, until: reschedule.until, checkOut: guest.checkOut,
+      })
+    : undefined;
+  const followUp = [rescheduled, routed.result.order_follow_up ? await followUpOrders(hotel, conversationId, guest.roomNumber) : undefined]
+    .filter(Boolean)
+    .join("\n") || undefined;
   // お届けの依頼は選択欄を出し、ゲストが確定したときにチケットを作る（取り扱いのない品・品切れは引き継ぐ）
   const order = await proposeOrder({ hotel, guest, conversationId, messageId: userMessageId, text, intents });
   const complaints = intents.filter((i) => i.pattern === "complaint");
@@ -195,7 +217,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
     }
   }
   // 未完了のオーダーがある会話での不満・催促（「まだ届かない」など）は、オーダーの催促として担当者に状況を確認する（docs/005_order.md 6章）
-  if (complaints.length > 0 || routed.result.strong_emotion) await checkOpenTicketsForComplaint(conversationId);
+  if (!followUp && (complaints.length > 0 || routed.result.strong_emotion)) await checkOpenTicketsForComplaint(conversationId);
   // 「スタッフと話したい」: 同じ発言のオーダーとクレームの引き継ぎを済ませてから人へ（AIは回答しない）
   if (conditions.has("wants_staff") && routed.result.wants_staff) {
     // オーダーの実績は発行時に記録済みのため、引き継ぎはオーダー以外の要望として数える
@@ -205,9 +227,9 @@ export async function handleGuestMessage(reservationId: string, text: string) {
     });
   }
 
-  // お届けの依頼だけの発言は、回答係を呼ばずに定型文で返す（品目・数量は選択欄で確定する）
-  if (order && intents.every((i) => i.pattern === "order")) {
-    const reply = orderReply(order);
+  // お届けの依頼・催促だけの発言は、回答係を呼ばずに定型文で返す（品目・数量は選択欄で確定する）
+  if ((order || followUp) && intents.every((i) => i.pattern === "order")) {
+    const reply = [followUp, order ? orderReply(order) : ""].filter(Boolean).join("\n");
     await insertMessage(conversationId, "assistant", reply);
     return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
   }
@@ -226,10 +248,10 @@ export async function handleGuestMessage(reservationId: string, text: string) {
 
   const tier: ModelTier = assignment.handler === "human" ? "small" : assignment.handler;
   const { answer, facilities, autoUpdates, failure } = await draftAnswer({
-    hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, order,
+    hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, order, orderUpdate: followUp,
+    openTickets: await describeOpenTickets(conversationId, hotel.timezone),
     hasComplaint: complaints.length > 0, tier, thinking: assignment.thinking,
   });
-  const today = localNow(hotel.timezone).date;
   const usage: LlmUsage = answer?.usage ?? { modelId: modelIdFor(tier), inputTokens: 0, outputTokens: 0, reasoningTokens: 0, ms: 0 };
   // 答えられなかったか（ガードレールの「同じ会話で2回答えられなかった」と実績に使う）。未回答の質問の一覧は会話ログの定期評価で作る（knowledge-review.ts）
   // モデルが「確認します」と答えたのに一覧を空で返すことがあるため、そのときも答えられなかったとみなす
@@ -314,6 +336,8 @@ export async function draftAnswer(params: {
   routed: RouteResult;
   allFacilityNames: string[];
   order: OrderSummary | undefined;
+  orderUpdate?: string; // 未完了のご依頼への催促・時間の変更に返した内容
+  openTickets?: string[]; // 未完了のご依頼の状況（回答係はこれ以外のお届けの状況を言わない）
   hasComplaint: boolean;
   tier: ModelTier;
   thinking: boolean;
@@ -336,7 +360,7 @@ export async function draftAnswer(params: {
   ]);
 
   const instructions = await buildInstructions({
-    hotel, guest, intents, order: params.order, hasComplaint: params.hasComplaint,
+    hotel, guest, intents, order: params.order, orderUpdate: params.orderUpdate, openTickets: params.openTickets, hasComplaint: params.hasComplaint,
     overrides: params.instructionOverrides, hasExternal: facilities.some((f) => f.fields.some((x) => x.values.some((v) => v.external))),
     hasAuto: autoUpdates.length > 0,
   });
@@ -372,6 +396,8 @@ async function buildInstructions(params: {
   guest: GuestContext;
   intents: RouteResult["intents"];
   order: OrderSummary | undefined;
+  orderUpdate?: string; // 未完了のご依頼への催促・時間の変更に返した内容
+  openTickets?: string[]; // 未完了のご依頼の状況（回答係はこれ以外のお届けの状況を言わない）
   hasComplaint: boolean;
   overrides?: InstructionOverrides;
   // 外部情報の資料から読み取った値を渡すか（出どころの添え方を指示に足す）
@@ -379,7 +405,7 @@ async function buildInstructions(params: {
   // 自動取得の最新情報（自動反映のURL）を渡すか
   hasAuto: boolean;
 }): Promise<string> {
-  const { hotel, guest, intents, order, hasComplaint, overrides, hasExternal, hasAuto } = params;
+  const { hotel, guest, intents, order, orderUpdate, openTickets, hasComplaint, overrides, hasExternal, hasAuto } = params;
   const patterns = [...new Set(intents.map((i) => i.pattern))];
   const [instructions, guardrails, readRule, externalRule] = await Promise.all([
     overrides
@@ -410,6 +436,8 @@ async function buildInstructions(params: {
     "日付は「本日」「明日」「10/21」のように短く書く（年は書かない）。",
     "ご到着前のゲストには「現在」「本日」ではなく「ご滞在中（10/20〜10/23）は」のように滞在日を主語にして答える。",
     "館内の情報に書かれていないサービス（ルームサービスなど）を勧めない。",
+    // AIがお届けの時刻を約束したが、チケットは変わっていなかった（2026-09-28）。手配の内容はシステムが決める
+    "お届け（備品・飲み物）の時刻・時間の変更・到着の見込み・手配の完了を、自分から約束しない。お届けの状況は【ご依頼の状況】に書かれたことだけを伝える。時間を変えたいと言われたら、画面の「ご依頼の状況」の「時間を変更」から変えられると案内する。",
     "答えられた質問には「スタッフに確認します」を付けない。",
     "営業時間などは、会話の中の過去の回答ではなく、必ず【最新の館内情報】で答える（情報は更新されていることがある）。",
     "ゲストの状況に書かれていない事実（到着からの経過時間など）を付け足さない。",
@@ -426,6 +454,10 @@ async function buildInstructions(params: {
     `・今日: ${now.date} ${now.time}（${stayStatus}）`,
     `・ご滞在: ${guest.checkIn}（チェックイン）〜 ${guest.checkOut}（チェックアウト）、${guest.roomNumber}号室、${guest.adults}名`,
     ...(order ? orderInstructions(order) : []),
+    ...(orderUpdate ? [`・未完了のご依頼について、次の内容を伝える（新しく手配したとは言わない）: ${orderUpdate}`] : []),
+    "",
+    "## ご依頼の状況（お届けについてはここに書かれたことだけを伝える）",
+    ...(openTickets?.length ? openTickets.map((t) => `・${t}`) : ["・未完了のご依頼はない"]),
     ...(hasComplaint ? ["・不満の内容はスタッフに引き継ぎ済み。お詫びし、担当者から改めて連絡すると伝える"] : []),
     // 予約・客室管理システムのお客様メモ（読み取りが許可されている場合のみ）と、その読み取りルール
     ...(guest.guestNotes?.length

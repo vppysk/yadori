@@ -243,7 +243,7 @@ function AttentionCard({
         <div className="flex flex-col gap-1.5">
           {t.status === "doing" && t.assignee_name && (
             <span className="rounded-md bg-caution-soft px-2 py-1.5 text-[11px] leading-normal text-caution">
-              {t.assignee_name}さんが対応中です。割り当て直すと、{t.assignee_name}さんには「対応不要」と通知します。先に「担当者に確認」もできます。
+              {t.assignee_name}さんが対応中です。割り当て直すと、{t.assignee_name}さんには「対応不要」と通知します。{checkPending ? "" : "先に「担当者に確認」もできます。"}
             </span>
           )}
           {/* 表示中の枠の人を先に、ほかの枠に出勤している人をその後に（選ぶとチケットをその枠に移す） */}

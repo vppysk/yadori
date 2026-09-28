@@ -3,7 +3,7 @@ import type { Member } from "./auth";
 import { query, queryOne, transaction } from "./db";
 import { createHandoff } from "./handoffs";
 import type { Hotel } from "./hotel";
-import { fmtLocal } from "./orders";
+import { dispatchTicket, fmtLocal, toRequestedFor } from "./orders";
 import { declineTicket } from "./staff-work";
 
 // オーダーの状況確認と催促（docs/005_order.md 6章）。
@@ -138,6 +138,22 @@ export async function nudgeFromGuest(hotel: Hotel, conversationId: string, ticke
   return { message: "担当のスタッフに状況を確認しています。わかり次第こちらに表示します。" };
 }
 
+// チャットでの催促（ルーターの order_follow_up）: 未完了のご依頼それぞれに「状況を確認する」と同じ処理をし、返事の文を作る
+export async function followUpOrders(hotel: Hotel, conversationId: string, roomNumber: string): Promise<string | undefined> {
+  const open = await query<{ id: string; items: string }>(
+    `select t.id, (select string_agg(item_name || '×' || quantity, '、' order by id) from ticket_lines where ticket_id = t.id) items
+     from tickets t where t.conversation_id = $1 and t.status in ('new', 'doing') order by t.created_at`,
+    [conversationId],
+  );
+  if (open.length === 0) return undefined;
+  const lines: string[] = [];
+  for (const ticket of open) {
+    const { message } = await nudgeFromGuest(hotel, conversationId, ticket.id, roomNumber);
+    lines.push(`ご依頼の${ticket.items}は、${message}`);
+  }
+  return lines.join("\n");
+}
+
 // オーダーの遅れへの不満はクレームとして引き継ぐ（オーダー遅延の引き継ぎは作らない）。チケットごとに対応中の1件まで
 export async function complaintForOrder(hotelId: string, conversationId: string | undefined, ticketId: string, roomNumber: string, summary: string) {
   const existing = await queryOne("select 1 from handoffs where ticket_id = $1 and kind = 'complaint' and status in ('open', 'accepted')", [ticketId]);
@@ -160,4 +176,110 @@ export async function checkOpenTicketsForComplaint(conversationId: string) {
     });
   }
   return open.length;
+}
+
+// ---------- お届け時間の変更 ----------
+
+// 回答係に渡す未完了のご依頼の状況（回答係はこれ以外のお届けの状況を言わない）
+export async function describeOpenTickets(conversationId: string, timezone: string): Promise<string[]> {
+  const rows = await query<{ items: string; status: string; dispatched: boolean; requested_for: string | null; pending: boolean; reply: string | null; eta: string | null }>(
+    `select (select string_agg(item_name || '×' || quantity, '、' order by id) from ticket_lines where ticket_id = t.id) items,
+       t.status, t.dispatched_at is not null dispatched, t.requested_for,
+       t.check_requested_at is not null and t.check_replied_at is null pending, t.check_reply reply, t.check_eta_at eta
+     from tickets t where t.conversation_id = $1 and t.status in ('new', 'doing') order by t.created_at`,
+    [conversationId],
+  );
+  return rows.map((r) => {
+    const when = r.requested_for ? `${fmtLocal(r.requested_for, timezone)}にお届けの予定` : "できるだけ早くお届け";
+    const state = r.pending
+      ? "担当のスタッフに状況を確認中"
+      : r.reply === "on_the_way"
+        ? `スタッフが向かっている${r.eta ? `（${fmtLocal(r.eta, timezone)}ごろ）` : ""}`
+        : r.status === "doing"
+          ? "スタッフが準備・移動中"
+          : r.dispatched
+            ? "受付済み"
+            : "時間指定で受付済み";
+    return `${r.items}: ${when}。${state}`;
+  });
+}
+
+// お届け時間の変更（チャット・「ご依頼の状況」の「時間を変更」）。未着手なら希望日時を変え、対応中なら担当者に希望を伝える。
+// 割り当ての前倒しより先の時刻になったら割り当てを外して保留に戻し、今の担当者には対応不要を知らせる
+export async function rescheduleTicket(
+  hotel: Hotel,
+  params: { conversationId: string; ticketId: string; date: string; time: string; until?: string; checkOut: string },
+): Promise<string> {
+  const { conversationId, ticketId, date, time, until, checkOut } = params;
+  if (date > checkOut) throw new Error("ご滞在中の日時をお選びください");
+  const requestedFor = await toRequestedFor(hotel, date, time);
+  const label = `${fmtLocal(requestedFor, hotel.timezone)}${until ? `〜${until}` : ""}`;
+  return transaction(async (client) => {
+    const { rows } = await client.query<{ status: string; assignee_id: string | null; dispatched: boolean; room_number: string; items: string }>(
+      `select t.status, t.assignee_id, t.dispatched_at is not null dispatched, t.room_number,
+         (select string_agg(item_name || '×' || quantity, '、' order by id) from ticket_lines where ticket_id = t.id) items
+       from tickets t where t.id = $1 and t.conversation_id = $2 for update`,
+      [ticketId, conversationId],
+    );
+    const ticket = rows[0];
+    if (!ticket || !["new", "doing"].includes(ticket.status)) throw new Error("このご依頼は完了しています");
+    // 向かっている途中の人とぶつからないよう、対応中は自動で変えず担当者に希望を伝える
+    if (ticket.status === "doing") {
+      await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'rescheduled', $2)", [ticketId, `対応中のため担当者に伝えた: ${label}`]);
+      const result = await requestCheck(client, ticketId, "guest", { message: `お届けは${label}をご希望です` });
+      return result === "requested"
+        ? `${ticket.items}はスタッフが準備・移動中のため、${label}のご希望を担当のスタッフに伝えました。`
+        : `${ticket.items}は担当のスタッフに確認中です。${label}のご希望もあわせてお伝えします。`;
+    }
+    const later = Date.parse(requestedFor) - hotel.order_schedule_lead_minutes * 60_000 > Date.now();
+    await client.query(
+      `update tickets set requested_for = $2, due_at = $2, escalated_at = null,
+         note = case when $3::text is null then note else concat_ws('／', nullif(note, ''), $3) end
+       where id = $1`,
+      [ticketId, requestedFor, until ? `お届け希望 ${label}` : null],
+    );
+    await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'rescheduled', $2)", [ticketId, `ゲストが時間を変更: ${label}`]);
+    if (later && ticket.dispatched) {
+      // 保留に戻し、前倒しの時刻に改めて割り当てる
+      await client.query(
+        `update tickets set assignee_id = null, assigned_at = null, dispatched_at = null, assignment_mode = 'auto',
+           check_requested_at = null, check_source = null, check_requested_by = null, check_message = null,
+           check_replied_at = null, check_reply = null, check_eta_at = null, check_reply_note = null
+         where id = $1`,
+        [ticketId],
+      );
+      if (ticket.assignee_id) {
+        await client.query(
+          "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_released', $2, $3, 'ticket', $4)",
+          [ticket.assignee_id, `${ticket.room_number}号室のオーダーは対応不要になりました`, `お届けが${label}に変わったため、改めて割り当てます`, ticketId],
+        );
+      }
+    } else if (ticket.assignee_id) {
+      await client.query(
+        "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_check', $2, $3, 'ticket', $4)",
+        [ticket.assignee_id, `${ticket.room_number}号室 お届け時間の変更`, `お届けは${label}をご希望です`, ticketId],
+      );
+    } else if (!ticket.dispatched) {
+      await dispatchTicket(client, hotel, ticketId);
+    }
+    return `${ticket.items}は${label}にお届けするよう変更しました。`;
+  });
+}
+
+// チャットでの時間の変更: 会話の未完了のご依頼すべてに当てる
+export async function rescheduleOrders(hotel: Hotel, params: { conversationId: string; date: string; time: string; until?: string; checkOut: string }) {
+  const open = await query<{ id: string }>(
+    "select id from tickets where conversation_id = $1 and status in ('new', 'doing') order by created_at",
+    [params.conversationId],
+  );
+  if (open.length === 0) return undefined;
+  const lines: string[] = [];
+  for (const { id } of open) {
+    try {
+      lines.push(await rescheduleTicket(hotel, { ...params, ticketId: id }));
+    } catch (error) {
+      lines.push(error instanceof Error ? error.message : "お届け時間を変更できませんでした。");
+    }
+  }
+  return [...new Set(lines)].join("\n");
 }
