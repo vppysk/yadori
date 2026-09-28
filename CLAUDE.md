@@ -16,7 +16,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `npm run dev` / `npm run build` / `npm run lint` / `npm run typecheck`（`next typegen` 込み）
 - `npm run verify:llm`: LLM層の疎通確認（モック、費用なし）。`npm run verify:llm:nebius` はToken Factoryを実際に呼ぶ（少額課金）
 - `npm run db:start` / `db:stop` / `db:reset`: ローカルSupabase（Docker必須）。クラウドへの適用は `npx supabase db push --db-url "$DATABASE_URL"`
-- `npm run dev:shifts`: デモのスタッフを今日の枠に出勤させる（割り当ての確認に必要）
+- `npm run dev:shifts`: デモのスタッフを今日出勤させる（割り当ての確認に必要）
 - `npm run try:guest -- R-1203 "プール何時まで？"`: ゲストの1通を画面なしで処理する（`.env.local` の `LLM_MODE` に従う）
 - `npm run dev:cron`: 期限の監視（`/api/cron/tickets`）、URLの資料の定期取得（`/api/cron/sources`）、会話ログの定期評価（`/api/cron/knowledge-review`、1日1回・現地3時以降）を1分ごとに呼ぶ（`npm run dev` と並行して起動）
 - `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績を生成（`signals.demo=true`）／ `npm run dev:seed-alerts`: 対応アラートに分類ごとの未対応・対応中を入れる（予約番号 `DEMO-*` の架空の会話）／ `npm run dev:seed-gaps`: 未回答の質問を、定期評価が今日3時に実行された状態で入れる（予約番号 `DEMO-GAP-*` の前日の会話）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
@@ -30,10 +30,10 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `src/lib/llm/structured.ts`: 構造化出力は `generateStructured`（強制ツール呼び出し＋Zod検証＋再試行）を使う。Token Factoryの`json_schema`はNemotronでスキーマを保証しないため、MastraやAI SDKの`output`／`structuredOutput`は使わない
 - `src/server/`: 業務ロジック（DBは `db.ts` の `pg` で直接SQL）。`guest-chat.ts` がゲスト1通の処理の流れ（ルーター → お届けの選択欄 → 知識の取得 → 回答 → 計測の記録）
 - `src/server/orders.ts`: チケットの割り当ては機械ロジック（同じ棟・フロアのまとめ → 担当量最小 → 最後の割り当てが古い順）。LLMは使わない。お届けの希望日時があるチケットは前倒しの時刻まで割り当てを保留し、`/api/cron/tickets` で割り当てる
-- オーダーの受付（`docs/005_order.md`）: `order-match.ts`（ゲストの言い方→品目の候補。名前・別名の一致 → 分類 → 部分一致）、`order-drafts.ts`（ゲストの選択欄。確定でチケットを作る。オーダーだけの発言は回答係を呼ばず定型文）。部屋は客室ID（`rooms.id`）で持ち、`room_number` 列には表示名を入れる。担当席は `members.seat_slot_id` の共有アカウント（`items.ts` の `setSeats`）。期限切れ・ゲストの「状況を確認する」・上長の依頼は `order-checks.ts` で担当者に状況の確認を送る（期限切れで自動の割り当て直しはしない。オーダー遅延の引き継ぎは作らず、催促が続いたらクレームにする）
+- オーダーの受付（`docs/005_order.md`）: `order-match.ts`（ゲストの言い方→品目の候補。名前・別名の一致 → 分類 → 部分一致）、`order-drafts.ts`（ゲストの選択欄。確定でチケットを作る。オーダーだけの発言は回答係を呼ばず定型文）。部屋は客室ID（`rooms.id`）で持ち、`room_number` 列には表示名を入れる。担当はスタッフごとの役割×エリアの担当表（`member_duties`、管理PC `/admin/orders/duties`、`duties.ts`）で、出勤はオン／オフだけ（`member_shifts`）。枠・担当席（共有アカウント）は廃止した。期限切れ・ゲストの「状況を確認する」・上長の依頼は `order-checks.ts` で担当者に状況の確認を送る（期限切れで自動の割り当て直しはしない。オーダー遅延の引き継ぎは作らず、催促が続いたらクレームにする）
 - `src/server/auth.ts`: `requireMember`（画面）と `authorize(権限キー, 対象ID)`（サーバーアクション）。操作は必ず `authorize` → 処理 → `audit` の順
 - `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`info-sources.ts`（資料: 施設ごとの読み取り・根拠の確認・承認と優先度）、`facility-fields.ts`（値の期間・重なり・優先度の純粋関数。確認画面でも使う）、`questions.ts`（未回答の質問の一覧と回答。期間のない回答はよくある質問（RAG）、期間のある回答は資料へ）、`knowledge-review.ts`（会話ログの定期評価で未回答の質問を見つける。`/api/cron/knowledge-review`）、`staff-ask.ts`（スタッフのAI相談）
-- サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）。管理PCのサイドバーは `src/app/admin/nav-items.ts`（ホームはなく、`/admin` は一番上へ移る）、`src/app/manage/actions.ts`（経営）
+- サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）。管理PCのサイドバーは `src/app/admin/nav-items.ts`（ホームはなく、`/admin` は一番上へ移る。オーダー管理と案内情報は中に左の一覧を持つ: `orders/orders-nav.tsx`・`knowledge/knowledge-nav.tsx`）、`src/app/manage/actions.ts`（経営）
 - MCP: `src/mcp/pms-server.ts`（予約・客室管理のモック、`/api/mcp/pms`）と `src/mcp/work-events-server.ts`（実績の出力口、`/api/mcp/work-events`）。どちらもBearerトークン必須。予約情報の読み書きは必ず `src/server/integrations/pms.ts`（変換層）を通し、項目ルールとAIの権限を確認する
 - `src/server/source-fetch.ts`: URLの資料（管理PCの案内情報 → 資料）。反映のしかたを資料ごとに選ぶ（`reflect_mode`）。自動反映は値に読み取らず、取得のたびに中型で要約・影響判定して【自動取得の最新情報】として回答に渡し、変わったら管理PCのバッジ（`unseen_update`）と、影響があれば現場スマホに通知する。以下は承認して反映の場合: 登録時に `integrations/web-fetch.ts`（Tavily Extract）で取得して読み取り、確認・承認する。定期取得（`/api/cron/sources`、検索はしない）で本文が変わったら読み直して「更新の確認待ち」（`update_pending`）にし、承認で差し替える（承認までは前の版で案内）。資料を承認できる人に通知。期間限定で頻度を上げられる（`info_source_boosts`）。定期取得はAIの権限 `integration.web_fetch.read` と項目 `external_updates` の読み取りを確認する。旧「外部の情報源」（`external-sources.ts`・【外部の最新情報】）は統合して削除した（`docs/006_guide_info.md`）
 - 引き継ぎの種類はきっかけごとに保存し、管理PC `/admin/handoffs`（対応アラート）の分類は `src/lib/handoff-kinds.ts` でまとめる。LLMの失敗は `src/lib/llm/errors.ts` の `classifyLlmError` で原因を分け、`system_error` の引き継ぎに残す（期待した出力が返らないときは `InvalidOutputError` を投げる）
@@ -94,7 +94,7 @@ TypeScriptで統一: Next.js（App Router）＋ Mastra（Next.jsに組み込み�
 
 - **案内情報（旧 館内の情報）は施設×項目×期間の値**（`facility_values`、タイトル＋本文＋期間、型なし。カテゴリはない）。事前に決めるマスタはなく、施設も項目名も資料の読み取り→確認画面で「新しく作る／既存と同じ」を確かめて承認したときに作る。スタッフは資料（PDF・画像・文章・URL）を入れ、AIの読み取りを確認・承認するだけ（直接入力の画面はない）。管理主体がホテルの外の資料には外部情報のフラグ（`info_sources.is_external`）を付け、周辺の施設も施設として読み取る。外部の値はAIに「（外部情報: 資料名）」付きで渡し、回答の表記は `cleanReply` で「（資料名の情報）」に直す（Nemotronが表記をそのまま写すため）。ホテル全体の案内（チェックイン・駐車場など）は「全体」欄の値。期間の重なりは承認時にスタッフが優先を選び `priority` で持つ（特記事項は常に最優先）。回答には承認済みを滞在日で絞って渡し、値のない項目も「情報なし」と渡す（`docs/002_facility_master_design.md`）
 - **知識は2層**: 期間で変わる情報（営業時間・メニュー・特記事項）は期間付きの構造化**マスタ**、日付で変わらない説明文だけを**RAG**に入れる。回答は「ゲストの滞在日」基準で答え分ける（今日の日付ではない）。特記事項はマスタの各施設内の項目で、有効期間中は通常営業情報より優先
-- **オーダーの割り当ては機械ロジック**（役割×エリアの枠、品目ごとの重み1〜3pt、累計＋未完了ptが最小の人へ）。LLMは文章から品目・数量を読み取る部分のみ。公平性の説明・再現性のため
+- **オーダーの割り当ては機械ロジック**（役割×エリアの担当、エリアの担当を優先して全館の担当へ、品目ごとの重み1〜3pt、人ごとの累計＋未完了ptが最小の人へ）。LLMは文章から品目・数量を読み取る部分のみ。公平性の説明・再現性のため
 - **指示は自然文、権限はデータで固定**: プロンプトで書く内容は柔軟でも、外部連携の読み書き範囲・禁止事項・引き継ぎ条件は構造化設定のガードレールで固定し、プロンプトで越えられないようにする（4.7）
 - **権限は機能（MCPツール1つ＝権限1つ）単位**で、人・AIエージェント・外部システムを同じ「メンバー」として扱う。実効権限は所属グループと個別付与の合計（拒否なし、範囲は広い方が有効）（4.8）
 - **人のシフト・配置最適化は作らない**。実績を標準形式（CSV/JSON・Webhook・MCP）で出力し、将来の配置エンジンと疎結合にする（4.5, 11章）

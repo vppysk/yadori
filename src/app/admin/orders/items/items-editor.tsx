@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import type { ItemSettings } from "@/server/items";
 import type { ItemStatus } from "@/server/orders";
-import { addAreaAction, addSlotAction, deleteAreaAction, deleteSlotAction, saveItemSettingsAction, setFloorAreaAction, setSeatsAction } from "../actions";
+import { saveItemSettingsAction } from "../../actions";
 
 const LEVELS = [
   { value: 1, label: "軽", on: "bg-primary-soft text-primary border-primary" },
@@ -57,7 +57,7 @@ export function ItemsEditor({ data }: { data: ItemSettings }) {
   const categories = [...new Set(items.map((i) => i.category.trim()).filter(Boolean))];
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col gap-4 px-6 py-5.5 xl:flex-row">
+    <main className="flex min-w-0 flex-1 flex-col gap-4 px-6 py-5.5 2xl:flex-row">
       <div className="flex min-w-0 flex-1 flex-col gap-6">
         <section className="flex min-w-0 flex-col gap-3.5">
           <div className="flex items-center justify-between gap-3">
@@ -195,11 +195,9 @@ export function ItemsEditor({ data }: { data: ItemSettings }) {
           ))}
           {data.suggestions.length === 0 && <p className="text-xs text-ink-sub">見直しの提案は、実測が各品目{3}件以上たまると表示されます。</p>}
         </section>
-
-        <AreasSection data={data} run={run} pending={pending} />
       </div>
 
-      <aside aria-label="割り当ての設定" className="flex w-full shrink-0 flex-col gap-4 self-start rounded-[14px] border border-line bg-surface p-4.5 xl:w-[320px]">
+      <aside aria-label="割り当ての設定" className="flex w-full shrink-0 flex-col gap-4 self-start rounded-[14px] border border-line bg-surface p-4.5 2xl:w-[320px]">
         <h2 className="text-base font-bold">割り当ての設定</h2>
         <div className="flex flex-col gap-1.5 text-sm">
           <span className="text-ink-sub">重みのポイント</span>
@@ -247,153 +245,8 @@ export function ItemsEditor({ data }: { data: ItemSettings }) {
           <input type="checkbox" checked={settings.declineReasonRequired} onChange={(e) => (setSettings((s) => ({ ...s, declineReasonRequired: e.target.checked })), touch())} className="size-5 accent-primary" />
           「対応できない」は理由の入力を必須にする
         </label>
-        <p className="text-xs text-ink-sub">割り当ての設定は「保存」で反映されます。</p>
-        <div className="h-px bg-line" />
-        <SlotsSection data={data} run={run} pending={pending} />
+        <p className="text-xs text-ink-sub">割り当ての設定は「保存」で反映されます。スタッフごとの担当（役割×エリア）は「担当設定」で設定します。</p>
       </aside>
     </main>
-  );
-}
-
-// 担当の枠（役割×エリア）と担当席の人数（docs/005_order.md 3章）
-function SlotsSection({ data, run, pending }: { data: ItemSettings; run: Run; pending: boolean }) {
-  const [newSlot, setNewSlot] = useState({ role: data.roles[0]?.id ?? "", area: "" });
-  const [seats, setSeats] = useState<Record<string, string>>(Object.fromEntries(data.slots.map((s) => [s.id, String(s.seats)])));
-  return (
-    <div className="flex flex-col gap-2 text-sm">
-      <span className="text-ink-sub">担当の枠（役割 × エリア）</span>
-      <p className="text-xs leading-relaxed text-ink-sub">
-        担当席：枠ごとの共有アカウントです。人数を決めると「{data.slots[0]?.label ?? "ハウスキーピング 12〜15F"} ①」のような席が作られ、端末でその席としてログインして使います。個人のアカウントでも出勤できます。
-      </p>
-      {data.slots.map((s) => (
-        <div key={s.id} className="flex flex-col gap-1 rounded-lg bg-canvas px-2.5 py-2">
-          <div className="flex items-center justify-between gap-2">
-            <strong className="text-[13px]">{s.label}</strong>
-            <button type="button" aria-label={`${s.label}を削除`} disabled={pending} onClick={() => run(() => deleteSlotAction(s.id))} className="min-h-9 w-8 text-ink-sub">
-              ×
-            </button>
-          </div>
-          <div className="flex items-center justify-between gap-2 text-xs text-ink-sub">
-            <span>本日の出勤 {s.members}名</span>
-            <span className="flex items-center gap-1">
-              担当席
-              <input
-                aria-label={`${s.label}の担当席の人数`}
-                inputMode="numeric"
-                value={seats[s.id] ?? ""}
-                onChange={(e) => setSeats((p) => ({ ...p, [s.id]: e.target.value }))}
-                className="min-h-9 w-12 rounded-lg border border-line-input bg-surface px-2 text-right text-sm text-ink"
-              />
-              席
-              <button
-                type="button"
-                disabled={pending || seats[s.id] === String(s.seats)}
-                onClick={() => run(() => setSeatsAction(s.id, Number(seats[s.id])), "担当席を更新しました")}
-                className="min-h-9 rounded-lg border border-primary px-2 font-bold text-primary disabled:border-line-input disabled:text-ink-sub disabled:opacity-60"
-              >
-                反映
-              </button>
-            </span>
-          </div>
-        </div>
-      ))}
-      <div className="mt-1 flex flex-col gap-1.5 rounded-lg border border-dashed border-line-input p-2">
-        <select aria-label="役割" value={newSlot.role} onChange={(e) => setNewSlot((p) => ({ ...p, role: e.target.value }))} className="min-h-9 rounded-lg border border-line-input px-1.5">
-          {data.roles.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
-        </select>
-        <select aria-label="エリア" value={newSlot.area} onChange={(e) => setNewSlot((p) => ({ ...p, area: e.target.value }))} className="min-h-9 rounded-lg border border-line-input px-1.5">
-          <option value="">全館</option>
-          {data.areas.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
-        <button type="button" disabled={pending || !newSlot.role} onClick={() => run(() => addSlotAction(newSlot.role, newSlot.area || null))} className="min-h-9 rounded-lg border border-dashed border-[#BDB6AA] text-ink-sub">
-          ＋ 枠を追加
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// エリアと部屋（docs/005_order.md 4章）。部屋は予約・客室管理システムのIDで持ち、棟・フロアごとにエリアへ入れる
-function AreasSection({ data, run, pending }: { data: ItemSettings; run: Run; pending: boolean }) {
-  const [name, setName] = useState("");
-  const floorLabel = (f: ItemSettings["floors"][number]) => `${f.building ? `${f.building} ` : ""}${f.floor}F`;
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-bold">エリアと部屋</h2>
-      <p className="text-xs leading-relaxed text-ink-sub">
-        オーダーは部屋のエリアの枠に割り当てます（エリアのない部屋は全館担当の枠だけが受けます）。部屋は予約・客室管理システムの部屋IDで区別するため、本館と別館で同じ部屋番号があっても分けられます。
-      </p>
-      <div className="flex flex-col gap-4 md:flex-row">
-        <div className="flex flex-col gap-1.5 md:w-60">
-          <span className="text-xs text-ink-sub">エリア</span>
-          {data.areas.map((a) => (
-            <div key={a.id} className="flex min-h-10 items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 text-sm">
-              <span>{a.name}</span>
-              <span className="flex items-center gap-1 text-xs text-ink-sub">
-                {a.rooms}室
-                <button type="button" aria-label={`${a.name}を削除`} disabled={pending || a.slots > 0} title={a.slots > 0 ? "担当の枠で使っています" : undefined} onClick={() => run(() => deleteAreaAction(a.id))} className="min-h-9 w-7 disabled:opacity-30">
-                  ×
-                </button>
-              </span>
-            </div>
-          ))}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              run(() => addAreaAction(name));
-              setName("");
-            }}
-            className="flex gap-1.5"
-          >
-            <input aria-label="新しいエリア名" value={name} onChange={(e) => setName(e.target.value)} placeholder="例: 別館" className="min-h-10 min-w-0 flex-1 rounded-lg border border-line-input px-2.5 text-sm" />
-            <button type="submit" disabled={pending || !name.trim()} className="min-h-10 rounded-lg border border-dashed border-[#BDB6AA] px-3 text-sm text-ink-sub disabled:opacity-50">
-              追加
-            </button>
-          </form>
-        </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <span className="text-xs text-ink-sub">棟・フロアごとのエリア</span>
-          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
-            {data.floors.map((f) => {
-              const mixed = f.area_ids.length > 1;
-              return (
-                <label key={floorLabel(f)} className="flex min-h-10 items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 text-sm">
-                  <span>
-                    {floorLabel(f)} <span className="text-xs text-ink-sub">{f.rooms}室</span>
-                  </span>
-                  <select
-                    aria-label={`${floorLabel(f)}のエリア`}
-                    disabled={pending}
-                    value={mixed ? "__mixed" : (f.area_ids[0] ?? "")}
-                    onChange={(e) => run(() => setFloorAreaAction(f.building, f.floor, e.target.value || null))}
-                    className="min-h-9 rounded-lg border border-line-input px-1.5 text-[13px]"
-                  >
-                    {mixed && (
-                      <option value="__mixed" disabled>
-                        部屋ごとに異なる
-                      </option>
-                    )}
-                    <option value="">エリアなし</option>
-                    {data.areas.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </section>
   );
 }

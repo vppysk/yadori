@@ -3,39 +3,41 @@ import type { Member } from "./auth";
 import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
 import { getAiAgentMemberId, getHotel, localNow, type Hotel } from "./hotel";
 import { recordWorkEvent } from "./metrics";
-import { assignUnassigned, getRoom, pickAssignee } from "./orders";
+import { assignUnassigned, getRoom, lockAssignment, pickAssignee } from "./orders";
 
-// ---------- 出勤（その日の枠と担当者。plan 4.2） ----------
+// ---------- 出勤（オン／オフだけ。担当の役割・エリアは担当表で決まる。plan 4.2） ----------
 
-export type SlotOption = { id: string; label: string; on_shift: boolean };
+// 自分の担当（役割×エリア。管理PCの担当表で決まる）と、今日出勤しているか
+export type MyDuties = { labels: string[]; onShift: boolean };
 
-// 担当になれる枠（範囲付きの権限も考慮）と、今日その枠に出勤しているか
-export async function listMySlots(member: Member): Promise<SlotOption[]> {
+export async function getMyDuties(member: Member): Promise<MyDuties> {
   const hotel = await getHotel(member.hotel_id);
-  return query<SlotOption>(
-    `select s.id, r.name || coalesce(' ' || a.name, '（全館）') label,
-       exists (select 1 from slot_shifts ss where ss.slot_id = s.id and ss.member_id = $2 and ss.work_date = $3 and ss.ended_at is null) on_shift
-     from slots s join job_roles r on r.id = s.job_role_id left join areas a on a.id = s.area_id
-     where s.hotel_id = $1 and has_permission($2, 'order.assignable', s.id)
-     order by r.name, a.sort, a.name`,
-    [member.hotel_id, member.id, localNow(hotel.timezone).date],
-  );
+  const [duties, shift] = await Promise.all([
+    query<{ label: string }>(
+      `select r.name || ' ' || coalesce(a.name, '全館') label
+       from member_duties d join job_roles r on r.id = d.job_role_id left join areas a on a.id = d.area_id
+       where d.member_id = $1 order by r.name, a.sort nulls first, a.name`,
+      [member.id],
+    ),
+    queryOne<{ on_shift: boolean }>("select ended_at is null on_shift from member_shifts where member_id = $1 and work_date = $2", [member.id, localNow(hotel.timezone).date]),
+  ]);
+  return { labels: duties.map((d) => d.label), onShift: shift?.on_shift ?? false };
 }
 
-export async function startShift(member: Member, slotId: string) {
+export async function startShift(member: Member) {
   const hotel = await getHotel(member.hotel_id);
   await query(
-    `insert into slot_shifts (slot_id, member_id, work_date) values ($1, $2, $3)
-     on conflict (slot_id, member_id, work_date) do update set ended_at = null`,
-    [slotId, member.id, localNow(hotel.timezone).date],
+    `insert into member_shifts (member_id, work_date) values ($1, $2)
+     on conflict (member_id, work_date) do update set ended_at = null`,
+    [member.id, localNow(hotel.timezone).date],
   );
-  // 担当者なしで待っていたチケットを、出勤した枠で割り当てる
-  await assignUnassigned(hotel, slotId, member.id);
+  // 担当者なしで待っていたチケットを、出勤した人も含めて割り当て直す
+  await assignUnassigned(hotel, member.id);
 }
 
 export async function endShift(member: Member) {
   const hotel = await getHotel(member.hotel_id);
-  await query("update slot_shifts set ended_at = now() where member_id = $1 and work_date = $2 and ended_at is null", [
+  await query("update member_shifts set ended_at = now() where member_id = $1 and work_date = $2 and ended_at is null", [
     member.id,
     localNow(hotel.timezone).date,
   ]);
@@ -77,31 +79,27 @@ export async function listMyTickets(memberId: string): Promise<MyTicket[]> {
   );
 }
 
-export type LoadSummary = { slotLabel: string; myPoints: number; averagePoints: number; members: number };
+export type LoadSummary = { myPoints: number; averagePoints: number; members: number };
 
-// 本日の担当量（累計pt＋未完了pt）と、同じ枠の平均。偏りがないことを本人も確認できるようにする
+// 本日の担当量（累計pt＋未完了pt、役割をまたいだ合計）と、出勤している担当者の平均。偏りがないことを本人も確認できるようにする
 export async function loadSummary(member: Member): Promise<LoadSummary | undefined> {
   const hotel = await getHotel(member.hotel_id);
   return queryOne<LoadSummary>(
-    `with mine as (
-       select l.slot_id from member_daily_load l where l.member_id = $1 and l.work_date = $2 limit 1
-     )
-     select r.name || coalesce(' ' || a.name, '') "slotLabel",
-       coalesce(max(l.done_points + l.open_points) filter (where l.member_id = $1), 0)::int "myPoints",
+    `select coalesce(max(l.done_points + l.open_points) filter (where l.member_id = $1), 0)::int "myPoints",
        round(avg(l.done_points + l.open_points))::int "averagePoints",
        count(*)::int members
-     from mine join member_daily_load l on l.slot_id = mine.slot_id and l.work_date = $2
-     join slots s on s.id = mine.slot_id join job_roles r on r.id = s.job_role_id left join areas a on a.id = s.area_id
-     group by r.name, a.name`,
-    [member.id, localNow(hotel.timezone).date],
+     from member_daily_load l join members m on m.id = l.member_id
+     where l.work_date = $2 and m.hotel_id = $3 and m.active and exists (select 1 from member_duties d where d.member_id = m.id)
+     having bool_or(l.member_id = $1)`,
+    [member.id, localNow(hotel.timezone).date, member.hotel_id],
   );
 }
 
 // ---------- 向かう／届けた／対応できない ----------
 
 async function lockOwnTicket(client: PoolClient, member: Member, ticketId: string) {
-  const { rows } = await client.query<{ id: string; status: string; conversation_id: string | null; slot_id: string | null; room_number: string; started_at: Date | null; hotel_id: string }>(
-    "select id, status, conversation_id, slot_id, room_number, started_at, hotel_id from tickets where id = $1 and assignee_id = $2 for update",
+  const { rows } = await client.query<{ id: string; status: string; conversation_id: string | null; room_number: string; started_at: Date | null; hotel_id: string }>(
+    "select id, status, conversation_id, room_number, started_at, hotel_id from tickets where id = $1 and assignee_id = $2 for update",
     [ticketId, member.id],
   );
   if (!rows[0]) throw new Error("このオーダーはあなたの担当ではありません");
@@ -152,7 +150,7 @@ export async function completeTicket(member: Member, ticketId: string) {
   });
 }
 
-// 対応できない: 理由を記録し、枠内の次の人へ再割り当て（辞退した人は除く）。
+// 対応できない: 理由を記録し、同じ担当の次の人へ再割り当て（辞退した人は除く）。
 // allowStarted: 状況の確認への返事としては、着手済みでも返せる
 export async function declineTicket(member: Member, ticketId: string, reason: string, options: { allowStarted?: boolean } = {}) {
   await transaction(async (client) => {
@@ -168,11 +166,11 @@ export async function declineTicket(member: Member, ticketId: string, reason: st
   });
 }
 
-// 枠内の次の人へ自動で再割り当てする。辞退・放置した人は除く。誰もいなければ未割り当てにして上長へ通知。
+// 同じ役割・エリアの担当の次の人へ自動で再割り当てする。辞退・放置した人は除く。誰もいなければ未割り当てにして上長へ通知。
 // stale: 未着手のまま時間が過ぎたとき。ほかに担当できる人がいなければ今の担当者のまま残し、割り当て直したら前の担当者に対応不要を知らせる
 export async function reassign(client: PoolClient, hotel: Hotel, ticketId: string, why: string, options: { stale?: boolean } = {}) {
-  const { rows } = await client.query<{ slot_id: string | null; room_id: string; room_number: string; assignee_id: string | null }>(
-    "select slot_id, room_id, room_number, assignee_id from tickets where id = $1",
+  const { rows } = await client.query<{ job_role_id: string | null; area_id: string | null; room_id: string; room_number: string; assignee_id: string | null }>(
+    "select job_role_id, area_id, room_id, room_number, assignee_id from tickets where id = $1",
     [ticketId],
   );
   const ticket = rows[0];
@@ -182,8 +180,8 @@ export async function reassign(client: PoolClient, hotel: Hotel, ticketId: strin
   );
   const excludeIds = [...excluded.map((e) => e.member_id), ...(ticket.assignee_id ? [ticket.assignee_id] : [])];
   const room = await getRoom(client, hotel.id, ticket.room_id);
-  if (ticket.slot_id) await client.query("select pg_advisory_xact_lock(hashtext($1))", [ticket.slot_id]);
-  const next = ticket.slot_id ? await pickAssignee(client, hotel, ticket.slot_id, room, excludeIds) : undefined;
+  await lockAssignment(client, hotel.id);
+  const next = await pickAssignee(client, hotel, ticket, room, excludeIds);
   const aiMemberId = await getAiAgentMemberId(hotel.id);
   if (!next && options.stale && ticket.assignee_id) {
     // 次の人がいない。担当者を外すと誰にも届かなくなるため、そのまま残す（次の判定は設定の分数後）
@@ -207,7 +205,7 @@ export async function reassign(client: PoolClient, hotel: Hotel, ticketId: strin
     );
   }
   await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'reassigned', $2, $3, $4)", [
-    ticketId, next?.id ?? null, aiMemberId ?? null, next ? `${why} → ${next.reason}` : `${why} → 枠内に担当できる人がいない`,
+    ticketId, next?.id ?? null, aiMemberId ?? null, next ? `${why} → ${next.reason}` : `${why} → 担当できる人がいない`,
   ]);
   if (next) {
     await client.query(

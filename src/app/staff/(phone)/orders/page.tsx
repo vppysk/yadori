@@ -1,6 +1,6 @@
 import { permissionKeys, requireMember } from "@/server/auth";
 import { getHotel } from "@/server/hotel";
-import { listMySlots, listMyTickets, listOpenHandoffs, loadSummary } from "@/server/staff-work";
+import { getMyDuties, listMyTickets, listOpenHandoffs, loadSummary } from "@/server/staff-work";
 import { OrdersView } from "./orders-view";
 
 export const dynamic = "force-dynamic";
@@ -14,8 +14,8 @@ export default async function StaffOrdersPage() {
   const member = await requireMember("/staff/orders");
   const keys = await permissionKeys(member.id);
   const canHandoff = keys.has("handling.handoff.accept");
-  const [slots, tickets, load, handoffs, hotel] = await Promise.all([
-    keys.has("order.assignable") ? listMySlots(member) : [],
+  const [duties, tickets, load, handoffs, hotel] = await Promise.all([
+    keys.has("order.assignable") ? getMyDuties(member) : null,
     listMyTickets(member.id),
     loadSummary(member),
     canHandoff ? listOpenHandoffs(member.hotel_id) : [],
@@ -24,7 +24,7 @@ export default async function StaffOrdersPage() {
   return (
     <OrdersView
       memberName={member.display_name}
-      slots={slots}
+      duties={duties}
       tickets={tickets}
       load={load ?? null}
       // 他の人が引き受けた引き継ぎは表示しない

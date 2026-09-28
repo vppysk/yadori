@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import type { AreaSummary, AssignCandidate, AssignmentPreview, Board, BoardTicket, OrderForm } from "@/server/order-board";
-import { assignManuallyAction, previewAssignmentAction, registerOrderAction, requestCheckAction } from "../actions";
+import { assignManuallyAction, previewAssignmentAction, registerOrderAction, requestCheckAction } from "../../actions";
 
 const WEIGHT = {
   1: { label: "軽", className: "bg-primary-soft text-primary" },
@@ -20,24 +20,22 @@ type Props = {
   board: Board;
   candidates: AssignCandidate[];
   form: OrderForm | null; // オーダーを登録する権限があるとき
-  reassignableSlots: string[]; // 手動割り当て・担当者に確認ができる枠
   timezone: string;
 };
 
-export function OrderBoard({ areas, areaId, board, candidates, form, reassignableSlots, timezone }: Props) {
+export function OrderBoard({ areas, areaId, board, candidates, form, timezone }: Props) {
   const router = useRouter();
   const [registerOpen, setRegisterOpen] = useState(false);
   useEffect(() => {
     const timer = setInterval(() => router.refresh(), REFRESH_MS);
     return () => clearInterval(timer);
   }, [router]);
-  const canReassign = (t: BoardTicket) => t.slot_id !== null && reassignableSlots.includes(t.slot_id);
   const areaLinks = [{ id: null, name: "すべて" }, ...areas];
 
   return (
     <main className="flex min-w-0 flex-1 flex-col gap-3.5 px-6 py-5.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-[22px] font-bold">オーダー</h1>
+        <h1 className="text-[22px] font-bold">オーダー状況</h1>
         {form && (
           <button type="button" onClick={() => setRegisterOpen(true)} className="min-h-11 rounded-lg bg-primary px-5 text-sm font-bold text-white">
             ＋ オーダーを登録
@@ -45,13 +43,13 @@ export function OrderBoard({ areas, areaId, board, candidates, form, reassignabl
         )}
       </div>
 
-      {/* エリアは部屋のエリアで絞り込む（担当の枠ではない） */}
+      {/* 部屋のエリアで絞り込む */}
       <nav aria-label="表示するエリア" className="flex flex-wrap items-center gap-1.5 text-[13px]">
         <span className="mr-1 text-xs text-ink-sub">エリア</span>
         {areaLinks.map((a) => (
           <Link
             key={a.id ?? "all"}
-            href={a.id ? `/admin/orders?area=${a.id}` : "/admin/orders"}
+            href={a.id ? `/admin/orders/board?area=${a.id}` : "/admin/orders/board"}
             aria-current={a.id === areaId ? "page" : undefined}
             className={`flex min-h-10 items-center rounded-lg border px-3.5 ${a.id === areaId ? "border-primary bg-primary-soft font-bold text-primary" : "border-line-input bg-surface"}`}
           >
@@ -61,14 +59,14 @@ export function OrderBoard({ areas, areaId, board, candidates, form, reassignabl
       </nav>
 
       {/* 未完了の列は期限の近い順。期限超過・返事待ち・クレームはカードで示す */}
-      <div className="grid flex-1 grid-cols-[repeat(4,minmax(250px,1fr))] items-start gap-3 overflow-x-auto pb-2">
+      <div className="grid flex-1 grid-cols-[repeat(4,minmax(220px,1fr))] items-start gap-3 overflow-x-auto pb-2">
         {LANES.map((lane) => (
           <Lane
             key={lane.key}
             title={lane.title}
             tickets={board[lane.key]}
             muted={lane.key === "done"}
-            render={(t) => <TicketCard key={t.id} ticket={t} candidates={candidates} canReassign={canReassign(t)} timezone={timezone} />}
+            render={(t) => <TicketCard key={t.id} ticket={t} candidates={candidates} canReassign={t.can_reassign} timezone={timezone} />}
           />
         ))}
       </div>
@@ -150,15 +148,13 @@ function RegisterPanel({ open, onClose, children }: { open: boolean; onClose: ()
   );
 }
 
-// チケットの枠の人を先に、ほかの枠に出勤している人をその後に（選ぶとチケットをその枠に移す）
-function groupBySlot(candidates: AssignCandidate[], slotId: string | null) {
-  const groups: { slotId: string; slotLabel: string; sameSlot: boolean; members: AssignCandidate[] }[] = [];
-  for (const c of candidates) {
-    const group = groups.find((g) => g.slotId === c.slotId);
-    if (group) group.members.push(c);
-    else groups.push({ slotId: c.slotId, slotLabel: c.slotLabel, sameSlot: c.slotId === slotId, members: [c] });
-  }
-  return groups.sort((a, b) => Number(b.sameSlot) - Number(a.sameSlot));
+// チケットの役割・エリアの担当の人を先に、ほかの出勤者をその後に（担当外の人にも割り当てられる）
+function groupByDuty(candidates: AssignCandidate[], t: BoardTicket) {
+  const matches = (c: AssignCandidate) => c.duties.some((d) => d.jobRoleId === t.job_role_id && (d.areaId === null || d.areaId === t.area_id));
+  return [
+    { key: "duty", label: `この担当：${[t.role_name, t.area_name].filter(Boolean).join(" ")}`, members: candidates.filter(matches) },
+    { key: "other", label: "ほかの出勤者（担当外）", members: candidates.filter((c) => !matches(c)) },
+  ].filter((g) => g.members.length > 0);
 }
 
 function fmtTime(iso: string, timeZone: string): string {
@@ -257,7 +253,7 @@ function TicketCard({
         </span>
       )}
       <span className="text-[11px] text-ink-sub">
-        {[t.area_name, t.slot_label].filter(Boolean).join(" ・ ")}
+        {[t.area_name ?? "エリアなし", t.role_name].filter(Boolean).join(" ・ ")}
         {" ・ "}
         {SOURCE[t.source] ?? t.source}
         {t.source !== "ai_chat" && t.created_by_name ? `（${t.created_by_name}）` : ""}
@@ -305,18 +301,19 @@ function TicketCard({
               {t.assignee_name}さんが対応中です。割り当て直すと、{t.assignee_name}さんには「対応不要」と通知します。{checkPending ? "" : "先に「担当者に確認」もできます。"}
             </span>
           )}
-          {groupBySlot(others, t.slot_id).map((group) => (
-            <div key={group.slotId} className="flex flex-col gap-1">
-              <span className="text-[11px] text-ink-sub">{group.sameSlot ? `この枠：${group.slotLabel}` : `ほかの枠：${group.slotLabel}`}</span>
+          {groupByDuty(others, t).map((group) => (
+            <div key={group.key} className="flex flex-col gap-1">
+              <span className="text-[11px] text-ink-sub">{group.label}</span>
               {group.members.map((c) => (
                 <button
-                  key={`${c.slotId}-${c.id}`}
+                  key={c.id}
                   type="button"
                   disabled={pending}
-                  onClick={() => run(() => assignManuallyAction(t.id, c.id, c.slotId))}
-                  className="min-h-9 rounded-lg border border-line-input text-[13px]"
+                  onClick={() => run(() => assignManuallyAction(t.id, c.id))}
+                  className="flex min-h-9 flex-col items-center justify-center rounded-lg border border-line-input px-2 py-1 text-[13px]"
                 >
                   {c.name}に割り当てる
+                  {group.key === "other" && <span className="text-[11px] text-ink-sub">{c.dutyLabel}</span>}
                 </button>
               ))}
             </div>
@@ -354,7 +351,7 @@ function RegisterForm({ form }: { form: OrderForm }) {
     return d.toISOString().slice(0, 10);
   }, [form.today]);
 
-  // 部屋と品目が決まったら割り当て予定を出す（役割ごとに枠が分かれる）
+  // 部屋と品目が決まったら割り当て予定を出す（役割ごとにチケットが分かれる）
   useEffect(() => {
     if (!room || !selectedKey) return;
     let stale = false;
@@ -399,7 +396,7 @@ function RegisterForm({ form }: { form: OrderForm }) {
       }}
       className="flex flex-col gap-3 px-4 py-3.5"
     >
-      <span className="text-xs text-ink-sub">担当の枠は部屋と品目から自動で決まります</span>
+      <span className="text-xs text-ink-sub">担当は部屋のエリアと品目の役割から自動で決まります</span>
       <div className="flex flex-wrap items-end gap-2.5">
         <label className="flex w-36 flex-col gap-1 text-xs text-ink-sub">
           部屋
@@ -496,8 +493,8 @@ function RegisterForm({ form }: { form: OrderForm }) {
           )}
           {room &&
             preview?.map((s) => (
-              <span key={s.slotLabel} className="ml-2">
-                → {s.slotLabel} ・ {deliver ? `お届けの${form.leadMinutes}分前に割り当て（現時点の予定：` : "割り当て予定："}
+              <span key={s.dutyLabel} className="ml-2">
+                → {s.dutyLabel} ・ {deliver ? `お届けの${form.leadMinutes}分前に割り当て（現時点の予定：` : "割り当て予定："}
                 <strong className="text-ink">{s.assigneeName ?? "担当者なし（上長に通知）"}</strong>
                 {deliver ? "）" : s.reason ? `（${s.reason}）` : ""}
               </span>

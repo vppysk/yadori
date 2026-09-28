@@ -4,11 +4,11 @@ import { query, transaction } from "./db";
 // メンバーと権限（plan 4.8）: 人・AIエージェント・外部システムを同じメンバーとして扱い、
 // 機能ごとの権限をグループ（プリセット）と個別付与（期限・範囲付き）で与える。実効権限は合計（拒否はない）
 
-export type PermissionDef = { key: string; category: string; label: string; scope_kind: "facility" | "slot" | null };
+export type PermissionDef = { key: string; category: string; label: string; scope_kind: "facility" | "area" | null };
 export type GroupRow = { id: string; name: string; is_preset: boolean; permissions: { key: string; scope_ids: string[] | null }[] };
 export type DirectGrant = { id: string; permission_key: string; scope_ids: string[] | null; expires_at: string | null; granted_by: string | null };
 export type MemberRow = { id: string; kind: "human" | "ai_agent" | "external_system"; display_name: string; job_title: string | null; active: boolean; group_ids: string[]; grants: DirectGrant[]; effective: string[] };
-export type ScopeOption = { id: string; label: string; kind: "facility" | "slot" };
+export type ScopeOption = { id: string; label: string; kind: "facility" | "area" };
 
 export type MembersData = { permissions: PermissionDef[]; groups: GroupRow[]; members: MemberRow[]; scopes: ScopeOption[] };
 
@@ -35,7 +35,7 @@ export async function getMembersData(hotelId: string): Promise<MembersData> {
     query<ScopeOption>(
       `select f.id, f.name label, 'facility' kind from facilities f where f.hotel_id = $1 and f.kind = 'facility'
        union all
-       select s.id, r.name || coalesce(' ' || a.name, '（全館）'), 'slot' from slots s join job_roles r on r.id = s.job_role_id left join areas a on a.id = s.area_id where s.hotel_id = $1`,
+       select a.id, a.name, 'area' from areas a where a.hotel_id = $1`,
       [hotelId],
     ),
   ]);

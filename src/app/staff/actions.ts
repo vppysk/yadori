@@ -20,10 +20,10 @@ import {
 
 // 現場スマホの操作。どれもログインと権限を確認してから実行し、監査ログに残す（plan 4.8）
 
-export async function startShiftAction(slotId: string) {
-  const member = await authorize("order.assignable", slotId);
-  await startShift(member, slotId);
-  await audit(member, "order.assignable", "shift.start", { type: "slot", id: slotId });
+export async function startShiftAction() {
+  const member = await authorize("order.assignable");
+  await startShift(member);
+  await audit(member, "order.assignable", "shift.start");
   refresh();
 }
 

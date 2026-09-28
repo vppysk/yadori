@@ -159,7 +159,7 @@ function GroupMatrix({ data, pending, run }: { data: MembersData; pending: boole
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col gap-1">
           <h2 className="text-base font-bold">グループ（プリセット）と権限</h2>
-          <p className="text-xs text-ink-sub">MCPのツール1つ＝権限1つ。範囲付き（施設・枠）の権限は、ここでは既存の範囲を保ったまま付け外しします。</p>
+          <p className="text-xs text-ink-sub">MCPのツール1つ＝権限1つ。範囲付き（施設・エリア）の権限は、ここでは既存の範囲を保ったまま付け外しします。</p>
         </div>
         <span className="flex gap-1.5">
           <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="新しいグループ名" className="min-h-9 rounded-lg border border-line-input px-2.5 text-sm" />

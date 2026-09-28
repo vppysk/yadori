@@ -81,7 +81,7 @@ type CreateParams = {
   createdBy?: string; // 登録した人・AI
 };
 
-// 品目を役割ごとのチケットに分け、枠の中で機械ロジックで割り当てる。LLMは使わない（公平性の説明と再現性のため）。
+// 品目を役割ごとのチケットに分け、役割と部屋のエリアの担当から機械ロジックで割り当てる。LLMは使わない（公平性の説明と再現性のため）。
 // 希望日時があり、割り当ての前倒し（分）より先なら割り当てを保留する（定期実行の dispatchScheduled で割り当てる）
 export async function createTickets(client: PoolClient, params: CreateParams): Promise<CreatedTicket[]> {
   const { hotel, lines, source, conversationId, createdBy } = params;
@@ -105,13 +105,12 @@ export async function createTickets(client: PoolClient, params: CreateParams): P
   for (const [jobRoleId, entries] of byRole) {
     const weight = Math.max(...entries.map((e) => e.item.weight));
     const dueMinutes = Math.min(...entries.map((e) => e.item.due_minutes));
-    const slotId = await findSlot(client, hotel.id, jobRoleId, room.area_id);
-    // 期限は希望日時、なければ品目の期限（分）の最小
+    // 期限は希望日時、なければ品目の期限（分）の最小。エリアは部屋のエリア（担当の候補を決める）
     const { rows } = await client.query<{ id: string }>(
-      `insert into tickets (hotel_id, room_id, room_number, source, conversation_id, slot_id, weight, note, requested_for, due_at, created_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, coalesce($9::timestamptz, now() + make_interval(mins => $10)), $11)
+      `insert into tickets (hotel_id, room_id, room_number, source, conversation_id, job_role_id, area_id, weight, note, requested_for, due_at, created_by)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($10::timestamptz, now() + make_interval(mins => $11)), $12)
        returning id`,
-      [hotel.id, room.id, room.label, source, conversationId ?? null, slotId ?? null, weight, note, requestedFor, dueMinutes, createdBy ?? null],
+      [hotel.id, room.id, room.label, source, conversationId ?? null, jobRoleId, room.area_id, weight, note, requestedFor, dueMinutes, createdBy ?? null],
     );
     const ticketId = rows[0].id;
     for (const { item, quantity } of entries) {
@@ -135,20 +134,19 @@ export async function createTickets(client: PoolClient, params: CreateParams): P
   return created;
 }
 
-// 割り当て: 枠の中で次の人を選ぶ。枠に出勤者がいなければ上長（手動割り当ての権限を持つ人）に知らせて手動で割り当ててもらう
+// 割り当て: 役割とエリアの担当から次の人を選ぶ。出勤している担当者がいなければ上長（手動割り当ての権限を持つ人）に知らせて手動で割り当ててもらう
 export async function dispatchTicket(client: PoolClient, hotel: Hotel, ticketId: string, actorId?: string) {
-  const { rows } = await client.query<{ slot_id: string | null; room_id: string; room_number: string; items: string }>(
+  const { rows } = await client.query<{ job_role_id: string | null; area_id: string | null; room_id: string; room_number: string; items: string }>(
     `update tickets t set dispatched_at = now() where t.id = $1 and t.dispatched_at is null and t.status = 'new'
-     returning t.slot_id, t.room_id, t.room_number,
+     returning t.job_role_id, t.area_id, t.room_id, t.room_number,
        (select string_agg(l.item_name || ' × ' || l.quantity, '・' order by l.id) from ticket_lines l where l.ticket_id = t.id) items`,
     [ticketId],
   );
   const ticket = rows[0];
   if (!ticket) return undefined;
-  // 同じ枠の割り当てを直列化し、同時の依頼で担当が偏らないようにする
-  if (ticket.slot_id) await client.query("select pg_advisory_xact_lock(hashtext($1))", [ticket.slot_id]);
+  await lockAssignment(client, hotel.id);
   const room = await getRoom(client, hotel.id, ticket.room_id);
-  const assignee = ticket.slot_id ? await pickAssignee(client, hotel, ticket.slot_id, room) : undefined;
+  const assignee = await pickAssignee(client, hotel, ticket, room);
   if (assignee) {
     await client.query("update tickets set assignee_id = $2, assigned_at = now() where id = $1", [ticketId, assignee.id]);
     await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'assigned', $2, $3, $4)", [
@@ -180,22 +178,25 @@ export async function dispatchScheduled(hotel: Hotel, actorId?: string) {
   return due.length;
 }
 
-// 担当者なしのチケットを拾い直す（定期実行と、枠に出勤したとき）。出勤者が出たら自動で割り当てる（docs/005_order.md 5章）
-export async function assignUnassigned(hotel: Hotel, slotId?: string, actorId?: string) {
-  const targets = await query<{ id: string; slot_id: string }>(
-    `select t.id, t.slot_id from tickets t
-     where t.hotel_id = $1 and t.status = 'new' and t.dispatched_at is not null and t.assignee_id is null and t.slot_id is not null
-       and ($2::uuid is null or t.slot_id = $2)
-       and exists (select 1 from slot_shifts ss where ss.slot_id = t.slot_id and ss.work_date = $3 and ss.ended_at is null)
+// 同じホテルの割り当てを直列化し、同時の依頼で担当が偏らないようにする
+export async function lockAssignment(client: PoolClient, hotelId: string) {
+  await client.query("select pg_advisory_xact_lock(hashtext($1))", [`order-assign:${hotelId}`]);
+}
+
+// 担当者なしのチケットを拾い直す（定期実行と、誰かが出勤したとき）。出勤者が出たら自動で割り当てる（docs/005_order.md 5章）
+export async function assignUnassigned(hotel: Hotel, actorId?: string) {
+  const targets = await query<{ id: string }>(
+    `select t.id from tickets t
+     where t.hotel_id = $1 and t.status = 'new' and t.dispatched_at is not null and t.assignee_id is null and t.job_role_id is not null
      order by t.due_at`,
-    [hotel.id, slotId ?? null, localNow(hotel.timezone).date],
+    [hotel.id],
   );
   let assigned = 0;
   for (const target of targets) {
     const ok = await transaction(async (client) => {
-      await client.query("select pg_advisory_xact_lock(hashtext($1))", [target.slot_id]);
-      const { rows } = await client.query<{ room_id: string; room_number: string; items: string }>(
-        `select t.room_id, t.room_number,
+      await lockAssignment(client, hotel.id);
+      const { rows } = await client.query<{ job_role_id: string | null; area_id: string | null; room_id: string; room_number: string; items: string }>(
+        `select t.job_role_id, t.area_id, t.room_id, t.room_number,
            (select string_agg(l.item_name || ' × ' || l.quantity, '・' order by l.id) from ticket_lines l where l.ticket_id = t.id) items
          from tickets t where t.id = $1 and t.assignee_id is null and t.status = 'new' for update`,
         [target.id],
@@ -203,7 +204,7 @@ export async function assignUnassigned(hotel: Hotel, slotId?: string, actorId?: 
       const ticket = rows[0];
       if (!ticket) return false;
       const room = await getRoom(client, hotel.id, ticket.room_id);
-      const assignee = await pickAssignee(client, hotel, target.slot_id, room);
+      const assignee = await pickAssignee(client, hotel, ticket, room);
       if (!assignee) return false;
       await client.query("update tickets set assignee_id = $2, assigned_at = now(), assignment_mode = 'auto' where id = $1", [target.id, assignee.id]);
       await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'assigned', $2, $3, $4)", [
@@ -220,40 +221,44 @@ export async function assignUnassigned(hotel: Hotel, slotId?: string, actorId?: 
   return assigned;
 }
 
-// 役割 × エリア（部屋のエリア）の枠。エリアを持たない全館担当の枠も候補にし、エリアの枠を優先する
-async function findSlot(client: PoolClient, hotelId: string, jobRoleId: string, areaId: string | null) {
-  const { rows } = await client.query<{ id: string }>(
-    `select id from slots where hotel_id = $1 and job_role_id = $2 and (area_id is null or area_id = $3)
-     order by area_id is null limit 1`,
-    [hotelId, jobRoleId, areaId],
-  );
-  return rows[0]?.id;
-}
-
-// plan 4.2: 同じ棟・フロアの直近の未着手チケットを持つ人にまとめる。なければ「本日の累計pt＋未完了pt」が最小の人、
-// 同点なら最後の割り当てから時間が空いている人
-export async function pickAssignee(client: PoolClient, hotel: Hotel, slotId: string, room: Pick<Room, "floor" | "building"> | undefined, excludeIds: string[] = []) {
+// 担当の候補: 今日出勤していて「担当になれる」権限を持ち、チケットの役割を部屋のエリア（または全館）で担当している人。
+// エリアの担当を優先し、いなければ全館の担当。その中で同じ棟・フロアの直近の未着手チケットを持つ人にまとめる（plan 4.2）。
+// なければ「本日の累計pt＋未完了pt」（役割をまたいだ合計）が最小の人、同点なら最後の割り当てから時間が空いている人
+export async function pickAssignee(
+  client: PoolClient,
+  hotel: Hotel,
+  ticket: { job_role_id: string | null; area_id: string | null },
+  room: Pick<Room, "floor" | "building"> | undefined,
+  excludeIds: string[] = [],
+) {
+  if (!ticket.job_role_id) return undefined;
   const workDate = localNow(hotel.timezone).date;
-  const { rows } = await client.query<{ id: string; name: string; load: number; bundle: boolean }>(
-    `select m.id, m.display_name name, l.done_points + l.open_points load,
-       $6::boolean and $3::int is not null and exists (
+  const { rows } = await client.query<{ id: string; name: string; load: number; bundle: boolean; area_duty: boolean }>(
+    `select m.id, m.display_name name, l.done_points + l.open_points load, c.area_duty,
+       $6::boolean and $4::int is not null and exists (
          select 1 from tickets t join rooms r on r.hotel_id = t.hotel_id and r.id = t.room_id
-         where t.assignee_id = m.id and t.slot_id = $1 and t.status = 'new' and r.floor = $3 and r.building is not distinct from $7
-           and t.assigned_at > now() - make_interval(mins => $4)
+         where t.assignee_id = m.id and t.job_role_id = $1 and t.status = 'new' and r.floor = $4 and r.building is not distinct from $8
+           and t.assigned_at > now() - make_interval(mins => $5)
        ) bundle
-     from member_daily_load l join members m on m.id = l.member_id
-     where l.slot_id = $1 and l.work_date = $2 and m.active and has_permission(m.id, 'order.assignable', $1)
-       and not (m.id = any ($5::uuid[]))
-     order by bundle desc, load, l.last_assigned_at nulls first
+     from (
+       select d.member_id, bool_or(d.area_id is not null) area_duty from member_duties d
+       where d.job_role_id = $1 and (d.area_id is null or d.area_id = $2) group by d.member_id
+     ) c
+     join members m on m.id = c.member_id
+     join member_daily_load l on l.member_id = m.id and l.work_date = $3
+     where m.hotel_id = $9 and m.active and has_permission(m.id, 'order.assignable') and not (m.id = any ($7::uuid[]))
+     order by c.area_duty desc, bundle desc, load, l.last_assigned_at nulls first
      limit 1`,
-    [slotId, workDate, room?.floor ?? null, BUNDLE_WINDOW_MINUTES, excludeIds, hotel.order_bundle_enabled, room?.building ?? null],
+    [ticket.job_role_id, ticket.area_id, workDate, room?.floor ?? null, BUNDLE_WINDOW_MINUTES, hotel.order_bundle_enabled, excludeIds, room?.building ?? null, hotel.id],
   );
   const picked = rows[0];
   if (!picked) return undefined;
   return {
     id: picked.id,
     name: picked.name,
-    reason: picked.bundle ? "同じフロアの直近の依頼とまとめ" : `本日の担当量が最も少ない（${picked.load}pt）`,
+    reason: picked.bundle
+      ? "同じフロアの直近の依頼とまとめ"
+      : `${picked.area_duty ? "" : "エリアの担当が出勤していないため全館の担当 ・ "}本日の担当量が最も少ない（${picked.load}pt）`,
   };
 }
 

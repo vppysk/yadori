@@ -5,15 +5,16 @@ import type { z } from "zod";
 import { audit, authorize, PermissionError } from "@/server/auth";
 import { queryOne, transaction } from "@/server/db";
 import { deleteDocument, insertDocument } from "@/server/documents";
+import { setDuty } from "@/server/duties";
 import {
   addBoost, boostInputSchema, createUrlSource, deleteBoost, dismissUpdate, runUrlSourceChecks, setReflectMode, updateUrlSettings, urlSourceSchema,
 } from "@/server/source-fetch";
 import { parseFacilityRef } from "@/server/facility-fields";
 import { approveSchema, approveSource, createSource, deleteSource as deleteInfoSource, setExternal, sourceFacilityIds } from "@/server/info-sources";
 import { addNotice, deleteNotice, previewNotice, readDocument } from "@/server/knowledge-admin";
-import { addArea, addSlot, deleteArea, deleteSlot, saveItemSettings, setFloorArea, setSeats, type SaveItemsInput } from "@/server/items";
+import { addArea, deleteArea, saveItemSettings, setFloorArea, type SaveItemsInput } from "@/server/items";
 import { requestCheckBySupervisor } from "@/server/order-checks";
-import { assignManually, previewAssignment, registerOrder, ticketSlot, type AssignmentPreview, type RegisterOrderInput } from "@/server/order-board";
+import { assignManually, previewAssignment, registerOrder, ticketArea, type AssignmentPreview, type RegisterOrderInput } from "@/server/order-board";
 import { answerGap, dismissGap, getConversationMessages, type AnswerResult, type ConversationMessage } from "@/server/questions";
 import { acceptHandoff, closeHandoff, replyToGuest } from "@/server/staff-work";
 
@@ -171,14 +172,12 @@ export async function registerOrderAction(input: RegisterOrderInput): Promise<Re
   });
 }
 
-// 手動割り当て。ほかの枠の人に割り当てるときは、移す先の枠の権限も確認する
-export async function assignManuallyAction(ticketId: string, toMemberId: string, toSlotId: string): Promise<Result> {
+// 手動割り当て。権限はチケットのエリアで確かめる
+export async function assignManuallyAction(ticketId: string, toMemberId: string): Promise<Result> {
   return guard(async () => {
-    const slotId = await ticketSlot(ticketId);
-    const member = await authorize("order.reassign", slotId);
-    if (toSlotId !== slotId) await authorize("order.reassign", toSlotId);
-    await assignManually(member, ticketId, toMemberId, toSlotId);
-    await audit(member, "order.reassign", "ticket.assign_manually", { type: "ticket", id: ticketId }, { to: toMemberId, slot: toSlotId });
+    const member = await authorize("order.reassign", await ticketArea(ticketId));
+    await assignManually(member, ticketId, toMemberId);
+    await audit(member, "order.reassign", "ticket.assign_manually", { type: "ticket", id: ticketId }, { to: toMemberId });
     refresh();
   });
 }
@@ -186,7 +185,7 @@ export async function assignManuallyAction(ticketId: string, toMemberId: string,
 // 上長の「担当者に確認」。担当者に状況の確認を送る（docs/005_order.md 6章）
 export async function requestCheckAction(ticketId: string, message: string): Promise<Result> {
   return guard(async () => {
-    const member = await authorize("order.reassign", await ticketSlot(ticketId));
+    const member = await authorize("order.reassign", await ticketArea(ticketId));
     await requestCheckBySupervisor(member, ticketId, message.slice(0, 200));
     await audit(member, "order.reassign", "ticket.request_check", { type: "ticket", id: ticketId }, { message });
     refresh();
@@ -202,30 +201,12 @@ export async function saveItemSettingsAction(input: SaveItemsInput): Promise<Res
   });
 }
 
-export async function addSlotAction(jobRoleId: string, areaId: string | null): Promise<Result> {
+// 担当設定（スタッフ × 役割 × エリア）（docs/005_order.md 2章）
+export async function setDutyAction(memberId: string, jobRoleId: string, areaId: string | null, on: boolean): Promise<Result> {
   return guard(async () => {
     const member = await authorize("settings.items");
-    await addSlot(member, jobRoleId, areaId);
-    await audit(member, "settings.items", "slot.add", undefined, { jobRoleId, areaId });
-    refresh();
-  });
-}
-
-export async function deleteSlotAction(slotId: string): Promise<Result> {
-  return guard(async () => {
-    const member = await authorize("settings.items");
-    await deleteSlot(member, slotId);
-    await audit(member, "settings.items", "slot.delete", { type: "slot", id: slotId });
-    refresh();
-  });
-}
-
-// 担当席の人数（docs/005_order.md 3章）。席のメンバーを作る・無効にする
-export async function setSeatsAction(slotId: string, count: number): Promise<Result> {
-  return guard(async () => {
-    const member = await authorize("settings.items");
-    await setSeats(member, slotId, count);
-    await audit(member, "settings.items", "slot.seats", { type: "slot", id: slotId }, { count });
+    await setDuty(member, memberId, jobRoleId, areaId, on);
+    await audit(member, "settings.items", on ? "duty.add" : "duty.remove", { type: "member", id: memberId }, { jobRoleId, areaId });
     refresh();
   });
 }

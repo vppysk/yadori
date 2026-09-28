@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { HANDOFF_LABELS } from "@/lib/handoff-kinds";
-import type { LoadSummary, MyTicket, OpenHandoff, SlotOption } from "@/server/staff-work";
+import type { LoadSummary, MyDuties, MyTicket, OpenHandoff } from "@/server/staff-work";
 import {
   acceptHandoffAction,
   completeTicketAction,
@@ -29,7 +29,7 @@ const DECLINE_REASONS = ["別件で手が離せない", "在庫・備品が見�
 
 type Props = {
   memberName: string;
-  slots: SlotOption[];
+  duties: MyDuties | null; // 担当になれる人だけ
   tickets: MyTicket[];
   load: LoadSummary | null;
   handoffs: OpenHandoff[];
@@ -37,7 +37,7 @@ type Props = {
   timezone: string;
 };
 
-export function OrdersView({ memberName, slots, tickets, load, handoffs, serverNow, timezone }: Props) {
+export function OrdersView({ memberName, duties, tickets, load, handoffs, serverNow, timezone }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<"new" | "doing">("new");
   const [now, setNow] = useState(serverNow);
@@ -52,7 +52,7 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
     return () => clearInterval(timer);
   }, [router]);
 
-  const onShift = slots.filter((s) => s.on_shift);
+  const onShift = duties?.onShift ?? false;
   const newTickets = tickets.filter((t) => t.status === "new");
   const doingTickets = tickets.filter((t) => t.status === "doing");
   const list = tab === "new" ? newTickets : doingTickets;
@@ -66,7 +66,7 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
           <h1 className="text-xl font-bold">あなたの担当</h1>
           <span className="truncate text-xs text-[#C9CFD1]">
             {memberName}
-            {load ? ` ・ ${load.slotLabel}` : onShift.length ? ` ・ ${onShift.map((s) => s.label).join("、")}` : ""}
+            {duties?.labels.length ? ` ・ ${duties.labels.join("、")}` : ""}
           </span>
         </div>
         {load && (
@@ -74,7 +74,7 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
             <div className="flex justify-between text-xs text-[#C9CFD1]">
               <span>本日の担当量 {load.myPoints}pt</span>
               <span>
-                同じ枠の{load.members}名の平均 {load.averagePoints}pt
+                出勤中の{load.members}名の平均 {load.averagePoints}pt
               </span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-sm bg-dark-2">
@@ -128,21 +128,22 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
           </div>
         ))}
 
-        {slots.length > 0 && onShift.length === 0 && (
+        {duties && !onShift && (
           <section className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3.5">
-            <h2 className="text-sm font-bold">出勤する枠を選んでください</h2>
-            <p className="text-xs text-ink-sub">選んだ枠のオーダーが自動で割り当てられます。</p>
-            {slots.map((slot) => (
-              <button
-                key={slot.id}
-                type="button"
-                disabled={pending}
-                onClick={() => run(() => startShiftAction(slot.id))}
-                className="min-h-13 rounded-[10px] bg-primary text-base font-bold text-white disabled:opacity-50"
-              >
-                {slot.label}で出勤
-              </button>
-            ))}
+            <h2 className="text-sm font-bold">出勤してください</h2>
+            {duties.labels.length > 0 ? (
+              <p className="text-xs leading-normal text-ink-sub">出勤すると、担当（{duties.labels.join("、")}）のオーダーが自動で割り当てられます。</p>
+            ) : (
+              <p className="text-xs leading-normal text-caution">担当の役割・エリアが決まっていません。上長に管理PCで設定してもらってください。</p>
+            )}
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => run(startShiftAction)}
+              className="min-h-13 rounded-[10px] bg-primary text-base font-bold text-white disabled:opacity-50"
+            >
+              出勤する
+            </button>
           </section>
         )}
 
@@ -174,7 +175,7 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
               {t.check_pending && <CheckPanel ticket={t} pending={pending} run={run} />}
               {declining === t.id ? (
                 <div className="flex flex-col gap-2">
-                  <span className="text-xs text-ink-sub">理由を選ぶと、枠内の次の人に割り当てます</span>
+                  <span className="text-xs text-ink-sub">理由を選ぶと、同じ担当の次の人に割り当てます</span>
                   {DECLINE_REASONS.map((reason) => (
                     <button
                       key={reason}
@@ -223,7 +224,7 @@ export function OrdersView({ memberName, slots, tickets, load, handoffs, serverN
         {list.length === 0 && <div className="p-6 text-center text-sm text-ink-sub">このタブのオーダーはありません</div>}
 
         <div className="mt-auto flex justify-center gap-4 pt-4 text-xs text-ink-sub">
-          {onShift.length > 0 && (
+          {onShift && (
             <button type="button" disabled={pending} onClick={() => run(endShiftAction)} className="min-h-11 underline">
               退勤する
             </button>

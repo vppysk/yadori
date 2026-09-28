@@ -10,10 +10,10 @@ export async function runTicketChecks(hotelId: string) {
   const aiMemberId = await getAiAgentMemberId(hotelId);
   // お届けの時間指定があるオーダーを、前倒しの時刻に割り当てる
   const dispatched = await dispatchScheduled(hotel, aiMemberId);
-  // 担当者なしのチケットを、出勤者のいる枠で割り当てる
-  const picked = await assignUnassigned(hotel, undefined, aiMemberId);
+  // 担当者なしのチケットを、出勤している担当者に割り当てる
+  const picked = await assignUnassigned(hotel, aiMemberId);
 
-  // 割り当てから着手されないまま過ぎたら枠内の次の人へ（分数は品目・担当設定の画面で変更）。
+  // 割り当てから着手されないまま過ぎたら同じ担当の次の人へ（分数は品目設定の「割り当ての設定」で変更）。
   // 上長が手動で割り当てたもの、状況の確認に返事待ちのものは除く
   const reassignAfter = hotel.order_reassign_minutes;
   const stale = await query<{ id: string }>(

@@ -56,7 +56,7 @@ export async function requestCheck(
   return "requested";
 }
 
-// 担当者の返事。「向かっています」は到着の目安をゲスト画面にも出す。「対応できない」は枠内の次の人へ自動で再割り当てする
+// 担当者の返事。「向かっています」は到着の目安をゲスト画面にも出す。「対応できない」は同じ担当の次の人へ自動で再割り当てする
 export async function replyCheck(member: Member, ticketId: string, reply: CheckReply, options: { etaMinutes?: number; note?: string } = {}) {
   const note = options.note?.trim().slice(0, 200) || null;
   if (reply === "cannot") {
