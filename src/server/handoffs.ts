@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import type { LlmFailureCause } from "@/lib/llm/errors";
 import { query, queryOne } from "./db";
-import { writeBackHandoff } from "./integrations/pms";
+import { writeBackHandoff } from "./integration-agent";
 
 export type HandoffKind =
   | "talk_request"
@@ -51,12 +51,15 @@ export async function createHandoff(params: {
   return id;
 }
 
-// 引き継いだ案件を予約・客室管理システムのお客様メモに書き戻す（plan 3章）。LLMで文面を作るため、応答を返したあとに実行する
+// 引き継いだ案件を、連携先の利用ルールに沿って連携係が書き戻す（plan 3章、docs/007_ai_settings.md）。LLMを使うため、応答を返したあとに実行する
 function scheduleWriteBack(hotelId: string, handoffId: string) {
   const task = async () => {
     try {
-      const row = await queryOne<{ reservation_id: string | null; room_number: string | null; kind: string; summary: string; ai_reply: string | null }>(
-        `select c.external_reservation_id reservation_id, h.room_number, h.kind, h.summary,
+      const row = await queryOne<{
+        reservation_id: string | null; conversation_id: string | null; room_number: string | null; stay_start: string | null; stay_end: string | null;
+        kind: string; summary: string; ai_reply: string | null;
+      }>(
+        `select c.external_reservation_id reservation_id, h.conversation_id, h.room_number, c.stay_start::text, c.stay_end::text, h.kind, h.summary,
            (select m.content from messages m where m.conversation_id = h.conversation_id and m.role = 'assistant' and m.created_at >= h.created_at
             order by m.created_at limit 1) ai_reply
          from handoffs h left join conversations c on c.id = h.conversation_id where h.id = $1 and h.status <> 'cancelled'`,
@@ -64,7 +67,8 @@ function scheduleWriteBack(hotelId: string, handoffId: string) {
       );
       if (!row?.reservation_id) return;
       await writeBackHandoff({
-        hotelId, handoffId, reservationId: row.reservation_id, roomNumber: row.room_number ?? "", kind: row.kind, summary: row.summary, aiReply: row.ai_reply ?? undefined,
+        guest: { hotelId, reservationId: row.reservation_id, roomNumber: row.room_number ?? "", checkIn: row.stay_start ?? "", checkOut: row.stay_end ?? "" },
+        conversationId: row.conversation_id ?? undefined, handoffId, kind: row.kind, summary: row.summary, aiReply: row.ai_reply ?? undefined,
         handedTo: row.kind === "overdue_order" ? "上長" : "フロント",
       });
     } catch (error) {

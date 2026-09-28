@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { WebhookRow } from "@/server/webhooks";
-import { addWebhookAction, deleteWebhookAction, testWebhookAction } from "../../actions";
+import { addWebhookAction, deleteWebhookAction, testWebhookAction } from "../actions";
 
 // 実績の出力口（plan 4.5）: Webhook の登録。CSV/JSON は経営ダッシュボードの「実績を出力」、MCP は /api/mcp/work-events
 export function WebhookSection({ webhooks }: { webhooks: WebhookRow[] }) {

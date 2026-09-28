@@ -1,7 +1,7 @@
 import { HANDOFF_LABELS } from "@/lib/handoff-kinds";
 import { fmtDate } from "./answer-context";
 import { addDays, query } from "./db";
-import { getGuestContext, getRequestHistory, searchReservations, type GuestSummary } from "./integrations/pms";
+import { getGuestContext, searchReservations, type GuestContext, type GuestSummary } from "./integrations/pms";
 
 // AIに相談で特定のゲストに言及する（予約・客室管理システムと対応アラートから、そのゲストの情報を取る）。
 // 言及は2通り: 画面でゲストを選ぶ（予約番号）か、質問の文に部屋番号・お名前を書く。文からの読み取りはLLMに任せずコードで照合する
@@ -32,8 +32,9 @@ function sortForStaff(guests: GuestSummary[], today: string): GuestSummary[] {
   return [...guests].sort((a, b) => Number(isStaying(b, today)) - Number(isStaying(a, today)) || a.checkIn.localeCompare(b.checkIn));
 }
 
-// 画面のゲスト検索。空なら今日滞在中のゲストを出す。「1203号室」「太郎様」のような書き方も受ける
-export async function searchGuests(hotelId: string, today: string, text: string): Promise<GuestSearchResult[]> {
+// 画面のゲスト検索。空なら今日滞在中のゲストを出す。「1203号室」「太郎様」のような書き方も受ける。
+// 予約の検索のツールは、AIエージェントと検索するスタッフの両方に権限が要る（docs/007_ai_settings.md）
+export async function searchGuests(hotelId: string, today: string, text: string, staffMemberId: string): Promise<GuestSearchResult[]> {
   const q = compact(text).replace(/(号室|様|さま|さん)$/, "");
   // 「別館105」は部屋番号で探してから棟を合わせる（予約・客室管理システムは棟なしの部屋番号で持つ）
   const room = q.match(/^(本館|別館)(\d{3,4})$/);
@@ -41,7 +42,7 @@ export async function searchGuests(hotelId: string, today: string, text: string)
     from: q ? addDays(today, SEARCH_FROM_DAYS) : today,
     to: q ? addDays(today, SEARCH_TO_DAYS) : today,
     query: room ? room[2] : q || undefined,
-  });
+  }, staffMemberId);
   const matched = room ? guests.filter((g) => compact(g.roomNumber) === (room[1] === "本館" ? room[2] : q)) : guests;
   return sortForStaff(matched, today)
     .slice(0, 20)
@@ -107,7 +108,8 @@ function findInText(text: string, candidates: GuestSummary[], today: string): Fo
   return { guests: [...found.values()], ambiguous, missingRooms };
 }
 
-export type ResolvedGuests = { mentions: GuestMention[]; context: string | null };
+// guests: 話題のゲストの予約内容（連携係で連携先を調べるときに使う）
+export type ResolvedGuests = { mentions: GuestMention[]; context: string | null; guests: GuestContext[] };
 
 // 質問で言及されたゲストを決め、AIに渡す【話題のゲスト】の文章を作る。
 // 画面で選んだゲスト＋文から見つけたゲスト。どちらもなければ、同じ会話の直前の質問で話題だったゲストを引き継ぐ（「その方の…」）
@@ -117,15 +119,18 @@ export async function resolveGuests(params: {
   text: string;
   selectedIds: string[];
   previous: GuestMention[];
+  // 相談しているスタッフ。ツールの権限を確かめる
+  staffMemberId: string;
 }): Promise<ResolvedGuests> {
-  const { hotelId, today } = params;
+  const { hotelId, today, staffMemberId } = params;
   let candidates: GuestSummary[];
   try {
-    candidates = await searchReservations(hotelId, { from: addDays(today, SEARCH_FROM_DAYS), to: addDays(today, SEARCH_TO_DAYS) });
+    candidates = await searchReservations(hotelId, { from: addDays(today, SEARCH_FROM_DAYS), to: addDays(today, SEARCH_TO_DAYS) }, staffMemberId);
   } catch (error) {
     console.warn("[staff-ask] 予約を検索できなかった", error);
     const mentioned = params.selectedIds.length > 0 || /\d{3,4}|様|さん/.test(params.text);
-    return { mentions: [], context: mentioned ? "【話題のゲスト】\n予約・客室管理システムに接続できず、ゲストの情報を取得できなかった。" : null };
+    const reason = error instanceof Error && error.message.includes("権限") ? error.message : "予約・客室管理システムに接続できなかった";
+    return { mentions: [], guests: [], context: mentioned ? `【話題のゲスト】\n${reason}ため、ゲストの情報を取得できなかった。` : null };
   }
 
   const inText = findInText(params.text, candidates, today);
@@ -135,11 +140,13 @@ export async function resolveGuests(params: {
 
   const sections: string[] = [];
   const mentions: GuestMention[] = [];
+  const guests: GuestContext[] = [];
   for (const id of targetIds) {
-    const detail = await describeGuest(hotelId, id, today);
+    const detail = await describeGuest(hotelId, id, today, staffMemberId);
     if (!detail) continue;
     mentions.push(detail.mention);
     sections.push(detail.text);
+    guests.push(detail.guest);
   }
   for (const { word, candidates: list } of inText.ambiguous) {
     sections.push(
@@ -147,10 +154,11 @@ export async function resolveGuests(params: {
     );
   }
   for (const room of inText.missingRooms) sections.push(`${room}: 前後の日を含めて予約が見つからない`);
-  if (!sections.length) return { mentions: [], context: null };
+  if (!sections.length) return { mentions: [], context: null, guests: [] };
 
   return {
     mentions,
+    guests,
     context: [
       `【話題のゲスト】（予約・客室管理システムと対応アラートから取得。今日: ${today}${carried ? "。直前の質問で話題だったゲスト" : ""}）`,
       ...sections,
@@ -166,13 +174,17 @@ function fmtDay(date: string, today: string): string {
 
 const HANDOFF_STATUS: Record<string, string> = { open: "未対応", accepted: "対応中", closed: "対応完了", cancelled: "ゲストが取り消し" };
 
-async function describeGuest(hotelId: string, reservationId: string, today: string): Promise<{ mention: GuestMention; text: string } | undefined> {
-  const [guest, history, handoffs] = await Promise.all([
-    getGuestContext(reservationId).catch((error) => {
+async function describeGuest(
+  hotelId: string,
+  reservationId: string,
+  today: string,
+  staffMemberId: string,
+): Promise<{ mention: GuestMention; text: string; guest: GuestContext } | undefined> {
+  const [guest, handoffs] = await Promise.all([
+    getGuestContext(reservationId, { staffMemberId }).catch((error) => {
       console.warn("[staff-ask] 予約を取得できなかった", error);
       return undefined;
     }),
-    getRequestHistory(reservationId).catch(() => undefined),
     // 対応アラート（引き継ぎ）。オーダー起点のクレームはチケットの会話から予約に当てる
     query<{ kind: string; status: string; summary: string; created_at: string; accepted_by: string | null }>(
       `select h.kind, h.status, h.summary, to_char(h.created_at at time zone ho.timezone, 'MM/DD HH24:MI') created_at, m.display_name accepted_by
@@ -192,16 +204,12 @@ async function describeGuest(hotelId: string, reservationId: string, today: stri
   const lines = [
     `■ ${mentionLabel(guest)}（予約番号 ${guest.reservationId}）`,
     `・滞在: チェックイン ${fmtDay(guest.checkIn, today)}、チェックアウト ${fmtDay(guest.checkOut, today)}（${nights}泊、${stayStatus(guest, today)}）、大人${guest.adults}名、プラン: ${guest.planName ?? "記載なし"}`,
-    guest.guestNotes
-      ? `・お客様メモ: ${guest.guestNotes.length ? guest.guestNotes.map((n) => `［${n.category}］${n.body}`).join(" ／ ") : "なし"}`
-      : "・お客様メモ: 読み取りが許可されていない",
-    history
-      ? `・滞在中の依頼履歴: ${history.length ? history.map((h) => h.body).join(" ／ ") : "なし"}`
-      : "・滞在中の依頼履歴: 読み取りが許可されていない",
+    // 連携先で「ゲストの情報として毎回読む」にしたもの（お客様メモ・依頼履歴など）
+    ...guest.preloaded.map((p) => `・${p.description}（${p.integrationName}）:\n${p.text.replace(/^/gm, "  ")}`),
     `・対応アラート: ${handoffs.length ? "" : "なし"}`,
     ...handoffs.map(
       (h) => `  - ${h.created_at} ${HANDOFF_LABELS[h.kind] ?? h.kind}（${HANDOFF_STATUS[h.status] ?? h.status}${h.accepted_by ? `・担当 ${h.accepted_by}` : ""}）: ${h.summary}`,
     ),
   ];
-  return { mention: { reservationId: guest.reservationId, label: mentionLabel(guest) }, text: lines.join("\n") };
+  return { mention: { reservationId: guest.reservationId, label: mentionLabel(guest) }, text: lines.join("\n"), guest };
 }

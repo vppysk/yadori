@@ -102,12 +102,13 @@ export async function searchGuestsAction(text: string): Promise<{ ok: boolean; g
   const member = await authorize("handling.consult.guest");
   try {
     const hotel = await getHotel(member.hotel_id);
-    const guests = await searchGuests(hotel.id, localNow(hotel.timezone).date, text.slice(0, 50));
+    const guests = await searchGuests(hotel.id, localNow(hotel.timezone).date, text.slice(0, 50), member.id);
     await audit(member, "handling.consult.guest", "ask.guest_search", undefined, { query: text.slice(0, 50), hits: guests.length });
     return { ok: true, guests };
   } catch (error) {
     console.error("[searchGuestsAction]", error);
-    return { ok: false, error: "予約・客室管理システムに接続できませんでした" };
+    const denied = error instanceof Error && error.message.includes("権限");
+    return { ok: false, error: denied ? "予約を検索する権限がありません（上長に確認してください）" : "予約・客室管理システムに接続できませんでした" };
   }
 }
 

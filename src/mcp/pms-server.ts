@@ -11,6 +11,7 @@ const reservationId = z.string().describe("予約番号（例: R-1203）");
 
 const getReservation = createTool({
   id: "get_reservation",
+  mcp: { annotations: { readOnlyHint: true } },
   description: "予約内容（客室ID・部屋番号・滞在日・人数・プラン・料金）を取得する",
   inputSchema: z.object({ reservation_id: reservationId }),
   execute: async ({ reservation_id }) => {
@@ -25,6 +26,7 @@ const getReservation = createTool({
 
 const searchReservations = createTool({
   id: "search_reservations",
+  mcp: { annotations: { readOnlyHint: true } },
   description: "期間に滞在がかかる予約を探す。query を渡すと、お名前（空白は無視）か部屋番号で絞る",
   inputSchema: z.object({
     hotel_id: z.string(),
@@ -49,6 +51,7 @@ const searchReservations = createTool({
 
 const listGuestNotes = createTool({
   id: "list_guest_notes",
+  mcp: { annotations: { readOnlyHint: true } },
   description: "お客様メモ（記念日・お好み・引き継ぎなど）の一覧",
   inputSchema: z.object({ reservation_id: reservationId }),
   execute: async ({ reservation_id }) => ({
@@ -61,6 +64,7 @@ const listGuestNotes = createTool({
 
 const listRequestHistory = createTool({
   id: "list_request_history",
+  mcp: { annotations: { readOnlyHint: true } },
   description: "滞在中の依頼履歴",
   inputSchema: z.object({ reservation_id: reservationId }),
   execute: async ({ reservation_id }) => ({
@@ -73,7 +77,12 @@ const listRequestHistory = createTool({
 const appendGuestNote = createTool({
   id: "append_guest_note",
   description: "お客様メモに追記する（既存の記載は変更できない）",
-  inputSchema: z.object({ reservation_id: reservationId, category: z.string(), body: z.string(), written_by: z.string() }),
+  inputSchema: z.object({
+    reservation_id: reservationId,
+    category: z.string().describe("分類（記念日・お好み・AI引継 など）"),
+    body: z.string().describe("追記する内容（1行）"),
+    written_by: z.string().describe("書いた人"),
+  }),
   execute: async ({ reservation_id, category, body, written_by }) => {
     await query("insert into mock_pms.guest_notes (reservation_id, category, body, written_by) values ($1, $2, $3, $4)", [
       reservation_id, category, body, written_by,
@@ -85,7 +94,7 @@ const appendGuestNote = createTool({
 const appendRequestHistory = createTool({
   id: "append_request_history",
   description: "依頼履歴に追記する",
-  inputSchema: z.object({ reservation_id: reservationId, body: z.string(), written_by: z.string() }),
+  inputSchema: z.object({ reservation_id: reservationId, body: z.string().describe("追記する内容（1行）"), written_by: z.string().describe("書いた人") }),
   execute: async ({ reservation_id, body, written_by }) => {
     await query("insert into mock_pms.request_history (reservation_id, body, written_by) values ($1, $2, $3)", [reservation_id, body, written_by]);
     return { ok: true };

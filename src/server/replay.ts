@@ -2,9 +2,8 @@ import { z } from "zod";
 import { configuredModelId, type ModelTier } from "@/lib/llm/models";
 import { generateStructured } from "@/lib/llm/structured";
 import { query } from "./db";
-import { draftAnswer, type InstructionOverrides } from "./guest-chat";
+import { draftAnswer } from "./guest-chat";
 import { mergeOrders, summarizeOrder } from "./order-drafts";
-import { checkReply } from "./guardrails";
 import { getGuestContext } from "./guest-context";
 import { getHotel, type Pattern } from "./hotel";
 import { listFacilityNames } from "./knowledge";
@@ -44,7 +43,7 @@ export type ReplayStats = {
 
 export type ReplayResult = { pattern: Pattern; source: "past_questions" | "sample_questions"; questions: string[]; from: ReplayStats; to: ReplayStats };
 
-async function pastQuestions(hotelId: string, pattern: Pattern): Promise<string[]> {
+async function pastQuestions(hotelId: string, pattern: Pattern, limit = SAMPLES_PER_CELL): Promise<string[]> {
   // 回答のLLM呼び出しに記録したパターンから、その直前のゲストの発言を引く
   const rows = await query<{ content: string }>(
     `select distinct on (u.content) u.content
@@ -58,7 +57,7 @@ async function pastQuestions(hotelId: string, pattern: Pattern): Promise<string[
      where c.hotel_id = $1 and c.purpose = 'answer' and c.pattern = $2
      order by u.content, c.created_at desc
      limit $3`,
-    [hotelId, pattern, SAMPLES_PER_CELL],
+    [hotelId, pattern, limit],
   );
   return rows.map((r) => r.content);
 }
@@ -133,67 +132,6 @@ async function judge(hotelId: string, question: string, reply: string): Promise<
     return object.score;
   } catch {
     return null;
-  }
-}
-
-// ---------- 指示の変更を過去の会話で試す（plan 4.7「変更の安全策」） ----------
-
-export type InstructionTrial = {
-  pattern: Pattern;
-  source: "past_questions" | "sample_questions";
-  followsCount: number;
-  violationCount: number;
-  cases: { question: string; before: string; after: string; follows: boolean; reason: string; violation: string | null }[];
-};
-
-export async function tryInstructions(hotelId: string, pattern: Pattern, draft: InstructionOverrides): Promise<InstructionTrial> {
-  const hotel = await getHotel(hotelId);
-  const found = await getGuestContext(REPLAY_RESERVATION);
-  if (!found) throw new Error("再生用の予約が見つかりません");
-  const guest = found;
-  const past = await pastQuestions(hotelId, pattern);
-  const questions = past.length >= 2 ? past : SAMPLE_QUESTIONS[pattern];
-  const [catalog, facilityNames] = await Promise.all([getCatalog(hotelId), listFacilityNames(hotelId)]);
-  const instruction = [draft.common, draft.patterns[pattern] ?? ""].filter((x) => x.trim()).join("\n");
-
-  const cases = await Promise.all(
-    questions.map(async (text) => {
-      const routed = await route(text, catalog, facilityNames);
-      const base = {
-        hotel, guest, text, history: [], routed: routed.result, allFacilityNames: facilityNames,
-        order: replayOrder(routed.result.intents),
-        hasComplaint: routed.result.intents.some((i) => i.pattern === "complaint"),
-        tier: "medium" as const, thinking: false,
-      };
-      const [before, after] = await Promise.all([draftAnswer(base), draftAnswer({ ...base, instructionOverrides: draft })]);
-      const afterText = after.answer?.reply ?? "";
-      const [judged, check] = await Promise.all([judgeInstruction(hotelId, instruction, text, afterText), checkReply(hotelId, afterText)]);
-      return { question: text, before: before.answer?.reply ?? "", after: afterText, follows: judged.follows, reason: judged.reason, violation: check.ok ? null : check.rule };
-    }),
-  );
-  return {
-    pattern,
-    source: past.length >= 2 ? "past_questions" : "sample_questions",
-    followsCount: cases.filter((c) => c.follows).length,
-    violationCount: cases.filter((c) => c.violation).length,
-    cases,
-  };
-}
-
-async function judgeInstruction(hotelId: string, instruction: string, question: string, reply: string): Promise<{ follows: boolean; reason: string }> {
-  try {
-    const { object, usage } = await generateStructured({
-      tier: "medium",
-      schema: z.object({ follows: z.boolean(), reason: z.string().describe("判定の理由を短く") }),
-      name: "judge_instruction",
-      description: "回答が指示に沿っているか判定する",
-      system: `ホテルのAIの回答が、次の指示に沿っているかを判定する。\n## 指示\n${instruction}`,
-      prompt: `ゲスト: ${question}\nAIの回答: ${reply}`,
-    });
-    await recordLlmCall({ hotelId, purpose: "replay_judge", thinking: false, usage });
-    return object;
-  } catch {
-    return { follows: false, reason: "判定できなかった" };
   }
 }
 

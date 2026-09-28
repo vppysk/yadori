@@ -1,9 +1,9 @@
 import { query, queryOne } from "../db";
 import { getAiAgentMemberId } from "../hotel";
-import { aiMayUse } from "./pms";
+import { aiMayUse } from "./mcp";
 
 // Webページの取得（Tavily Extract）。docs/006_guide_info.md。検索はせず、案内情報に資料として登録したURLだけを取りに行く。
-// AIエージェントの権限（integration.web_fetch.read）と項目ルール（external_updates の読み取り）をここで必ず確認する
+// AIエージェントの権限（integration.web_fetch.read）をここで必ず確認する。サービスの一部として画面には設定を出さない（docs/007_ai_settings.md 3.5）
 
 const TAVILY_EXTRACT_URL = "https://api.tavily.com/extract";
 // 1回の呼び出しで渡せるURLは20件まで
@@ -20,12 +20,10 @@ async function webFetchIntegrationId(hotelId: string): Promise<string | undefine
   return row?.id;
 }
 
-// 連携が有効で、Webページの内容の読み取りが「可」で、AIエージェントに権限があるときだけ true（定期取得の条件）
+// 連携が有効で、AIエージェントに権限があるときだけ true（定期取得の条件）
 export async function webFetchAllowed(hotelId: string): Promise<boolean> {
-  const integrationId = await webFetchIntegrationId(hotelId);
-  if (!integrationId) return false;
-  const rule = await queryOne<{ can_read: boolean }>("select can_read from integration_field_rules where integration_id = $1 and field = 'external_updates'", [integrationId]);
-  return Boolean(rule?.can_read) && (await aiMayUse(hotelId, "integration.web_fetch.read"));
+  if (!(await webFetchIntegrationId(hotelId))) return false;
+  return aiMayUse(hotelId, "integration.web_fetch.read");
 }
 
 export function tavilyConfigured(): boolean {
@@ -45,7 +43,7 @@ export async function extractPages(hotelId: string, urls: string[]): Promise<Ext
       body: JSON.stringify({ urls: batch, extract_depth: "basic", format: "markdown", timeout: 30, include_usage: true }),
       signal: AbortSignal.timeout(45_000),
     });
-    if (!response.ok) throw new Error(`Tavily ${response.status}: ${(await response.text()).slice(0, 200)}`);
+    if (!response.ok) throw new Error(`Webページを取得できませんでした（${response.status}）: ${(await response.text()).slice(0, 200)}`);
     const body = (await response.json()) as {
       results?: { url: string; raw_content?: string }[];
       failed_results?: { url: string; error?: string }[];
@@ -62,7 +60,7 @@ export async function extractPages(hotelId: string, urls: string[]): Promise<Ext
   return result;
 }
 
-// 誰が（AIエージェント）、どの権限で、何を取得したかを残す。外部連携の画面の「最近の取得」に出す
+// 誰が（AIエージェント）、どの権限で、何を取得したかを残す（監査ログ）
 async function logFetch(hotelId: string, urls: string[], succeeded: number, credits: number) {
   const [ai, integrationId] = await Promise.all([getAiAgentMemberId(hotelId), webFetchIntegrationId(hotelId)]);
   await query(
@@ -70,24 +68,4 @@ async function logFetch(hotelId: string, urls: string[], succeeded: number, cred
      values ($1, $2, 'integration.web_fetch.read', 'web_fetch', 'integration', $3, $4)`,
     [hotelId, ai ?? null, integrationId ?? null, JSON.stringify({ urls, succeeded, credits })],
   );
-}
-
-export type FetchLogRow = { urls: string[]; succeeded: number; credits: number; created_at: string };
-
-export async function listRecentFetches(integrationId: string): Promise<FetchLogRow[]> {
-  return query<FetchLogRow>(
-    `select coalesce(l.detail->'urls', '[]') urls, coalesce((l.detail->>'succeeded')::int, 0) succeeded, coalesce((l.detail->>'credits')::numeric, 0)::float credits,
-       to_char(l.created_at at time zone h.timezone, 'FMMM/FMDD HH24:MI') created_at
-     from audit_logs l join hotels h on h.id = l.hotel_id
-     where l.action = 'web_fetch' and l.target_id = $1 order by l.created_at desc limit 10`,
-    [integrationId],
-  );
-}
-
-// 外部連携の画面で書く読み取りルール（外部情報の使い方。外部情報の値を回答に渡すときに指示に足す）
-export async function externalReadRule(hotelId: string): Promise<string | undefined> {
-  const integrationId = await webFetchIntegrationId(hotelId);
-  if (!integrationId) return undefined;
-  const row = await queryOne<{ body: string }>("select body from ai_instructions where integration_id = $1 and scope = 'integration_read'", [integrationId]);
-  return row?.body;
 }

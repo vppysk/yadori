@@ -10,6 +10,7 @@ import { addDays, ISO_TIMESTAMP, query, queryOne } from "./db";
 import { getHotel, localNow } from "./hotel";
 import { getFacilityInfo, listFacilityNames, searchDocuments } from "./knowledge";
 import { recordLlmCall } from "./metrics";
+import { consultIntegrations } from "./integration-agent";
 import { resolveGuests, type GuestMention } from "./staff-ask-guests";
 
 // スタッフ向けの相談相手（plan 4.1）: 新人が、ゲストと同じ知識ベース（マスタ・特記事項・マニュアル）に質問できる。
@@ -80,18 +81,22 @@ export async function askAi(
 
   const previous = history.findLast((m) => m.role === "user")?.mentions ?? [];
   const guests = params.canViewGuests
-    ? await resolveGuests({ hotelId: hotel.id, today, text, selectedIds: params.guestIds, previous })
-    : { mentions: [], context: null };
+    ? await resolveGuests({ hotelId: hotel.id, today, text, selectedIds: params.guestIds, previous, staffMemberId: member.id })
+    : { mentions: [], context: null, guests: [] };
   await query("insert into messages (conversation_id, role, content, mentions) values ($1, 'user', $2, $3)", [
     conversationId, text, guests.mentions.length ? JSON.stringify(guests.mentions) : null,
   ]);
 
   // 今日と明日の営業情報・特記事項は全施設分を渡す（1ホテル分なら小さい）。マニュアルは質問で検索する
-  const [facilities, facilityNames, documents, autoUpdates] = await Promise.all([
+  // 話題のゲストが1人なら、連携係が連携先を調べる（読み取りだけ。相談しているスタッフにも権限があるツールだけ。docs/007_ai_settings.md）
+  const [facilities, facilityNames, documents, autoUpdates, integrationFacts] = await Promise.all([
     getFacilityInfo(hotel.id, { from: today, to: addDays(today, 1), timezone: hotel.timezone }),
     listFacilityNames(hotel.id),
     searchDocuments(hotel.id, text),
     getAutoUpdates(hotel.id),
+    guests.guests.length === 1
+      ? consultIntegrations({ guest: guests.guests[0], conversationId, text, history, staffMemberId: member.id })
+      : undefined,
   ]);
   const now = localNow(hotel.timezone);
   const instructions = [
@@ -112,6 +117,7 @@ export async function askAi(
     ...(documents.length ? ["", "【館内案内・マニュアルからの抜粋】", ...documents.map((d) => `・${d.title}: ${d.content}`)] : []),
     ...renderAutoUpdates(autoUpdates),
     ...(guests.context ? ["", guests.context] : []),
+    ...(integrationFacts ? ["", "【連携先から取得した情報】（話題のゲストについて。質問に関係するときだけ使う）", integrationFacts.text] : []),
     "",
     "【スタッフの質問】",
     text,

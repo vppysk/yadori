@@ -1,22 +1,13 @@
 import { z } from "zod";
 import { classifyLlmError, type LlmFailure } from "@/lib/llm/errors";
 import { generateStructured } from "@/lib/llm/structured";
-import { query, queryOne } from "./db";
+import { queryOne } from "./db";
 import { recordLlmCall } from "./metrics";
+import { allCheckBodies } from "./reply-checks";
 
-// ガードレール（plan 4.7）: 指示より優先し、応答の前後で自動チェックする。
-// 前: 必ず人に引き継ぐ条件（code で判定を実装した組み込みの条件。オフにしたものは判定しない）
-// 後: してはいけないことに反する回答をゲストに出さない
-
-export type HandoffCode = "wants_staff" | "strong_complaint" | "unanswered_twice" | "safety";
-
-export async function enabledHandoffCodes(hotelId: string): Promise<Set<HandoffCode>> {
-  const rows = await query<{ code: HandoffCode }>(
-    "select code from guardrails where hotel_id = $1 and kind = 'handoff_condition' and enabled and code is not null",
-    [hotelId],
-  );
-  return new Set(rows.map((r) => r.code));
-}
+// ガードレール（plan 4.7、docs/007_ai_settings.md）: 画面では設定せず、内部で常に判定する。
+// 前: 必ず人に引き継ぐ条件（安全・強い不満・スタッフと話したい・2回答えられない。guest-chat.ts）
+// 後: 固定の項目と、指示・利用ルールから抜き出したチェック項目（reply-checks.ts）に反する回答をゲストに出さない
 
 // 同じ会話で答えられなかった回数（この発言を含めて2回で人へ）
 export async function unansweredCount(conversationId: string): Promise<number> {
@@ -32,11 +23,7 @@ export type ReplyCheck = { ok: true } | { ok: false; rule: string; reason: strin
 
 // 回答の後チェック。「してはいけないこと」への違反をモデルで判定する
 export async function checkReply(hotelId: string, reply: string, conversationId?: string): Promise<ReplyCheck> {
-  const rules = await query<{ body: string }>(
-    "select body from guardrails where hotel_id = $1 and kind = 'forbidden' and enabled order by sort",
-    [hotelId],
-  );
-  if (rules.length === 0) return { ok: true };
+  const rules = (await allCheckBodies(hotelId)).map((body) => ({ body }));
   try {
     // 小型（Lightning）は値引きの約束や他の客の情報を見逃したため、中型で判定する（2026-09-26 検証）
     const { object, usage } = await generateStructured({

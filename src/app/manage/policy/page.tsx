@@ -1,9 +1,6 @@
-import { can, requireMember } from "@/server/auth";
-import { getPolicy } from "@/server/policy";
-import { PolicyEditor } from "./policy-editor";
+import { redirect } from "next/navigation";
 
-export default async function PolicyPage() {
-  const member = await requireMember("/manage/policy");
-  if (!(await can(member.id, "settings.ai_policy"))) return <p className="text-sm text-ink-sub">指示とガードレールの権限がありません</p>;
-  return <PolicyEditor policy={await getPolicy(member.hotel_id)} />;
+// 指示は管理PCの「AIの設定」に移し、ガードレールの画面設定は廃止した（docs/007_ai_settings.md）
+export default function PolicyRedirect() {
+  redirect("/admin/knowledge/instructions");
 }

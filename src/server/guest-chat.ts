@@ -6,7 +6,7 @@ import type { LlmUsage } from "@/lib/llm/structured";
 import { generateAnswer, type Answer, type ConciergeContext } from "@/mastra/agents/concierge";
 import { addDays, ISO_TIMESTAMP, query, queryOne } from "./db";
 import { getGuestContext, type GuestContext } from "./guest-context";
-import { checkReply, enabledHandoffCodes, unansweredCount } from "./guardrails";
+import { checkReply, unansweredCount } from "./guardrails";
 import { activeGuestRequest, cancelGuestRequest, createHandoff, type GuestRequest, type HandoffKind } from "./handoffs";
 import { currentTimeBand, getAssignment, getHotel, localNow, type Hotel, type Pattern } from "./hotel";
 import { cleanReply, fmtDate, noticeCitations, renderFacilities, type Citation } from "./answer-context";
@@ -16,8 +16,9 @@ import { recordLlmCall, recordWorkEvent } from "./metrics";
 import { cancelDraft, listOpenDrafts, orderInstructions, orderReply, proposeOrder, submitDraft, type GuestOrderDraft, type OrderSummary, type SubmitOrderInput } from "./order-drafts";
 import { checkOpenTicketsForComplaint, describeOpenTickets, followUpOrders, nudgeFromGuest, rescheduleOrders, rescheduleTicket } from "./order-checks";
 import { getCatalog, listConversationTickets, listOpenOrderItems, type GuestTicket } from "./orders";
-import { readRuleText } from "./integrations/pms";
-import { externalReadRule } from "./integrations/web-fetch";
+import { consultIntegrations } from "./integration-agent";
+import { usageRules } from "./integrations/mcp";
+import { allCheckBodies } from "./reply-checks";
 import { route, type RouteResult } from "./router";
 
 const HISTORY_LIMIT = 12;
@@ -26,7 +27,6 @@ export const GUEST_MESSAGE_HEADING = "【ゲストのメッセージ】";
 const PATTERN_PRIORITY: Pattern[] = ["complaint", "reservation", "external", "info", "order"];
 
 export type { Citation };
-export type InstructionOverrides = { common: string; patterns: Partial<Record<Pattern, string>> };
 
 export type GuestChatMessage = {
   id: string;
@@ -182,10 +182,9 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   const routed = await route(text, catalog, facilityNames, openOrders);
   await recordLlmCall({ hotelId: hotel.id, conversationId, messageId: userMessageId, purpose: "router", thinking: false, usage: routed.usage });
   const { intents } = routed.result;
-  const conditions = await enabledHandoffCodes(hotel.id);
 
-  // ガードレール（前）: 必ず人に引き継ぐ条件
-  if (conditions.has("safety") && routed.result.safety) {
+  // ガードレール（前）: 必ず人に引き継ぐ条件（設定では変えられない。docs/007_ai_settings.md）
+  if (routed.result.safety) {
     return handOffToStaff(hotel, guest, conversationId, intents[0]?.pattern ?? "order", band?.id, text, {
       kind: "safety",
       messageId: userMessageId,
@@ -207,19 +206,17 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   // お届けの依頼は選択欄を出し、ゲストが確定したときにチケットを作る（取り扱いのない品・品切れは引き継ぐ）
   const order = await proposeOrder({ hotel, guest, conversationId, messageId: userMessageId, text, intents });
   const complaints = intents.filter((i) => i.pattern === "complaint");
-  // クレームと強い不満は人へ引き継ぐ（AIは一次受け止めのみ。「強い不満」の条件をオフにすると引き継がない）
-  if (conditions.has("strong_complaint")) {
-    for (const complaint of complaints) {
-      await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: complaint.summary, messageId: userMessageId });
-    }
-    if (complaints.length === 0 && routed.result.strong_emotion) {
-      await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: `強い不満: ${text}`, messageId: userMessageId });
-    }
+  // クレームと強い不満は人へ引き継ぐ（AIは一次受け止めのみ）
+  for (const complaint of complaints) {
+    await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: complaint.summary, messageId: userMessageId });
+  }
+  if (complaints.length === 0 && routed.result.strong_emotion) {
+    await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: `強い不満: ${text}`, messageId: userMessageId });
   }
   // 未完了のオーダーがある会話での不満・催促（「まだ届かない」など）は、オーダーの催促として担当者に状況を確認する（docs/005_order.md 6章）
   if (!followUp && (complaints.length > 0 || routed.result.strong_emotion)) await checkOpenTicketsForComplaint(conversationId);
   // 「スタッフと話したい」: 同じ発言のオーダーとクレームの引き継ぎを済ませてから人へ（AIは回答しない）
-  if (conditions.has("wants_staff") && routed.result.wants_staff) {
+  if (routed.result.wants_staff) {
     // オーダーの実績は発行時に記録済みのため、引き継ぎはオーダー以外の要望として数える
     const pattern = intents.find((i) => i.pattern !== "order")?.pattern ?? "info";
     return handOffToStaff(hotel, guest, conversationId, pattern, band?.id, text, {
@@ -247,8 +244,12 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   }
 
   const tier: ModelTier = assignment.handler === "human" ? "small" : assignment.handler;
+  // 外部の連携先が要る発言（周辺・外部の予約、予約・客室）は、連携係がツールを選んで調べる。書き込みは利用ルールで決められているときだけ積む
+  const integrationFacts = intents.some((i) => i.pattern === "external" || i.pattern === "reservation")
+    ? await consultIntegrations({ guest, conversationId, text, history })
+    : undefined;
   const { answer, facilities, autoUpdates, failure } = await draftAnswer({
-    hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, order, orderUpdate: followUp,
+    hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, order, orderUpdate: followUp, integrationFacts: integrationFacts?.text,
     openTickets: await describeOpenTickets(conversationId, hotel.timezone),
     hasComplaint: complaints.length > 0, tier, thinking: assignment.thinking,
   });
@@ -293,7 +294,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   // 同じ会話で2回答えられなかったら人へ
   const isUnanswered = failed || unanswered.length > 0;
   // 回答を作れなかったときはシステムの不具合として引き継ぎ済みのため重ねない
-  if (!failed && isUnanswered && conditions.has("unanswered_twice") && (await unansweredCount(conversationId)) >= 1) {
+  if (!failed && isUnanswered && (await unansweredCount(conversationId)) >= 1) {
     await createHandoff({
       hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: `同じ会話で2回答えられなかった。直近の質問: ${text}`,
       messageId: userMessageId,
@@ -339,10 +340,10 @@ export async function draftAnswer(params: {
   orderUpdate?: string; // 未完了のご依頼への催促・時間の変更に返した内容
   openTickets?: string[]; // 未完了のご依頼の状況（回答係はこれ以外のお届けの状況を言わない）
   hasComplaint: boolean;
+  // 連携係が連携先から取得した情報（integration-agent.ts）
+  integrationFacts?: string;
   tier: ModelTier;
   thinking: boolean;
-  // 保存前の指示で試すとき（「過去の会話で試す」）に、DBの指示の代わりに使う
-  instructionOverrides?: InstructionOverrides;
 }): Promise<{ answer: Answer | undefined; facilities: FacilityInfo[]; autoUpdates: AutoUpdate[]; failure?: LlmFailure }> {
   const { hotel, guest, text, history, routed, tier, thinking } = params;
   const intents = routed.intents;
@@ -360,8 +361,8 @@ export async function draftAnswer(params: {
   ]);
 
   const instructions = await buildInstructions({
-    hotel, guest, intents, order: params.order, orderUpdate: params.orderUpdate, openTickets: params.openTickets, hasComplaint: params.hasComplaint,
-    overrides: params.instructionOverrides, hasExternal: facilities.some((f) => f.fields.some((x) => x.values.some((v) => v.external))),
+    hotel, guest, order: params.order, orderUpdate: params.orderUpdate, openTickets: params.openTickets, hasComplaint: params.hasComplaint,
+    integrationFacts: params.integrationFacts, hasExternal: facilities.some((f) => f.fields.some((x) => x.values.some((v) => v.external))),
     hasAuto: autoUpdates.length > 0,
   });
   const requestContext = new RequestContext<ConciergeContext>();
@@ -394,38 +395,29 @@ export async function draftAnswer(params: {
 async function buildInstructions(params: {
   hotel: Hotel;
   guest: GuestContext;
-  intents: RouteResult["intents"];
   order: OrderSummary | undefined;
   orderUpdate?: string; // 未完了のご依頼への催促・時間の変更に返した内容
   openTickets?: string[]; // 未完了のご依頼の状況（回答係はこれ以外のお届けの状況を言わない）
   hasComplaint: boolean;
-  overrides?: InstructionOverrides;
+  integrationFacts?: string;
   // 外部情報の資料から読み取った値を渡すか（出どころの添え方を指示に足す）
   hasExternal: boolean;
   // 自動取得の最新情報（自動反映のURL）を渡すか
   hasAuto: boolean;
 }): Promise<string> {
-  const { hotel, guest, intents, order, orderUpdate, openTickets, hasComplaint, overrides, hasExternal, hasAuto } = params;
-  const patterns = [...new Set(intents.map((i) => i.pattern))];
-  const [instructions, guardrails, readRule, externalRule] = await Promise.all([
-    overrides
-      ? Promise.resolve([
-          { scope: "common", body: overrides.common },
-          ...patterns.map((p) => ({ scope: "pattern", body: overrides.patterns[p] ?? "" })),
-        ].filter((i) => i.body.trim()))
-      : query<{ scope: string; body: string }>(
-          "select scope, body from ai_instructions where hotel_id = $1 and (scope = 'common' or (scope = 'pattern' and pattern = any ($2))) order by scope",
-          [hotel.id, patterns],
-        ),
-    query<{ kind: string; body: string }>(
-      "select kind, body from guardrails where hotel_id = $1 and enabled and kind in ('forbidden', 'confirm_before') order by kind, sort",
-      [hotel.id],
-    ),
-    readRuleText(),
-    hasExternal || hasAuto ? externalReadRule(hotel.id) : undefined,
+  const { hotel, guest, order, orderUpdate, openTickets, hasComplaint, integrationFacts, hasExternal, hasAuto } = params;
+  const [instruction, checks, rules] = await Promise.all([
+    queryOne<{ body: string }>("select body from ai_instructions where hotel_id = $1 and scope = 'common'", [hotel.id]).then((r) => r?.body ?? ""),
+    allCheckBodies(hotel.id),
+    usageRules(hotel.id),
   ]);
   const now = localNow(hotel.timezone);
   const stayStatus = now.date < guest.checkIn ? "ご到着前" : now.date >= guest.checkOut ? "ご出発後" : "ご滞在中";
+  // 連携先の情報（毎回読むゲストの情報と、連携係が調べた結果）に添える利用ルール
+  const usedIntegrations = [...new Set(guest.preloaded.map((p) => p.integrationId))];
+  const ruleLines = [...rules.entries()]
+    .filter(([id]) => usedIntegrations.includes(id) || integrationFacts)
+    .map(([, body]) => body);
 
   return [
     `あなたは「${hotel.name}」のゲスト向けアシスタント。日本語だけで、ゲストに直接話しかける文章だけを書く。`,
@@ -438,17 +430,20 @@ async function buildInstructions(params: {
     "館内の情報に書かれていないサービス（ルームサービスなど）を勧めない。",
     // AIがお届けの時刻を約束したが、チケットは変わっていなかった（2026-09-28）。手配の内容はシステムが決める
     "お届け（備品・飲み物）の時刻・時間の変更・到着の見込み・手配の完了を、自分から約束しない。お届けの状況は【ご依頼の状況】に書かれたことだけを伝える。時間を変えたいと言われたら、画面の「ご依頼の状況」の「時間を変更」から変えられると案内する。",
-    "答えられた質問には「スタッフに確認します」を付けない。",
+    // 好みを伺っただけの枕を「ご用意いたします」と約束した（2026-09-28）
+    "お届けの依頼として受け付けていない品やサービス（好みとして伺っただけのものなど）を「ご用意します」「手配します」と約束しない。好みは「承りました。スタッフと共有いたします」までにする。",
+        "答えられた質問には「スタッフに確認します」を付けない。",
     "営業時間などは、会話の中の過去の回答ではなく、必ず【最新の館内情報】で答える（情報は更新されていることがある）。",
     "ゲストの状況に書かれていない事実（到着からの経過時間など）を付け足さない。",
     "館内の情報・抜粋に書かれていないことは、あるともないとも断定しない（「ございません」「お断りしています」も言わない）。スタッフに確認してご連絡すると伝え、その質問を unanswered_questions に入れる。",
     "マークダウン記法（**や#）は使わない。",
     "",
     "## ホテルの指示",
-    ...instructions.map((i) => i.body),
+    instruction,
     "",
+    // 回答後にもチェックする（guardrails.ts）
     "## 必ず守ること",
-    ...guardrails.map((g) => (g.kind === "forbidden" ? `・${g.body}` : `・「${g.body}」は確定前に必ずお客様に確認する`)),
+    ...checks.map((c) => `・${c}`),
     "",
     "## ゲストの状況",
     `・今日: ${now.date} ${now.time}（${stayStatus}）`,
@@ -459,18 +454,16 @@ async function buildInstructions(params: {
     "## ご依頼の状況（お届けについてはここに書かれたことだけを伝える）",
     ...(openTickets?.length ? openTickets.map((t) => `・${t}`) : ["・未完了のご依頼はない"]),
     ...(hasComplaint ? ["・不満の内容はスタッフに引き継ぎ済み。お詫びし、担当者から改めて連絡すると伝える"] : []),
-    // 予約・客室管理システムのお客様メモ（読み取りが許可されている場合のみ）と、その読み取りルール
-    ...(guest.guestNotes?.length
-      ? ["", "## お客様メモ（予約・客室管理システム）", ...guest.guestNotes.map((n) => `・${n.category}: ${n.body}`), ...(readRule ? ["", "### お客様メモの使い方", readRule] : [])]
-      : []),
-    // 外部情報の使い方（Web取得の連携の読み取りルール。/manage/integrations で編集）
+    // 連携先（予約・客室管理システムなど）のゲストの情報と、連携係が調べた結果。現場が書いた利用ルールに沿って使う
+    ...guest.preloaded.flatMap((p) => ["", `## ${p.integrationName}: ${p.description}`, p.text]),
+    ...(integrationFacts ? ["", "## 連携先から取得した情報（ゲストの発言に関係するときだけ使う。書かれていないことは推測しない）", integrationFacts] : []),
+    ...(ruleLines.length ? ["", "## 連携先の情報の使い方", ...ruleLines] : []),
     ...(hasAuto
       ? [
           "",
           "## 自動取得の最新情報の使い方",
           "・【自動取得の最新情報】は、ゲストの質問に関係するときだけ使い、時点を添える。書かれていないこと（運転再開の見込みなど）は推測しない",
           "・使った資料名を used_sources に入れる",
-          ...(!hasExternal && externalRule ? [externalRule] : []),
         ]
       : []),
     ...(hasExternal
@@ -478,9 +471,10 @@ async function buildInstructions(params: {
           "",
           "## 外部情報の使い方",
           "・「（外部情報: ○○）」と付いた内容はホテル以外が管理する情報。「（外部情報: …）」の表記はそのまま書かず、「○○によると」のように出どころを文の中で添える。書かれていないこと（運転再開の見込みなど）は推測しない",
-          ...(externalRule ? [externalRule] : []),
         ]
       : []),
+    // 外部の情報（運行情報・天気など）の扱い。旧 Webページの連携の読み取りルールを内部の決まりにした（docs/007_ai_settings.md 3.5）
+    ...(hasAuto || hasExternal ? ["・運休や荒天のときは、代わりの手段や時間に余裕を持つことを提案し、詳しくはフロントにおつなぎすると伝える"] : []),
   ].join("\n");
 }
 

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 現状
 
 ホテル運営AIエージェント（Nebius x NVIDIA Global AI Hackathon 応募作品、締切 2026-10-30 10:00 PDT）。
-W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番号]`、現場スマホ `/staff/*`、管理PC `/admin/*`、経営 `/manage/*`（担当範囲とコスト・指示とガードレール・外部連携・変更履歴・マスタ）。
+W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番号]`、現場スマホ `/staff/*`、管理PC `/admin/*`（オーダー管理・AIの設定・対応アラート）、経営 `/manage/*`（担当範囲とコスト・外部連携・変更履歴・マスタ）。
 計画書のハッカソン範囲の画面・機能は一通り実装済み（メンバーと権限は `/manage/members`）。残りはW5（ホスティング・README・デモ動画・提出）。
 スタッフ画面は `/staff/login` でメンバーを選ぶデモ用ログイン（パスワードなし）。
 
@@ -32,12 +32,12 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `src/server/orders.ts`: チケットの割り当ては機械ロジック（同じ棟・フロアのまとめ → 担当量最小 → 最後の割り当てが古い順）。LLMは使わない。お届けの希望日時があるチケットは前倒しの時刻まで割り当てを保留し、`/api/cron/tickets` で割り当てる
 - オーダーの受付（`docs/005_order.md`）: `order-match.ts`（ゲストの言い方→品目の候補。名前・別名の一致 → 分類 → 部分一致）、`order-drafts.ts`（ゲストの選択欄。確定でチケットを作る。オーダーだけの発言は回答係を呼ばず定型文）。部屋は客室ID（`rooms.id`）で持ち、`room_number` 列には表示名を入れる。担当はスタッフごとの役割×エリアの担当表（`member_duties`、管理PC `/admin/orders/duties`、`duties.ts`）で、出勤はオン／オフだけ（`member_shifts`）。枠・担当席（共有アカウント）は廃止した。期限切れ・ゲストの「状況を確認する」・上長の依頼は `order-checks.ts` で担当者に状況の確認を送る（期限切れで自動の割り当て直しはしない。オーダー遅延の引き継ぎは作らず、催促が続いたらクレームにする）
 - `src/server/auth.ts`: `requireMember`（画面）と `authorize(権限キー, 対象ID)`（サーバーアクション）。操作は必ず `authorize` → 処理 → `audit` の順
-- `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`info-sources.ts`（資料: 施設ごとの読み取り・根拠の確認・承認と優先度）、`facility-fields.ts`（値の期間・重なり・優先度の純粋関数。確認画面でも使う）、`questions.ts`（未回答の質問の一覧と回答。期間のない回答はよくある質問（RAG）、期間のある回答は資料へ）、`knowledge-review.ts`（会話ログの定期評価で未回答の質問を見つける。`/api/cron/knowledge-review`）、`staff-ask.ts`（スタッフのAI相談。1人が複数の会話を持ち、削除は `archived_at`）、`staff-ask-guests.ts`（AI相談でのゲストの言及。画面で選ぶか文の部屋番号・お名前・予約番号をコードで照合し、予約・客室管理システム（`pms.ts` の `searchReservations` など）と対応アラートから【話題のゲスト】を作る。言及がなければ直前の質問のゲストを引き継ぐ。権限 `handling.consult.guest`）
-- サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）。管理PCのサイドバーは `src/app/admin/nav-items.ts`（ホームはなく、`/admin` は一番上へ移る。オーダー管理と案内情報は中に左の一覧を持つ: `orders/orders-nav.tsx`・`knowledge/knowledge-nav.tsx`）、`src/app/manage/actions.ts`（経営）
-- MCP: `src/mcp/pms-server.ts`（予約・客室管理のモック、`/api/mcp/pms`）と `src/mcp/work-events-server.ts`（実績の出力口、`/api/mcp/work-events`）。どちらもBearerトークン必須。予約情報の読み書きは必ず `src/server/integrations/pms.ts`（変換層）を通し、項目ルールとAIの権限を確認する
-- `src/server/source-fetch.ts`: URLの資料（管理PCの案内情報 → 資料）。反映のしかたを資料ごとに選ぶ（`reflect_mode`）。自動反映は値に読み取らず、取得のたびに中型で要約・影響判定して【自動取得の最新情報】として回答に渡し、変わったら管理PCのバッジ（`unseen_update`）と、影響があれば現場スマホに通知する。以下は承認して反映の場合: 登録時に `integrations/web-fetch.ts`（Tavily Extract）で取得して読み取り、確認・承認する。定期取得（`/api/cron/sources`、検索はしない）で本文が変わったら読み直して「更新の確認待ち」（`update_pending`）にし、承認で差し替える（承認までは前の版で案内）。資料を承認できる人に通知。期間限定で頻度を上げられる（`info_source_boosts`）。定期取得はAIの権限 `integration.web_fetch.read` と項目 `external_updates` の読み取りを確認する。旧「外部の情報源」（`external-sources.ts`・【外部の最新情報】）は統合して削除した（`docs/006_guide_info.md`）
+- `src/server/staff-work.ts`（出勤・向かう／届けた／対応できない・再割り当て・引き継ぎ・通知）、`escalation.ts`（`/api/cron/tickets` から呼ぶ）、`knowledge-admin.ts`（マスタ編集・PDF/画像からの下書き）、`info-sources.ts`（資料: 施設ごとの読み取り・根拠の確認・承認と優先度）、`facility-fields.ts`（値の期間・重なり・優先度の純粋関数。確認画面でも使う）、`questions.ts`（未回答の質問の一覧と回答。期間のない回答はよくある質問（RAG）、期間のある回答は資料へ）、`knowledge-review.ts`（会話ログの定期評価で未回答の質問を見つける。`/api/cron/knowledge-review`）、`staff-ask.ts`（スタッフのAI相談。1人が複数の会話を持ち、削除は `archived_at`）、`staff-ask-guests.ts`（AI相談でのゲストの言及。画面で選ぶか文の部屋番号・お名前・予約番号をコードで照合し、予約・客室管理システム（`pms.ts` の `searchReservations` など）と対応アラートから【話題のゲスト】を作る。連携先のツールはAIエージェントと相談しているスタッフの両方に権限が要り、話題のゲストが1人なら連携係が読み取りだけ行う。言及がなければ直前の質問のゲストを引き継ぐ。権限 `handling.consult.guest`）
+- サーバーアクションは `src/app/staff/actions.ts`（現場スマホ）、`src/app/admin/actions.ts`（管理PC）。管理PCのサイドバーは `src/app/admin/nav-items.ts`（ホームはなく、`/admin` は一番上へ移る。オーダー管理とAIの設定（`/admin/knowledge`。答える内容（ゲストとスタッフのAI相談の共通）・答え方（ゲスト向けの指示）・連携の使い方）は中に左の一覧を持つ: `orders/orders-nav.tsx`・`knowledge/knowledge-nav.tsx`）、`src/app/manage/actions.ts`（経営）
+- MCP: `src/mcp/pms-server.ts`（予約・客室管理のモック、`/api/mcp/pms`）と `src/mcp/work-events-server.ts`（実績の出力口、`/api/mcp/work-events`）。どちらもBearerトークン必須。外部連携は `src/server/integrations/mcp.ts`（連携先ごとの接続・ツールの取得 `syncTools`・呼び出し）。権限はツール1つ＝権限1つ（`integration.<slug>.<ツール名>` をAIエージェントに付ける。`integration_tools`）。ツールの用途（`role`）が決まっているもの（ゲストの予約の取得・予約の検索・毎回読むゲストの情報）は `integrations/pms.ts`（変換層、料金などを落とす）が呼び、それ以外は `integration-agent.ts`（連携係）がLLMで選ぶ（`docs/007_ai_settings.md`）
+- `src/server/source-fetch.ts`: URLの資料（管理PCの案内情報 → 資料）。反映のしかたを資料ごとに選ぶ（`reflect_mode`）。自動反映は値に読み取らず、取得のたびに中型で要約・影響判定して【自動取得の最新情報】として回答に渡し、変わったら管理PCのバッジ（`unseen_update`）と、影響があれば現場スマホに通知する。以下は承認して反映の場合: 登録時に `integrations/web-fetch.ts`（Tavily Extract）で取得して読み取り、確認・承認する。定期取得（`/api/cron/sources`、検索はしない）で本文が変わったら読み直して「更新の確認待ち」（`update_pending`）にし、承認で差し替える（承認までは前の版で案内）。資料を承認できる人に通知。期間限定で頻度を上げられる（`info_source_boosts`）。定期取得はAIの権限 `integration.web_fetch.read` を確認する。Webページの取得（Tavily）は画面に設定もコストも出さない。旧「外部の情報源」（`external-sources.ts`・【外部の最新情報】）は統合して削除した（`docs/006_guide_info.md`）
 - 引き継ぎの種類はきっかけごとに保存し、管理PC `/admin/handoffs`（対応アラート）の分類は `src/lib/handoff-kinds.ts` でまとめる。LLMの失敗は `src/lib/llm/errors.ts` の `classifyLlmError` で原因を分け、`system_error` の引き継ぎに残す（期待した出力が返らないときは `InvalidOutputError` を投げる）
-- `src/server/guardrails.ts`: 応答前の引き継ぎ条件（`guardrails.code`）と応答後の禁止事項チェック。`dashboard.ts`／`replay.ts`: 簡易・精密見積もり
+- `src/server/guardrails.ts`: 応答後のチェック（`checkReply`）。必ず人に引き継ぐ条件は設定せず `guest-chat.ts` で常に判定する。チェック項目は `reply-checks.ts`（固定の項目＋指示・利用ルールを保存したときにUltraが抜き出した項目）。指示は1本（`policy.ts`、管理PCの「答え方」）。`dashboard.ts`／`replay.ts`: 簡易・精密見積もり
 - Mastraの全HTTP API（`/api/mastra/*`）は公開しない（誰でもエージェントを呼べてしまうため削除済み）
 - `src/mastra/`: Mastraのエージェント。`src/app/api/mastra/[...mastra]/route.ts` でMastraのHTTP APIを `/api/mastra/*` に公開（`prefix` とフォルダ位置を一致させる）
 - `scripts/verify-llm.ts`: LLM層の確認スクリプト。`registerMockToolFixture` でモック時の強制ツール呼び出しの戻り値を登録する
@@ -62,11 +62,13 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - 情報にないことを「ございません」と断定しやすいので、指示で禁止している。未回答の質問は会話ログの定期評価で見つける（1通ごとの記録はしない）
 - 定期評価（Super）は「苦情や依頼は抜き出さない」と指示しても返すため、発言の種類を分類させて情報の質問だけをコードで残している（`knowledge-review.ts`）。スタッフの名乗りや「確認して折り返します」も下書きに入れがちなので、指示と `has_information` で除いている
 - 禁止事項の後チェックは中型（Super）。小型は値引きの約束や他の客の情報を見逃した
-- 精密見積もりのAI採点は差が出にくい（どちらも4点になりがち）。「過去の会話で試す」の指示判定も誤ることがあるため、画面に判定理由を出している。採点基準の改善は未着手
+- 精密見積もりのAI採点は差が出にくい（どちらも4点になりがち）。採点基準の改善は未着手。指示の変更を過去の会話で試す機能は廃止した
 - 実績の記録（`recordWorkEvent`）のたびにWebhookを `after()` で送る。本文のHMAC-SHA256を `X-Hotel-Agent-Signature` に付ける
 - 案内の回答は中型（Super）が既定。小型（Lightning）はデータのない項目（朝食時間など）を推測で答えた。ルーターは小型で可
 - ルーターは「スタッフと話したい」自体を complaint の要望にすることがある。指示で禁止し、`wants_staff` のときは短い要約の会話希望を要望から除いている（`router.ts` の `isTalkRequestOnly`）。人への引き継ぎは、同じ発言のオーダー発行とクレームの引き継ぎを済ませてから行う
 - ルーターには会話の未完了のご依頼を渡し、「タオルまだ？」のような催促（`order_follow_up`）を新しい依頼と見分ける。Lightningは「もう1枚追加で」を催促にしたり、催促の品を order にしたり、発言にない品を order に入れたりとぶれたため、催促の言葉・未完了の品との一致・発言に品名があるかをコードで判定している（`router.ts` の `normalize`）。お届け時間の変更（`order_reschedule`）も、時刻が「数字＋:／時」で発言にあり追加の言葉がないときだけにしている（「20分以内」を 0:20 と読んだ）
+- 連携係（`integration-agent.ts`）は呼ぶツールと引数を強制ツール呼び出しで1回だけ選ばせ、呼び出しはコード（最大4件・同じ引数は1回）。予約番号・ホテルID・書き手は入力スキーマ（`integration_tools.input_schema`、未取得なら取り直す）を見てサーバーの値で上書きし、スキーマのないツールは使わせない。書き込みは `integration_writes` に積んでから送る（クレーム・オーダー遅延の書き戻しは常にスタッフの確認後）
+- 連携係がお客様メモに好みを書いたとき、回答係が「低めの枕をご用意いたします」と約束した。記録したことを「手配ではない」と添えて渡し、受け付けていない品を約束しないよう指示している
 - 回答係はお届けの時刻を約束しがち（チケットは変わっていないのに「8:30〜40にお届けします」と答えた）。指示で禁止し、未完了のご依頼の状況だけを渡している
 - Lightningはルーターで同じ要望を延々と繰り返し、出力の上限で止まってツール呼び出しを文字で書くことがある（`ToolChoiceViolation`）。`generateStructured` はこの例外も再試行し、ルーターは `maxOutputTokens` で早めに打ち切る
 - ルーターのLLMは品名・数量・備考・希望の時刻（本日／明日＋時刻）の読み取りだけ。品目との照合は `order-match.ts` のコードで行い、候補を広めに出してゲストが選択欄で確定する。LLMに照合させると、別名にある品をマスタにないと判断したり、ない品を既存品目に当てはめたりした

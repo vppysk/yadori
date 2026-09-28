@@ -42,13 +42,14 @@ union all
 select '00000000-0000-0000-0000-00000000b003', k
 from unnest(array[
   'order.create', 'order.board.view', 'knowledge.question.answer', 'handling.handoff.accept', 'handling.complaint.view',
-  'order.reassign', 'knowledge.facility.edit', 'knowledge.notice.edit', 'knowledge.document.register', 'settings.items'
+  'order.reassign', 'knowledge.facility.edit', 'knowledge.notice.edit', 'knowledge.document.register', 'settings.items',
+  'settings.ai_policy', 'settings.integration_rules', 'handling.integration_write.confirm'
 ]) k
 union all
 select '00000000-0000-0000-0000-00000000b004', key from permissions where category <> 'integration'
 union all
 select '00000000-0000-0000-0000-00000000b005', k
-from unnest(array['order.create', 'handling.handoff.create', 'integration.pms.read', 'integration.pms.append', 'integration.web_fetch.read']) k
+from unnest(array['order.create', 'handling.handoff.create', 'integration.web_fetch.read']) k
 union all
 select '00000000-0000-0000-0000-00000000b006', 'integration.work_events.read';
 
@@ -155,57 +156,52 @@ join (values
   ('complaint', 1, 'large'), ('complaint', 2, 'large'), ('complaint', 3, 'large')
 ) as a (pattern, band_sort, handler) on a.band_sort = tb.sort;
 
-insert into ai_instructions (hotel_id, scope, pattern, body) values
-  ('00000000-0000-0000-0000-000000000001', 'common', null,
-   E'・丁寧だが堅すぎない言葉づかいで、結論から短く答える\n・お客様のご滞在日の情報で答える。わからないことは推測せず、スタッフに確認すると伝える\n・館内の施設は正式名称で呼ぶ（例：「大浴場 せせらぎ」）'),
-  ('00000000-0000-0000-0000-000000000001', 'pattern', 'complaint',
-   E'・最初にお詫びし、ご不便の内容を具体的に言い換えて受け止める\n・事実（いつ、どこで、何が）を確認し、原因の推測や言い訳はしない\n・補償や返金については触れず、「担当者から改めてご連絡します」と伝える\n・確認した内容を要約して、すぐにスタッフへ引き継ぐ');
+-- ゲスト対応AIの指示（1本）。回答後のチェック項目（reply_checks）は、管理PCで保存したときに上位モデルが抜き出す
+insert into ai_instructions (hotel_id, scope, body) values
+  ('00000000-0000-0000-0000-000000000001', 'common',
+   E'・丁寧だが堅すぎない言葉づかいで、結論から短く答える\n・お客様のご滞在日の情報で答える。わからないことは推測せず、スタッフに確認すると伝える\n・館内の施設は正式名称で呼ぶ（例：「大浴場 せせらぎ」）\n\n苦情・不満のときは:\n・最初にお詫びし、ご不便の内容を具体的に言い換えて受け止める\n・原因の推測や言い訳はしない\n・補償や返金については触れず、「担当者から改めてご連絡します」と伝える\n\n・レストラン予約の作成、有料サービスの手配、部屋変更の候補提示は、確定する前に必ずお客様に確認する');
 
-insert into guardrails (hotel_id, kind, body, sort) values
-  ('00000000-0000-0000-0000-000000000001', 'forbidden', '値引き・補償・返金を約束しない', 1),
-  ('00000000-0000-0000-0000-000000000001', 'forbidden', '他のお客様の情報（部屋番号・氏名など）を話さない', 2),
-  ('00000000-0000-0000-0000-000000000001', 'forbidden', '体調に関する助言をせず、フロントへつなぐ', 3),
-
-  ('00000000-0000-0000-0000-000000000001', 'confirm_before', 'レストラン予約の作成', 1),
-  ('00000000-0000-0000-0000-000000000001', 'confirm_before', '有料サービスの手配', 2),
-  ('00000000-0000-0000-0000-000000000001', 'confirm_before', '部屋変更の候補提示', 3);
-
--- 必ず人に引き継ぐ条件（組み込み。code で判定を実装している）
-insert into guardrails (hotel_id, kind, code, body, sort) values
-  ('00000000-0000-0000-0000-000000000001', 'handoff_condition', 'wants_staff', 'お客様が「スタッフと話したい」と言った', 1),
-  ('00000000-0000-0000-0000-000000000001', 'handoff_condition', 'strong_complaint', '強い不満や怒りを検知した', 2),
-  ('00000000-0000-0000-0000-000000000001', 'handoff_condition', 'unanswered_twice', '同じ質問に2回答えられなかった', 3),
-  ('00000000-0000-0000-0000-000000000001', 'handoff_condition', 'safety', '急病・けが・安全に関わる内容', 4);
+insert into reply_checks (hotel_id, source_type, body, sort) values
+  ('00000000-0000-0000-0000-000000000001', 'instruction', 'レストラン予約・有料サービス・部屋変更を、お客様の確認なしに確定したと伝えない', 1);
 
 -- ---------- 外部連携（予約・客室管理システムのモックMCP） ----------
+-- 接続先とトークンは環境変数の名前で持つ。ツールは /manage/integrations の「ツールを取得し直す」でMCPから取り直せる
 
-insert into integrations (id, hotel_id, name, kind, member_id) values
-  ('00000000-0000-0000-0000-000000009001', '00000000-0000-0000-0000-000000000001', '予約・客室管理システム', 'mcp', '00000000-0000-0000-0000-00000000a0e1');
+insert into integrations (id, hotel_id, name, kind, member_id, slug, endpoint_env, token_env) values
+  ('00000000-0000-0000-0000-000000009001', '00000000-0000-0000-0000-000000000001', '予約・客室管理システム', 'mcp', '00000000-0000-0000-0000-00000000a0e1',
+   'pms', 'PMS_MCP_URL', 'PMS_MCP_TOKEN');
 
-insert into integration_field_rules (integration_id, field, can_read, write_mode, require_staff_confirm) values
-  ('00000000-0000-0000-0000-000000009001', 'reservation', true, 'none', false),
-  ('00000000-0000-0000-0000-000000009001', 'request_history', true, 'append', false),
-  ('00000000-0000-0000-0000-000000009001', 'guest_notes', true, 'append', false),
-  ('00000000-0000-0000-0000-000000009001', 'billing', false, 'none', false);
+insert into integration_tools (integration_id, name, description, access, role, require_staff_confirm, permission_key)
+select '00000000-0000-0000-0000-000000009001'::uuid, t.name, t.description, t.access, t.role, false, 'integration.pms.' || t.name
+from (values
+  ('get_reservation', '予約内容（客室ID・部屋番号・滞在日・人数・プラン・料金）を取得する', 'read', 'reservation'),
+  ('search_reservations', '期間に滞在がかかる予約を探す。query を渡すと、お名前（空白は無視）か部屋番号で絞る', 'read', 'search'),
+  ('list_guest_notes', 'お客様メモ（記念日・お好み・引き継ぎなど）の一覧', 'read', 'preload'),
+  ('list_request_history', '滞在中の依頼履歴', 'read', 'preload'),
+  ('append_guest_note', 'お客様メモに追記する（既存の記載は変更できない）', 'write', null),
+  ('append_request_history', '依頼履歴に追記する', 'write', null)
+) as t (name, description, access, role);
+
+-- スタッフのAI相談で使うツールは、相談するスタッフにも権限が要る（ゲストの情報を見られるグループに付ける）
+insert into group_permissions (group_id, permission_key)
+select g, 'integration.pms.' || t
+from unnest(array['00000000-0000-0000-0000-00000000b001', '00000000-0000-0000-0000-00000000b004']::uuid[]) g,
+  unnest(array['get_reservation', 'search_reservations', 'list_guest_notes', 'list_request_history']) t;
+
+-- AIエージェントに使わせるツール（ツール1つ＝権限1つ。plan 4.8）
+insert into member_permissions (member_id, permission_key)
+select '00000000-0000-0000-0000-00000000a0a1'::uuid, 'integration.pms.' || t
+from unnest(array['get_reservation', 'search_reservations', 'list_guest_notes', 'list_request_history', 'append_guest_note']) t;
 
 insert into ai_instructions (hotel_id, scope, integration_id, body) values
-  ('00000000-0000-0000-0000-000000000001', 'integration_read', '00000000-0000-0000-0000-000000009001',
-   E'・予約内容（部屋番号、滞在日、人数、プラン）と滞在中の依頼履歴を参照する\n・お客様メモのうち「記念日」「お好み」の項目は、案内を個別に合わせるために使ってよい\n・お客様メモにある内容を、お客様本人に「記録されています」と伝えない'),
-  ('00000000-0000-0000-0000-000000000001', 'integration_write', '00000000-0000-0000-0000-000000009001',
-   E'・スタッフに引き継いだ案件は、お客様メモに次の形式で追記する 【AI引継】日時／ご要望の要約／AIが案内した内容／引き継ぎ先\n・次回以降のご滞在でも役立つ情報（記念日、枕や室温のお好みなど）は「お好み」欄に追記する\n・クレームは事実と経過のみを書き、スタッフ個人を評価する表現は使わない\n・既存の記載は書き換えず、必ず追記する');
+  ('00000000-0000-0000-0000-000000000001', 'integration', '00000000-0000-0000-0000-000000009001',
+   E'・予約内容（部屋番号、滞在日、人数、プラン）と滞在中の依頼履歴を参照する\n・お客様メモのうち「記念日」「お好み」の項目は、案内を個別に合わせるために使ってよい\n・お客様メモにある内容を、お客様本人に「記録されています」と伝えない\n・スタッフに引き継いだ案件は、お客様メモに「ご要望の要約／AIが案内した内容／引き継ぎ先」を1行で追記する\n・次回以降のご滞在でも役立つ情報（記念日、枕や室温のお好みなど）は、お客様メモに追記する\n・クレームは事実と経過のみを書き、スタッフ個人を評価する表現は使わない');
 
--- ---------- 外部連携（Webページの取得・Tavily） ----------
--- 取得するURLは、管理PCの案内情報で資料（URL）として登録する（情報源の信頼性の確認は登録者の責務。docs/006_guide_info.md）
+-- ---------- Webページの取得（Tavily） ----------
+-- 画面には出さない（サービスの一部）。取得するURLは管理PCの案内情報で資料（URL）として登録する（docs/006_guide_info.md）
 
-insert into integrations (id, hotel_id, name, kind) values
-  ('00000000-0000-0000-0000-000000009002', '00000000-0000-0000-0000-000000000001', 'Webページの取得（Tavily）', 'web_fetch');
-
-insert into integration_field_rules (integration_id, field, can_read, write_mode, require_staff_confirm) values
-  ('00000000-0000-0000-0000-000000009002', 'external_updates', true, 'none', false);
-
-insert into ai_instructions (hotel_id, scope, integration_id, body) values
-  ('00000000-0000-0000-0000-000000000001', 'integration_read', '00000000-0000-0000-0000-000000009002',
-   E'・「（外部情報: ○○）」と付いた内容は、ホテル以外が管理する情報。「○○によると」のように出どころを添えて案内する\n・運休や荒天のときは、代わりの手段や時間に余裕を持つことを提案し、詳しくはフロントにおつなぎすると伝える');
+insert into integrations (id, hotel_id, name, kind, slug) values
+  ('00000000-0000-0000-0000-000000009002', '00000000-0000-0000-0000-000000000001', 'Webページの取得', 'web_fetch', 'web');
 
 -- room_id は客室の一意のID、room_number はゲストに見せる部屋番号（本館・別館で重なることがある）
 insert into mock_pms.reservations (id, hotel_id, guest_name, room_id, room_number, check_in, check_out, adults, plan_name, total_amount_jpy) values

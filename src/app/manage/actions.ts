@@ -3,14 +3,11 @@
 import { refresh } from "next/cache";
 import { audit, authorize, can, PermissionError } from "@/server/auth";
 import { applyAssignments, type Handler } from "@/server/dashboard";
-import { decideWrite, saveIntegration, type IntegrationInput } from "@/server/integrations-admin";
+import { addIntegration, saveConnection, syncIntegration, type ConnectionInput } from "@/server/integrations-admin";
 import { saveMasters, type Masters } from "@/server/masters";
 import { grantPermission, revokeGrant, saveGroup, setMemberGroup } from "@/server/members";
-import { savePolicy, type PolicyInput } from "@/server/policy";
-import type { InstructionOverrides } from "@/server/guest-chat";
-import type { Pattern } from "@/server/hotel";
 import { addWebhook, deleteWebhook, sendTest } from "@/server/webhooks";
-import { replay, tryInstructions, type InstructionTrial, type ReplayRequest, type ReplayResult } from "@/server/replay";
+import { replay, type ReplayRequest, type ReplayResult } from "@/server/replay";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -48,31 +45,36 @@ export async function runReplayAction(requests: ReplayRequest[]): Promise<{ ok: 
   }
 }
 
-export async function savePolicyAction(input: PolicyInput): Promise<Result> {
-  return guard(async () => {
-    const member = await authorize("settings.ai_policy");
-    await savePolicy(member, input);
-    await audit(member, "settings.ai_policy", "ai_policy.save");
-    refresh();
-  });
-}
-
-export async function saveIntegrationAction(integrationId: string, input: IntegrationInput): Promise<Result> {
+// 外部連携の接続（docs/007_ai_settings.md）: 接続先、AIに使わせるツール（ツールごとの権限）、システムが決まった場面で呼ぶツール
+export async function saveConnectionAction(integrationId: string, input: ConnectionInput): Promise<Result> {
   return guard(async () => {
     const member = await authorize("settings.integrations");
-    await saveIntegration(member, integrationId, input);
+    await saveConnection(member, integrationId, input);
     await audit(member, "settings.integrations", "integration.save", { type: "integration", id: integrationId });
     refresh();
   });
 }
 
-export async function decideWriteAction(writeId: string, approve: boolean): Promise<Result> {
+export async function syncIntegrationAction(integrationId: string): Promise<Result> {
   return guard(async () => {
     const member = await authorize("settings.integrations");
-    await decideWrite(member, writeId, approve);
-    await audit(member, "settings.integrations", approve ? "integration_write.approve" : "integration_write.reject", { type: "integration_write", id: writeId });
+    await syncIntegration(member, integrationId);
+    await audit(member, "settings.integrations", "integration.sync", { type: "integration", id: integrationId });
     refresh();
   });
+}
+
+export async function addIntegrationAction(input: { name: string; slug: string; endpointEnv: string; tokenEnv: string }): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  try {
+    const member = await authorize("settings.integrations");
+    const id = await addIntegration(member, input);
+    await audit(member, "settings.integrations", "integration.add", { type: "integration", id });
+    refresh();
+    return { ok: true, id };
+  } catch (error) {
+    if (!(error instanceof PermissionError)) console.error("[addIntegrationAction]", error);
+    return { ok: false, error: error instanceof Error ? error.message : "追加できませんでした" };
+  }
 }
 
 export async function saveMastersAction(input: Omit<Masters, "jobTitles" | "actualMinutes">): Promise<Result> {
@@ -124,18 +126,6 @@ export async function saveGroupAction(groupId: string | null, input: { name: str
     await audit(member, "settings.members", groupId ? "group.save" : "group.create", groupId ? { type: "group", id: groupId } : undefined, { name: input.name });
     refresh();
   });
-}
-
-export async function tryInstructionsAction(pattern: Pattern, draft: InstructionOverrides): Promise<{ ok: true; trial: InstructionTrial } | { ok: false; error: string }> {
-  try {
-    const member = await authorize("settings.ai_policy");
-    const trial = await tryInstructions(member.hotel_id, pattern, draft);
-    await audit(member, "settings.ai_policy", "ai_policy.try", undefined, { pattern });
-    return { ok: true, trial };
-  } catch (error) {
-    console.error("[tryInstructionsAction]", error);
-    return { ok: false, error: error instanceof Error ? error.message : "試せませんでした" };
-  }
 }
 
 export async function addWebhookAction(url: string): Promise<{ ok: true; secret: string } | { ok: false; error: string }> {

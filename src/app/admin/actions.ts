@@ -17,6 +17,8 @@ import { requestCheckBySupervisor } from "@/server/order-checks";
 import { assignManually, previewAssignment, registerOrder, ticketArea, type AssignmentPreview, type RegisterOrderInput } from "@/server/order-board";
 import { answerGap, dismissGap, getConversationMessages, type AnswerResult, type ConversationMessage } from "@/server/questions";
 import { acceptHandoff, closeHandoff, replyToGuest } from "@/server/staff-work";
+import { decideWrite, saveUsageRule } from "@/server/integrations-admin";
+import { saveInstructions } from "@/server/policy";
 
 // 管理PCの操作。ログインと権限（範囲付きなら対象の施設）を確認し、監査ログに残す（plan 4.8）
 
@@ -371,6 +373,37 @@ export async function closeHandoffAdminAction(handoffId: string): Promise<Result
     const member = await authorize("handling.handoff.accept");
     await closeHandoff(member, handoffId);
     await audit(member, "handling.handoff.accept", "handoff.close", { type: "handoff", id: handoffId });
+    refresh();
+  });
+}
+
+// ---------- AIの設定: 指示と連携の利用ルール（docs/007_ai_settings.md） ----------
+
+export async function saveInstructionsAction(body: string): Promise<Result<{ checksUpdated: boolean }>> {
+  return guard(async () => {
+    const member = await authorize("settings.ai_policy");
+    const result = await saveInstructions(member, body);
+    await audit(member, "settings.ai_policy", "ai_policy.save");
+    refresh();
+    return result;
+  });
+}
+
+export async function saveUsageRuleAction(integrationId: string, body: string): Promise<Result<{ checksUpdated: boolean }>> {
+  return guard(async () => {
+    const member = await authorize("settings.integration_rules");
+    const result = await saveUsageRule(member, integrationId, body);
+    await audit(member, "settings.integration_rules", "integration_rule.save", { type: "integration", id: integrationId });
+    refresh();
+    return result;
+  });
+}
+
+export async function decideWriteAction(writeId: string, approve: boolean): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("handling.integration_write.confirm");
+    await decideWrite(member, writeId, approve);
+    await audit(member, "handling.integration_write.confirm", approve ? "integration_write.approve" : "integration_write.reject", { type: "integration_write", id: writeId });
     refresh();
   });
 }

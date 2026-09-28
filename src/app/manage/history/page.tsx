@@ -3,8 +3,7 @@ import { listRevisions } from "@/server/policy";
 
 const KIND_LABELS: Record<string, string> = {
   ai_assignments: "担当範囲",
-  ai_instructions: "指示とガードレール",
-  guardrails: "ガードレール",
+  ai_instructions: "ゲスト対応AIの指示",
   integrations: "外部連携",
 };
 

@@ -50,7 +50,7 @@ export const urlSourceSchema = z.object({
 
 // URLを登録する。その場で取得し、承認して反映なら読み取って確認待ちに、自動反映なら要約してすぐ案内に使う（取得できなければ登録しない）
 export async function createUrlSource(member: Member, input: z.infer<typeof urlSourceSchema>): Promise<string> {
-  if (!tavilyConfigured()) throw new Error("Webページの取得（Tavily）が設定されていません");
+  if (!tavilyConfigured()) throw new Error("URLの取得が使えない状態です。管理者に連絡してください");
   const extracted = await extractPages(member.hotel_id, [input.url]);
   const page = extracted.pages.find((p) => sameUrl(p.url, input.url)) ?? extracted.pages[0];
   const content = page ? normalize(page.content) : "";

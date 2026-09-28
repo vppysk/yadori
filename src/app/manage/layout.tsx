@@ -4,20 +4,20 @@ import { ManageTabs } from "./manage-tabs";
 
 export const dynamic = "force-dynamic";
 
-// 経営・管理者向け「AIチームの運営」（plan 4.3, 4.7）。上部タブで切り替える
+// 経営・管理者向け「AIチームの運営」（plan 4.3, 4.7）。上部タブで切り替える。
+// ゲスト対応AIの指示と連携の利用ルールは現場が書くため管理PCの「AIの設定」にある（docs/007_ai_settings.md）
 export default async function ManageLayout({ children }: LayoutProps<"/manage">) {
   const member = await requireMember("/manage");
   const [keys, hotel] = await Promise.all([permissionKeys(member.id), getHotel(member.hotel_id)]);
   const tabs = [
     { href: "/manage", label: "担当範囲とコスト", allowed: keys.has("settings.ai_assignment") },
-    { href: "/manage/policy", label: "指示とガードレール", allowed: keys.has("settings.ai_policy") },
     { href: "/manage/integrations", label: "外部連携", allowed: keys.has("settings.integrations") },
-    { href: "/manage/history", label: "変更履歴", allowed: keys.has("settings.ai_assignment") || keys.has("settings.ai_policy") },
+    { href: "/manage/history", label: "変更履歴", allowed: ["settings.ai_assignment", "settings.ai_policy", "settings.integrations"].some((k) => keys.has(k)) },
     { href: "/manage/masters", label: "マスタ", allowed: keys.has("settings.masters") },
     { href: "/manage/members", label: "メンバーと権限", allowed: keys.has("settings.members") },
   ].filter((t) => t.allowed);
   if (tabs.length === 0) {
-    return <main className="p-8 text-sm text-ink-sub">この画面の権限がありません（AIの担当範囲・指示とガードレール・外部連携のいずれか）</main>;
+    return <main className="p-8 text-sm text-ink-sub">この画面の権限がありません（AIの担当範囲・外部連携・マスタ・メンバーと権限のいずれか）</main>;
   }
   return (
     <div className="flex min-h-dvh flex-col gap-4.5 bg-canvas px-9 pt-7 pb-8 text-ink">
