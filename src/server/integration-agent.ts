@@ -8,7 +8,8 @@ import { recordLlmCall } from "./metrics";
 // 連携係（docs/007_ai_settings.md 3.4）: 外部の連携先（MCP）のツールをAIが選んで使う。
 // 回答係にはツールを持たせない（Nemotronがツール呼び出しを文字で書く・同じ呼び出しを繰り返したため。plan 12章）。
 // 連携係は呼ぶツールと引数を1回で選ぶだけにし（強制ツール呼び出し）、呼び出しと結果の整形はコードで行う。
-// 予約番号・ホテルIDはサーバーがゲスト本人の値で上書きする（AIは他人の予約を指定できない）。書き込みは integration_writes に積んでから送る
+// 予約番号・ホテルIDはサーバーがゲスト本人の値で上書きする（AIは他人の予約を指定できない）。
+// ツールの種類（読み取り／書き込み）は持たない。「スタッフの確認後に送る」ツールは integration_writes に積み、それ以外はその場で呼ぶ。呼び出しはすべて監査ログに残る（callTool）
 
 const MAX_CALLS = 4;
 // 引数をサーバーの値で固定する項目
@@ -29,9 +30,10 @@ const planSchema = z.object({
 type Guest = { hotelId: string; reservationId: string; roomNumber: string; checkIn: string; checkOut: string };
 type ToolWithSchema = AiTool & { key: string; schema?: ToolDefinition["inputSchema"] };
 
-// 連携係が選べるツール（システムが決まった場面で呼ぶツールは除く）と、その入力スキーマ
-async function availableTools(hotelId: string, access?: "read" | "write", staffMemberId?: string): Promise<ToolWithSchema[]> {
-  const tools = (await listAiTools(hotelId, null, staffMemberId)).filter((t) => !access || t.access === access);
+// 連携係が選べるツール（システムが決まった場面で呼ぶツールは除く）と、その入力スキーマ。
+// スタッフのAI相談では、そのスタッフに権限があり、スタッフの確認が要らないツールだけ
+async function availableTools(hotelId: string, staffMemberId?: string): Promise<ToolWithSchema[]> {
+  const tools = (await listAiTools(hotelId, null, staffMemberId)).filter((t) => !staffMemberId || !t.require_staff_confirm);
   const ids = [...new Set(tools.map((t) => t.integration_id))];
   const loadSchemas = () => query<{ integration_id: string; name: string; input_schema: ToolDefinition["inputSchema"] | null }>(
     "select integration_id, name, input_schema from integration_tools where integration_id = any($1)",
@@ -66,7 +68,7 @@ function describeTools(tools: ToolWithSchema[], rules: Map<string, string>): str
       const props = Object.entries(t.schema?.properties ?? {})
         .filter(([name]) => !(BOUND_ARGS as readonly string[]).includes(name))
         .map(([name, p]) => `${name}${t.schema?.required?.includes(name) ? "（必須）" : ""}: ${p.description ?? p.type ?? ""}`);
-      lines.push(`- ${t.key}（${t.access === "read" ? "読み取り" : "書き込み"}）: ${t.description}${props.length ? ` ／ 引数: ${props.join("、")}` : ""}`);
+      lines.push(`- ${t.key}: ${t.description}${t.require_staff_confirm ? "（スタッフの確認後に送られる）" : ""}${props.length ? ` ／ 引数: ${props.join("、")}` : ""}`);
     }
   }
   return lines;
@@ -101,7 +103,7 @@ async function plan(params: { hotelId: string; conversationId?: string; tools: T
     name: "choose_tools",
     description: "外部の連携先のツールのうち、呼ぶものと引数を選ぶ",
     system: [
-      "あなたはホテルのゲスト対応AIの連携係。外部の連携先（予約システムなど）のツールを呼ぶかどうかを判断し、呼ぶツールと引数を選ぶ。",
+      "あなたはホテルのAIの連携係。外部の連携先（予約システムなど）のツールを呼ぶかどうかを判断し、呼ぶツールと引数を選ぶ。",
       ...params.task,
       "予約番号・ホテルID・書き手はシステムが入れるので、引数に書かない。",
       `同じツールを同じ引数で2回呼ばない。最大${MAX_CALLS}件。必要なければ calls を空にする。`,
@@ -116,10 +118,10 @@ async function plan(params: { hotelId: string; conversationId?: string; tools: T
   return object.calls;
 }
 
-export type IntegrationFacts = { text: string; wrote: number };
+export type IntegrationFacts = { text: string };
 
-// ゲストの発言（またはスタッフのAI相談の質問）に答えるために連携先を調べる。読み取りの結果は回答係に渡す文章にし、
-// 書き込みは積む（利用ルールで決められているときだけ）。スタッフのAI相談（staffMemberId あり）は読み取りだけで、そのスタッフにも権限があるツールに絞る
+// ゲストの発言（またはスタッフのAI相談の質問）に答えるために連携先のツールを使う。結果は回答係に渡す文章にする。
+// スタッフのAI相談（staffMemberId あり）は、そのスタッフにも権限があるツールに絞る
 export async function consultIntegrations(params: {
   guest: Guest;
   conversationId?: string;
@@ -128,7 +130,7 @@ export async function consultIntegrations(params: {
   staffMemberId?: string;
 }): Promise<IntegrationFacts | undefined> {
   const { guest, staffMemberId } = params;
-  const tools = await availableTools(guest.hotelId, staffMemberId ? "read" : undefined, staffMemberId);
+  const tools = await availableTools(guest.hotelId, staffMemberId);
   if (tools.length === 0) return undefined;
   const speaker = staffMemberId ? "スタッフ" : "ゲスト";
   let calls;
@@ -137,12 +139,12 @@ export async function consultIntegrations(params: {
       hotelId: guest.hotelId,
       conversationId: params.conversationId,
       tools,
-      task: staffMemberId
-        ? ["スタッフが、このゲストについてAIに相談している。答えるのに連携先の情報が必要なときだけ、読み取りのツールを選ぶ。"]
-        : [
-            "ゲストの発言に答えるのに、連携先の情報が必要なときだけ読み取りのツールを選ぶ。",
-            "書き込みのツールは、利用ルールで書くように決められている内容がゲストの発言にあるときだけ選ぶ。",
-          ],
+      task: [
+        staffMemberId
+          ? "スタッフが、このゲストについてAIに相談している。答えるのに連携先の情報が必要なときだけ、情報を取るツールを選ぶ。記録・変更をするツールは選ばない。"
+          : "ゲストの発言に答えるのに連携先の情報が必要なときだけ、情報を取るツールを選ぶ。",
+        ...(staffMemberId ? [] : ["記録・変更をするツールは、利用ルールで記録するように決められている内容がゲストの発言にあるときだけ選ぶ。"]),
+      ],
       prompt: [
         `ゲスト: ${guest.roomNumber}号室、ご滞在 ${guest.checkIn}〜${guest.checkOut}`,
         ...params.history.slice(-4).map((m) => `${m.role === "user" ? speaker : "AI"}: ${m.content}`),
@@ -156,27 +158,24 @@ export async function consultIntegrations(params: {
   const bound = bind(tools, calls, guest);
   if (bound.length === 0) return undefined;
 
-  const sections: string[] = [];
-  const written: string[] = [];
+  // 呼んだことは手配・予約の完了を意味しない（連携係がお客様メモに好みを書いたとき、回答係が「ご用意します」と約束した。2026-09-28）
+  const sections: string[] = ["（ツールを呼んだ結果。呼んだことは手配・予約の完了を意味しない。結果に書かれていることだけを伝え、手配したとは言わない）"];
   for (const { tool, args } of bound) {
-    if (tool.access === "write") {
-      // スタッフの相談からは書き込まない（読み取りのツールしか渡していないが、念のため）
-      if (staffMemberId) continue;
-      const content = await queueWrite({ tool, args, guest, conversationId: params.conversationId });
-      written.push(`・${tool.integration.name}: ${tool.description || tool.name}「${content}」`);
+    const title = `### ${tool.integration.name}: ${tool.description || tool.name}`;
+    if (tool.require_staff_confirm) {
+      await queueCall({ tool, args, guest, conversationId: params.conversationId });
+      sections.push(title, "・スタッフの確認待ちにした（まだ送っていない）");
       continue;
     }
     try {
-      const data = await callTool<unknown>(tool.integration, tool.name, args);
-      sections.push(`### ${tool.integration.name}: ${tool.description || tool.name}`, renderToolResult(data));
+      const data = await callTool<unknown>(tool.integration, tool.name, args, { purpose: "agent", conversationId: params.conversationId, staffMemberId });
+      sections.push(title, renderToolResult(data));
     } catch (error) {
       console.warn("[integration-agent] ツールの呼び出しに失敗", tool.key, error);
-      sections.push(`### ${tool.integration.name}: ${tool.description || tool.name}`, "・取得できなかった（推測で答えない）");
+      sections.push(title, "・取得できなかった（推測で答えない）");
     }
   }
-  // 記録しただけで手配はしていない（回答係が「ご用意します」と約束したため、2026-09-28）
-  if (written.length) sections.push("### 記録したこと（記録しただけで、手配・予約はしていない。手配したとは言わない）", ...written);
-  return sections.length ? { text: sections.join("\n"), wrote: written.length } : undefined;
+  return { text: sections.join("\n") };
 }
 
 // 引き継いだ案件を、利用ルールに沿って連携先に書き戻す（plan 3章「既存システムへの書き戻し」）。
@@ -190,7 +189,7 @@ export async function writeBackHandoff(params: {
   aiReply?: string;
   handedTo: string;
 }) {
-  const tools = await availableTools(params.guest.hotelId, "write");
+  const tools = await availableTools(params.guest.hotelId);
   if (tools.length === 0) return;
   const calls = await plan({
     hotelId: params.guest.hotelId,
@@ -209,35 +208,29 @@ export async function writeBackHandoff(params: {
   });
   const forceConfirm = params.kind === "complaint" || params.kind === "overdue_order";
   for (const { tool, args } of bind(tools, calls, params.guest)) {
-    await queueWrite({ tool, args, guest: params.guest, conversationId: params.conversationId, handoffId: params.handoffId, forceConfirm });
+    if (tool.require_staff_confirm || forceConfirm) {
+      await queueCall({ tool, args, guest: params.guest, conversationId: params.conversationId, handoffId: params.handoffId });
+      continue;
+    }
+    await callTool(tool.integration, tool.name, args, { purpose: "agent", conversationId: params.conversationId }).catch((error) =>
+      console.warn("[integration-agent] 書き戻しに失敗", tool.key, error),
+    );
   }
 }
 
-async function queueWrite(params: {
-  tool: AiTool;
-  args: Record<string, unknown>;
-  guest: Guest;
-  conversationId?: string;
-  handoffId?: string;
-  forceConfirm?: boolean;
-}): Promise<string> {
+// スタッフの確認後に送る呼び出しを積む
+async function queueCall(params: { tool: AiTool; args: Record<string, unknown>; guest: Guest; conversationId?: string; handoffId?: string }) {
   const { tool, args, guest } = params;
-  const confirm = tool.require_staff_confirm || params.forceConfirm;
   const content = typeof args.body === "string" ? args.body : JSON.stringify(args);
-  const [{ id }] = await query<{ id: string }>(
+  await query(
     `insert into integration_writes (integration_id, tool_name, args, external_reservation_id, room_number, content, status, handoff_id, created_by)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
-    [
-      tool.integration_id, tool.name, JSON.stringify(args), guest.reservationId, guest.roomNumber, content,
-      confirm ? "pending_confirm" : "written", params.handoffId ?? null, (await getAiAgentMemberId(guest.hotelId)) ?? null,
-    ],
+     values ($1, $2, $3, $4, $5, $6, 'pending_confirm', $7, $8)`,
+    [tool.integration_id, tool.name, JSON.stringify(args), guest.reservationId, guest.roomNumber, content, params.handoffId ?? null, (await getAiAgentMemberId(guest.hotelId)) ?? null],
   );
-  if (!confirm) await sendWrite(id);
-  return content;
 }
 
-// 確認待ちの書き込みをスタッフが確認したとき、または確認の要らない書き込みのときに相手のシステムへ送る。失敗したら保留にする
-export async function sendWrite(writeId: string) {
+// 確認待ちの呼び出しを、スタッフが確認して相手のシステムへ送る。失敗したら保留にする
+export async function sendWrite(writeId: string, staffMemberId: string) {
   const write = await queryOne<{ integration_id: string; tool_name: string | null; args: Record<string, unknown> | null }>(
     "select integration_id, tool_name, args from integration_writes where id = $1",
     [writeId],
@@ -246,7 +239,7 @@ export async function sendWrite(writeId: string) {
   try {
     const integration = await getIntegration(write.integration_id);
     if (!integration) throw new Error("連携先が無効です");
-    await callTool(integration, write.tool_name, write.args);
+    await callTool(integration, write.tool_name, write.args, { purpose: "confirmed", staffMemberId });
     await query("update integration_writes set status = 'written', written_at = now(), hold_reason = null where id = $1", [writeId]);
   } catch (error) {
     console.warn("[integration-agent] 書き込みに失敗", error);

@@ -9,6 +9,12 @@ const ROLE_LABELS: Record<string, string> = {
   search: "AI相談でゲストを探す",
   preload: "ゲストの情報として毎回読む",
 };
+const PURPOSE_LABELS: Record<string, string> = {
+  guest_context: "ゲストの情報の取得",
+  search: "予約の検索",
+  agent: "AIの判断",
+  confirmed: "確認して送った",
+};
 const STATUS: Record<string, { label: string; className: string }> = {
   pending_confirm: { label: "確認待ち", className: "bg-caution-soft text-caution" },
   held: { label: "送れなかった", className: "bg-danger-soft text-danger" },
@@ -43,14 +49,11 @@ export function UsageEditor({ usage, canEditRule, canConfirm }: { usage: UsageDe
         </div>
         {usage.tools.map((t) => (
           <div key={t.name} className="flex flex-col gap-1 border-t border-line py-2.5 text-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded-md px-2 py-0.5 text-xs ${t.access === "read" ? "bg-muted" : "bg-caution-soft text-caution"}`}>{t.access === "read" ? "読む" : "書く"}</span>
-              <strong>{t.description || t.name}</strong>
-            </div>
+            <strong>{t.description || t.name}</strong>
             <span className="text-xs text-ink-sub">
               <code className="font-mono">{t.name}</code>
               {t.role ? ` ・ ${ROLE_LABELS[t.role]}` : " ・ AIが必要に応じて使う"}
-              {t.access === "write" && t.require_staff_confirm ? " ・ スタッフの確認後に送る" : ""}
+              {t.require_staff_confirm ? " ・ スタッフの確認後に送る" : ""}
             </span>
           </div>
         ))}
@@ -94,8 +97,11 @@ export function UsageEditor({ usage, canEditRule, canConfirm }: { usage: UsageDe
         </div>
       </section>
 
-      <section className="flex flex-col gap-2 rounded-[14px] border border-line bg-surface px-5 py-4.5 2xl:col-span-2">
-        <h2 className="text-base font-bold">最近の書き込み</h2>
+      <section className="flex flex-col gap-2 rounded-[14px] border border-line bg-surface px-5 py-4.5">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-base font-bold">スタッフの確認後に送るもの</h2>
+          <span className="text-xs text-ink-sub">確認して送るまで、相手のシステムには届きません</span>
+        </div>
         {usage.writes.map((w) => {
           const status = STATUS[w.status] ?? { label: w.status, className: "bg-muted" };
           return (
@@ -122,7 +128,30 @@ export function UsageEditor({ usage, canEditRule, canConfirm }: { usage: UsageDe
             </div>
           );
         })}
-        {usage.writes.length === 0 && <p className="text-sm text-ink-sub">まだ書き込みはありません</p>}
+        {usage.writes.length === 0 && <p className="text-sm text-ink-sub">ありません</p>}
+      </section>
+
+      <section className="flex flex-col gap-2 rounded-[14px] border border-line bg-surface px-5 py-4.5">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-base font-bold">最近の呼び出し</h2>
+          <span className="text-xs text-ink-sub">AIがこのシステムを使った記録です（すべて監査ログに残ります）</span>
+        </div>
+        {usage.calls.map((c, i) => (
+          <div key={i} className="flex flex-wrap items-center justify-between gap-2 border-t border-line py-2 text-sm">
+            <span>
+              {usage.tools.find((t) => t.name === c.tool)?.description ?? c.tool}
+              <span className="ml-2 text-xs text-ink-sub">
+                {PURPOSE_LABELS[c.purpose] ?? c.purpose}
+                {c.staff ? `（${c.staff}）` : ""}
+              </span>
+            </span>
+            <span className={`text-xs ${c.ok ? "text-ink-sub" : "text-danger"}`}>
+              {c.ok ? "" : "失敗 ・ "}
+              {c.created_at}
+            </span>
+          </div>
+        ))}
+        {usage.calls.length === 0 && <p className="text-sm text-ink-sub">まだありません</p>}
       </section>
     </div>
   );

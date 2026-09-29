@@ -1,44 +1,39 @@
 import type { Member } from "./auth";
 import { query, queryOne, transaction } from "./db";
-import { getAiAgentMemberId } from "./hotel";
 import { sendWrite } from "./integration-agent";
 import { fetchToolDefinitions, syncTools, type Integration, type ToolRole } from "./integrations/mcp";
 import { extractChecks, listReplyChecks, replaceChecks, type ReplyCheck } from "./reply-checks";
 
 // 外部連携の設定（docs/007_ai_settings.md）。
-// つなぐ（/manage、開発者・経営）: 連携先の接続、AIに使わせるツール（ツールごとの権限）、システムが決まった場面で呼ぶツール、スタッフの確認の要否
+// つなぐ（/manage、開発者・経営）: 連携先の接続、AIに使わせるツール、システムが決まった場面で呼ぶツール、スタッフの確認の要否
 // 使い方（管理PCのAIの設定、現場）: 利用ルール（自然文）と、確認待ちの書き込み
 
 export type IntegrationSummary = { id: string; name: string; slug: string; active: boolean; ai_tools: number; tools: number; pending_writes: number };
 
 // MCPの連携先の一覧（Webページの取得はサービスの一部として出さない）
 export async function listIntegrations(hotelId: string): Promise<IntegrationSummary[]> {
-  const ai = await getAiAgentMemberId(hotelId);
   return query<IntegrationSummary>(
     `select i.id, i.name, i.slug, i.active,
-       (select count(*)::int from integration_tools t where t.integration_id = i.id and $2::uuid is not null and has_permission($2, t.permission_key)) ai_tools,
+       (select count(*)::int from integration_tools t where t.integration_id = i.id and t.ai_enabled) ai_tools,
        (select count(*)::int from integration_tools t where t.integration_id = i.id) tools,
        (select count(*)::int from integration_writes w where w.integration_id = i.id and w.status in ('pending_confirm', 'held')) pending_writes
      from integrations i where i.hotel_id = $1 and i.kind = 'mcp' order by i.name`,
-    [hotelId, ai ?? null],
+    [hotelId],
   );
 }
 
 export type ToolSetting = {
   name: string;
   description: string;
-  access: "read" | "write";
   role: ToolRole | null;
   require_staff_confirm: boolean;
   ai_enabled: boolean;
 };
 
-async function listTools(hotelId: string, integrationId: string): Promise<ToolSetting[]> {
-  const ai = await getAiAgentMemberId(hotelId);
+async function listTools(integrationId: string): Promise<ToolSetting[]> {
   return query<ToolSetting>(
-    `select name, description, access, role, require_staff_confirm, ($2::uuid is not null and has_permission($2, permission_key)) ai_enabled
-     from integration_tools where integration_id = $1 order by access, name`,
-    [integrationId, ai ?? null],
+    "select name, description, role, require_staff_confirm, ai_enabled from integration_tools where integration_id = $1 order by role nulls last, name",
+    [integrationId],
   );
 }
 
@@ -57,7 +52,7 @@ export async function getConnection(hotelId: string, integrationId: string): Pro
   const status = await fetchToolDefinitions(integration)
     .then(() => ({ ok: true }) as const)
     .catch((error: unknown) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }) as const);
-  return { ...integration, tools: await listTools(hotelId, integrationId), status };
+  return { ...integration, tools: await listTools(integrationId), status };
 }
 
 export type ConnectionInput = {
@@ -65,12 +60,10 @@ export type ConnectionInput = {
   endpointEnv: string;
   tokenEnv: string;
   active: boolean;
-  tools: { name: string; aiEnabled: boolean; access: "read" | "write"; role: ToolRole | null; requireStaffConfirm: boolean }[];
+  tools: { name: string; aiEnabled: boolean; role: ToolRole | null; requireStaffConfirm: boolean }[];
 };
 
 export async function saveConnection(member: Member, integrationId: string, input: ConnectionInput) {
-  const ai = await getAiAgentMemberId(member.hotel_id);
-  if (!ai) throw new Error("AIエージェントのメンバーがいません");
   await transaction(async (client) => {
     const before = await getConnectionSnapshot(member.hotel_id, integrationId);
     if (!before) throw new Error("連携先が見つかりません");
@@ -82,15 +75,11 @@ export async function saveConnection(member: Member, integrationId: string, inpu
       if (input.tools.filter((t) => t.role === role).length > 1) throw new Error(`「${ROLE_LABELS[role]}」に指定できるツールは1つです`);
     }
     for (const t of input.tools) {
-      const row = await client.query<{ permission_key: string }>(
-        `update integration_tools set access = $3, role = $4, require_staff_confirm = $5 where integration_id = $1 and name = $2 returning permission_key`,
-        [integrationId, t.name, t.access, t.role, t.requireStaffConfirm],
+      // システムが決まった場面で呼ぶツールは、スタッフの確認を挟めない（予約の確認・毎回読む情報）
+      await client.query(
+        "update integration_tools set ai_enabled = $3, role = $4, require_staff_confirm = $5 where integration_id = $1 and name = $2",
+        [integrationId, t.name, t.aiEnabled, t.role, t.role ? false : t.requireStaffConfirm],
       );
-      const key = row.rows[0]?.permission_key;
-      if (!key) continue;
-      // AIに使わせるか = AIエージェントにツールの権限を付けるか（ツール1つ＝権限1つ。plan 4.8）
-      await client.query("delete from member_permissions where member_id = $1 and permission_key = $2", [ai, key]);
-      if (t.aiEnabled) await client.query("insert into member_permissions (member_id, permission_key, granted_by) values ($1, $2, $3)", [ai, key, member.id]);
     }
     await client.query("insert into config_revisions (hotel_id, kind, snapshot, note, created_by) values ($1, 'integrations', $2, $3, $4)", [
       member.hotel_id, JSON.stringify({ before, after: input }), `外部連携「${input.name.trim()}」の接続の変更`, member.id,
@@ -101,7 +90,7 @@ export async function saveConnection(member: Member, integrationId: string, inpu
 async function getConnectionSnapshot(hotelId: string, integrationId: string) {
   const integration = await findIntegration(hotelId, integrationId);
   if (!integration) return undefined;
-  return { name: integration.name, endpointEnv: integration.endpoint_env, tokenEnv: integration.token_env, active: integration.active, tools: await listTools(hotelId, integrationId) };
+  return { name: integration.name, endpointEnv: integration.endpoint_env, tokenEnv: integration.token_env, active: integration.active, tools: await listTools(integrationId) };
 }
 
 export async function addIntegration(member: Member, input: { name: string; slug: string; endpointEnv: string; tokenEnv: string }): Promise<string> {
@@ -133,6 +122,8 @@ export const ROLE_LABELS: Record<ToolRole, string> = {
 // ---------- 使い方（管理PC） ----------
 
 export type WriteRow = { id: string; room_number: string | null; tool_name: string | null; content: string; status: string; hold_reason: string | null; created_at: string };
+// 最近のツールの呼び出し（監査ログ）。誰の依頼か（AIの判断・スタッフのAI相談・確認して送った）と成否
+export type CallRow = { tool: string; purpose: string; staff: string | null; ok: boolean; error: string | null; created_at: string };
 export type UsageDetail = {
   id: string;
   name: string;
@@ -142,19 +133,29 @@ export type UsageDetail = {
   // AIが使えるツール（/manage で許可したもの）と、使わせていないツールの数
   tools: ToolSetting[];
   hiddenTools: number;
+  // スタッフの確認後に送る呼び出し
   writes: WriteRow[];
+  calls: CallRow[];
 };
 
 export async function getUsage(hotelId: string, integrationId: string): Promise<UsageDetail | undefined> {
   const integration = await findIntegration(hotelId, integrationId);
   if (!integration) return undefined;
-  const [rule, checks, tools, writes] = await Promise.all([
+  const [rule, checks, tools, writes, calls] = await Promise.all([
     queryOne<{ body: string }>("select body from ai_instructions where hotel_id = $1 and scope = 'integration' and integration_id = $2", [hotelId, integrationId]),
     listReplyChecks(hotelId),
-    listTools(hotelId, integrationId),
+    listTools(integrationId),
     query<WriteRow>(
       `select id, room_number, tool_name, content, status, hold_reason, created_at from integration_writes
        where integration_id = $1 order by (status in ('pending_confirm', 'held')) desc, created_at desc limit 20`,
+      [integrationId],
+    ),
+    query<CallRow>(
+      `select l.detail->>'tool' tool, l.detail->>'purpose' purpose, m.display_name staff, coalesce((l.detail->>'ok')::boolean, true) ok, l.detail->>'error' error,
+         to_char(l.created_at at time zone h.timezone, 'FMMM/FMDD HH24:MI') created_at
+       from audit_logs l join hotels h on h.id = l.hotel_id
+       left join members m on m.id = (l.detail->>'staff_member_id')::uuid
+       where l.action = 'integration.tool_call' and l.target_id = $1 order by l.created_at desc limit 20`,
       [integrationId],
     ),
   ]);
@@ -168,6 +169,7 @@ export async function getUsage(hotelId: string, integrationId: string): Promise<
     tools: enabled,
     hiddenTools: tools.length - enabled.length,
     writes,
+    calls,
   };
 }
 
@@ -209,5 +211,5 @@ export async function decideWrite(member: Member, writeId: string, approve: bool
     return;
   }
   await query("update integration_writes set confirmed_by = $2 where id = $1", [writeId, member.id]);
-  await sendWrite(writeId);
+  await sendWrite(writeId, member.id);
 }

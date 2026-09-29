@@ -7,6 +7,7 @@ import { addIntegration, saveConnection, syncIntegration, type ConnectionInput }
 import { saveMasters, type Masters } from "@/server/masters";
 import { grantPermission, revokeGrant, saveGroup, setMemberGroup } from "@/server/members";
 import { addWebhook, deleteWebhook, sendTest } from "@/server/webhooks";
+import { addExportClient, deleteExportClient, saveExportClient, type ExportClientInput } from "@/server/export-clients";
 import { replay, type ReplayRequest, type ReplayResult } from "@/server/replay";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -154,5 +155,25 @@ export async function testWebhookAction(id: string): Promise<Result> {
     const member = await authorize("settings.integrations");
     const r = await sendTest(member, id);
     if (!r.ok) throw new Error(`送信に失敗しました（${r.status ?? "接続できない"}）`);
+  });
+}
+
+// 実績の出力口の接続元（当システムに接続してくる外部システム。docs/007_ai_settings.md）
+export async function saveExportClientAction(id: string | null, input: ExportClientInput): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.integrations");
+    const clientId = id ?? (await addExportClient(member, input));
+    if (id) await saveExportClient(member, id, input);
+    await audit(member, "settings.integrations", id ? "export_client.save" : "export_client.add", { type: "member", id: clientId });
+    refresh();
+  });
+}
+
+export async function deleteExportClientAction(id: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.integrations");
+    await deleteExportClient(member, id);
+    await audit(member, "settings.integrations", "export_client.delete", undefined, { id });
+    refresh();
   });
 }

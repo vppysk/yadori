@@ -13,7 +13,8 @@ const ROLE_OPTIONS: { value: ToolRole | ""; label: string }[] = [
   { value: "preload", label: "ゲストの情報として毎回読む" },
 ];
 
-// 連携先の接続と、AIに使わせるツール（ツール1つ＝権限1つ。plan 4.8）。プロンプトでは越えられない制限なので、知見のある人が設定する
+// 連携先の接続と、AIに使わせるツール（ツールごとに選ぶ）。プロンプトでは越えられない制限なので、知見のある人が設定する。
+// ツールの種類（読み取り／書き込み）は持たない（MCPでは相手の自己申告しかないため）。呼び出しはすべて監査ログに残る
 export function ConnectionEditor({ detail }: { detail: ConnectionDetail }) {
   const [name, setName] = useState(detail.name);
   const [endpointEnv, setEndpointEnv] = useState(detail.endpoint_env ?? "");
@@ -30,7 +31,7 @@ export function ConnectionEditor({ detail }: { detail: ConnectionDetail }) {
     startTransition(async () => {
       const r = await saveConnectionAction(detail.id, {
         name, endpointEnv, tokenEnv, active,
-        tools: tools.map((t) => ({ name: t.name, aiEnabled: t.ai_enabled, access: t.access, role: t.role, requireStaffConfirm: t.require_staff_confirm })),
+        tools: tools.map((t) => ({ name: t.name, aiEnabled: t.ai_enabled, role: t.role, requireStaffConfirm: t.require_staff_confirm })),
       });
       if (r.ok) {
         setDirty(false);
@@ -88,8 +89,8 @@ export function ConnectionEditor({ detail }: { detail: ConnectionDetail }) {
         <div className="flex flex-col gap-1">
           <h2 className="text-base font-bold">AIに使わせるツール</h2>
           <p className="text-xs leading-relaxed text-ink-sub">
-            チェックしたツールだけをAIエージェントに許可します（プロンプトでは越えられない制限）。予約番号・ホテルIDはシステムがゲスト本人の値で固定し、書き込みは記録してから送ります。
-            クレーム・オーダーの遅延の書き込みは、常にスタッフの確認後に送ります。使い方（利用ルール）は現場が
+            チェックしたツールだけをAIに使わせます（プロンプトでは越えられない制限）。予約番号・ホテルIDはシステムがゲスト本人の値で固定し、呼び出しはすべて記録します。
+            クレーム・オーダーの遅延の書き戻しは、常にスタッフの確認後に送ります。使い方（利用ルール）は現場が
             <Link href={`/admin/knowledge/integrations/${detail.id}`} className="mx-0.5 font-bold text-primary underline">
               管理PCのAIの設定
             </Link>
@@ -97,14 +98,13 @@ export function ConnectionEditor({ detail }: { detail: ConnectionDetail }) {
           </p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="w-full min-w-[680px] text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-sub">
                 <th className="py-2 font-normal">AIに使わせる</th>
                 <th className="py-2 font-normal">ツール（MCPの説明）</th>
-                <th className="py-2 font-normal">種類</th>
                 <th className="py-2 font-normal">使い方</th>
-                <th className="py-2 font-normal">書き込みはスタッフの確認後</th>
+                <th className="py-2 font-normal">スタッフの確認後に送る</th>
               </tr>
             </thead>
             <tbody>
@@ -118,14 +118,8 @@ export function ConnectionEditor({ detail }: { detail: ConnectionDetail }) {
                     <p className="text-xs leading-relaxed text-ink-sub">{t.description || "（説明なし）"}</p>
                   </td>
                   <td className="py-2.5">
-                    <select value={t.access} onChange={(e) => setTool(t.name, { access: e.target.value as ToolSetting["access"] })} className="min-h-9 rounded-lg border border-line-input px-2">
-                      <option value="read">読み取り</option>
-                      <option value="write">書き込み</option>
-                    </select>
-                  </td>
-                  <td className="py-2.5">
                     <select value={t.role ?? ""} onChange={(e) => setTool(t.name, { role: (e.target.value || null) as ToolRole | null })} className="min-h-9 rounded-lg border border-line-input px-2">
-                      {ROLE_OPTIONS.filter((o) => t.access === "read" || o.value === "").map((o) => (
+                      {ROLE_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>
                           {o.label}
                         </option>
@@ -135,8 +129,8 @@ export function ConnectionEditor({ detail }: { detail: ConnectionDetail }) {
                   <td className="py-2.5">
                     <input
                       type="checkbox"
-                      aria-label={`${t.name}の書き込みを常にスタッフが確認`}
-                      disabled={t.access !== "write"}
+                      aria-label={`${t.name}の呼び出しを常にスタッフが確認`}
+                      disabled={t.role !== null}
                       checked={t.require_staff_confirm}
                       onChange={(e) => setTool(t.name, { require_staff_confirm: e.target.checked })}
                       className="size-5 accent-primary disabled:opacity-30"
@@ -151,7 +145,8 @@ export function ConnectionEditor({ detail }: { detail: ConnectionDetail }) {
         <ul className="flex flex-col gap-1 text-xs text-ink-sub">
           <li>・ゲストの予約の取得: 会話の最初にシステムが呼ぶ（本人確認に当たるため、AIには選ばせない）。料金などの使わない項目はここで落とします</li>
           <li>・ゲストの情報として毎回読む: お客様メモなど。ゲスト対応とAI相談で、予約番号だけで読めるもの</li>
-          <li>・スタッフのAI相談では、相談する人にも同じツールの権限が要ります（メンバーと権限で、グループか個人に付けます）。AI相談からは読み取りだけで、書き込みはしません</li>
+          <li>・スタッフの確認後に送る: 呼び出しを積んでおき、管理PCでスタッフが確認してから送ります（結果はAIの回答に使えません）。記録・変更をするツールに付けてください</li>
+          <li>・スタッフのAI相談では、相談する人にも同じツールの権限が要ります（メンバーと権限で、グループか個人に付けます）。スタッフの確認後に送るツールはAI相談では使いません</li>
           <li>・AIが必要に応じて選ぶ: 連携係が発言に応じて選びます。返ってきた内容はそのままAIに渡るため、料金など渡したくない項目を返すツールは許可しないでください</li>
         </ul>
       </section>

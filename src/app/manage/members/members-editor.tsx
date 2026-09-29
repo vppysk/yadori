@@ -31,7 +31,7 @@ export function MembersEditor({ data }: { data: MembersData }) {
       <section className="flex flex-col rounded-[14px] border border-line bg-surface">
         <div className="flex flex-col gap-1 px-5 pt-4.5 pb-2">
           <h2 className="text-base font-bold">メンバー</h2>
-          <p className="text-xs text-ink-sub">人・AIエージェント・外部システムを同じ仕組みで管理します。実効権限は、所属グループと個別付与の合計です（範囲は広い方が有効、拒否はありません）。</p>
+          <p className="text-xs text-ink-sub">スタッフの権限を管理します（AIに任せる業務は担当範囲とコスト、AIに使わせるツールと実績の出力口の接続元は外部連携で設定します）。実効権限は、所属グループと個別付与の合計です（範囲は広い方が有効、拒否はありません）。</p>
         </div>
         {data.members.map((m) => (
           <MemberCard key={m.id} member={m} data={data} pending={pending} run={run} permLabel={permLabel} scopeLabel={scopeLabel} />

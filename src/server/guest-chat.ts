@@ -350,11 +350,13 @@ export async function draftAnswer(params: {
   // 回答に使う知識をゲストの滞在日で取得する（ご滞在中は今日から、ご到着前は滞在期間。チェックアウト日の朝食なども含める）
   const today = localNow(hotel.timezone).date;
   const needsKnowledge = intents.some((i) => i.pattern === "info" || i.pattern === "external");
+  // ご出発後のゲストは今日の情報で答える（チェックアウト日が今日より前だと期間が逆になる）
+  const from = today > guest.checkIn ? today : guest.checkIn;
   // 承認して反映する資料（外部の資料も含む）は承認済みの値として、自動反映のURL（運行情報・天気など）は定期取得済みの要約として渡す
   // （その場で検索・取得はしない。docs/006_guide_info.md）
   const [facilities, documents, autoUpdates] = await Promise.all([
     needsKnowledge
-      ? getFacilityInfo(hotel.id, { facilities: routed.facilities, from: today > guest.checkIn ? today : guest.checkIn, to: guest.checkOut, timezone: hotel.timezone })
+      ? getFacilityInfo(hotel.id, { facilities: routed.facilities, from, to: guest.checkOut < from ? from : guest.checkOut, timezone: hotel.timezone })
       : [],
     needsKnowledge ? searchDocuments(hotel.id, text) : [],
     needsKnowledge ? getAutoUpdates(hotel.id) : [],

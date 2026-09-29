@@ -1,9 +1,8 @@
 import { query, queryOne } from "../db";
 import { getAiAgentMemberId } from "../hotel";
-import { aiMayUse } from "./mcp";
 
 // Webページの取得（Tavily Extract）。docs/006_guide_info.md。検索はせず、案内情報に資料として登録したURLだけを取りに行く。
-// AIエージェントの権限（integration.web_fetch.read）をここで必ず確認する。サービスの一部として画面には設定を出さない（docs/007_ai_settings.md 3.5）
+// サービスの一部として画面には設定を出さない（docs/007_ai_settings.md 3.5）。取得は監査ログに残す（権限キー integration.web_fetch.read）
 
 const TAVILY_EXTRACT_URL = "https://api.tavily.com/extract";
 // 1回の呼び出しで渡せるURLは20件まで
@@ -20,10 +19,9 @@ async function webFetchIntegrationId(hotelId: string): Promise<string | undefine
   return row?.id;
 }
 
-// 連携が有効で、AIエージェントに権限があるときだけ true（定期取得の条件）
+// 連携が有効なときだけ true（定期取得の条件）
 export async function webFetchAllowed(hotelId: string): Promise<boolean> {
-  if (!(await webFetchIntegrationId(hotelId))) return false;
-  return aiMayUse(hotelId, "integration.web_fetch.read");
+  return Boolean(await webFetchIntegrationId(hotelId));
 }
 
 export function tavilyConfigured(): boolean {

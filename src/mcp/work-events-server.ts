@@ -1,20 +1,11 @@
 import { createTool } from "@mastra/core/tools";
 import { MCPServer } from "@mastra/mcp";
 import { z } from "zod";
-import { queryOne } from "@/server/db";
+import { authorizeExportCall } from "@/server/export-clients";
 import { listWorkEvents, summarizeWorkEvents } from "@/server/export";
 
 // 実績の出力口のMCPサーバー（plan 4.5）。既存の管理システムや別のAIエージェントが直接問い合わせる。
-// 接続元は「外部システム」メンバーとして扱い、実績の読み取り権限を確認する（plan 4.8）
-
-async function externalHotelId(): Promise<string> {
-  const row = await queryOne<{ hotel_id: string }>(
-    `select m.hotel_id from members m where m.kind = 'external_system' and m.active and has_permission(m.id, 'integration.work_events.read')
-     order by m.created_at limit 1`,
-  );
-  if (!row) throw new Error("実績の読み取り権限を持つ外部システムがありません");
-  return row.hotel_id;
-}
+// 接続元はトークンで特定し（route.ts）、その接続元の実績の読み取り権限を確認して、呼び出しを監査ログに残す（export-clients.ts）
 
 const listEvents = createTool({
   id: "list_work_events",
@@ -25,14 +16,16 @@ const listEvents = createTool({
     pattern: z.enum(["info", "order", "external", "reservation", "complaint"]).optional(),
     limit: z.number().int().min(1).max(1000).optional().describe("最大件数（既定200）"),
   }),
-  execute: async ({ since, until, pattern, limit }) => ({ events: await listWorkEvents(await externalHotelId(), { since, until, pattern, limit: limit ?? 200 }) }),
+  execute: async ({ since, until, pattern, limit }) => ({
+    events: await listWorkEvents(await authorizeExportCall("list_work_events", { since, until, pattern, limit }), { since, until, pattern, limit: limit ?? 200 }),
+  }),
 });
 
 const summarize = createTool({
   id: "summarize_work_events",
   description: "パターン×担当ごとの件数・コスト・解決率・平均所要時間の集計",
   inputSchema: z.object({ days: z.number().int().min(1).max(365).optional().describe("集計日数（既定30）") }),
-  execute: async ({ days }) => ({ summary: await summarizeWorkEvents(await externalHotelId(), days ?? 30) }),
+  execute: async ({ days }) => ({ summary: await summarizeWorkEvents(await authorizeExportCall("summarize_work_events", { days }), days ?? 30) }),
 });
 
 export const workEventsMcpServer = new MCPServer({

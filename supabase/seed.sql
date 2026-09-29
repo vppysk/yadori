@@ -19,15 +19,17 @@ insert into members (id, hotel_id, kind, display_name, job_title) values
   ('00000000-0000-0000-0000-00000000a004', '00000000-0000-0000-0000-000000000001', 'human', '高橋', 'ハウスキーピング'),
   ('00000000-0000-0000-0000-00000000a005', '00000000-0000-0000-0000-000000000001', 'human', '伊藤', 'ハウスキーピング'),
   ('00000000-0000-0000-0000-00000000a0a1', '00000000-0000-0000-0000-000000000001', 'ai_agent', 'AIエージェント', null),
-  ('00000000-0000-0000-0000-00000000a0e1', '00000000-0000-0000-0000-000000000001', 'external_system', '予約・客室管理システム', null);
+  ('00000000-0000-0000-0000-00000000a0e1', '00000000-0000-0000-0000-000000000001', 'external_system', '既存の管理システム（実績の読み取り）', null);
+
+-- 実績の出力口の接続元（当システムに接続してくる外部システム）。トークンは環境変数に置く（/manage/integrations の「実績の出力口」）
+update members set token_env = 'EXPORT_MCP_TOKEN' where id = '00000000-0000-0000-0000-00000000a0e1';
+insert into member_permissions (member_id, permission_key) values ('00000000-0000-0000-0000-00000000a0e1', 'integration.work_events.read');
 
 insert into permission_groups (id, hotel_id, name, is_preset) values
   ('00000000-0000-0000-0000-00000000b001', '00000000-0000-0000-0000-000000000001', '現場スタッフ', true),
   ('00000000-0000-0000-0000-00000000b002', '00000000-0000-0000-0000-000000000001', 'フロント', true),
   ('00000000-0000-0000-0000-00000000b003', '00000000-0000-0000-0000-000000000001', '上長', true),
-  ('00000000-0000-0000-0000-00000000b004', '00000000-0000-0000-0000-000000000001', '管理者', true),
-  ('00000000-0000-0000-0000-00000000b005', '00000000-0000-0000-0000-000000000001', 'AIエージェント', true),
-  ('00000000-0000-0000-0000-00000000b006', '00000000-0000-0000-0000-000000000001', '外部連携（読み取り）', true);
+  ('00000000-0000-0000-0000-00000000b004', '00000000-0000-0000-0000-000000000001', '管理者', true);
 
 -- プリセットの中身（plan 4.8 の表）
 insert into group_permissions (group_id, permission_key)
@@ -46,12 +48,7 @@ from unnest(array[
   'settings.ai_policy', 'settings.integration_rules', 'handling.integration_write.confirm'
 ]) k
 union all
-select '00000000-0000-0000-0000-00000000b004', key from permissions where category <> 'integration'
-union all
-select '00000000-0000-0000-0000-00000000b005', k
-from unnest(array['order.create', 'handling.handoff.create', 'integration.web_fetch.read']) k
-union all
-select '00000000-0000-0000-0000-00000000b006', 'integration.work_events.read';
+select '00000000-0000-0000-0000-00000000b004', key from permissions where category <> 'integration';
 
 insert into member_groups (member_id, group_id) values
   ('00000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-00000000b003'),
@@ -59,9 +56,7 @@ insert into member_groups (member_id, group_id) values
   ('00000000-0000-0000-0000-00000000a002', '00000000-0000-0000-0000-00000000b002'),
   ('00000000-0000-0000-0000-00000000a003', '00000000-0000-0000-0000-00000000b001'),
   ('00000000-0000-0000-0000-00000000a004', '00000000-0000-0000-0000-00000000b001'),
-  ('00000000-0000-0000-0000-00000000a005', '00000000-0000-0000-0000-00000000b001'),
-  ('00000000-0000-0000-0000-00000000a0a1', '00000000-0000-0000-0000-00000000b005'),
-  ('00000000-0000-0000-0000-00000000a0e1', '00000000-0000-0000-0000-00000000b006');
+  ('00000000-0000-0000-0000-00000000a005', '00000000-0000-0000-0000-00000000b001');
 
 -- ---------- オーダー: 役割・エリア・担当・品目 ----------
 
@@ -167,31 +162,26 @@ insert into reply_checks (hotel_id, source_type, body, sort) values
 -- ---------- 外部連携（予約・客室管理システムのモックMCP） ----------
 -- 接続先とトークンは環境変数の名前で持つ。ツールは /manage/integrations の「ツールを取得し直す」でMCPから取り直せる
 
-insert into integrations (id, hotel_id, name, kind, member_id, slug, endpoint_env, token_env) values
-  ('00000000-0000-0000-0000-000000009001', '00000000-0000-0000-0000-000000000001', '予約・客室管理システム', 'mcp', '00000000-0000-0000-0000-00000000a0e1',
-   'pms', 'PMS_MCP_URL', 'PMS_MCP_TOKEN');
+insert into integrations (id, hotel_id, name, kind, slug, endpoint_env, token_env) values
+  ('00000000-0000-0000-0000-000000009001', '00000000-0000-0000-0000-000000000001', '予約・客室管理システム', 'mcp', 'pms', 'PMS_MCP_URL', 'PMS_MCP_TOKEN');
 
-insert into integration_tools (integration_id, name, description, access, role, require_staff_confirm, permission_key)
-select '00000000-0000-0000-0000-000000009001'::uuid, t.name, t.description, t.access, t.role, false, 'integration.pms.' || t.name
+-- ai_enabled: AIに使わせるか（/manage/integrations で選ぶ）。依頼履歴への追記は使わせない
+insert into integration_tools (integration_id, name, description, role, ai_enabled, require_staff_confirm, permission_key)
+select '00000000-0000-0000-0000-000000009001'::uuid, t.name, t.description, t.role, t.enabled, false, 'integration.pms.' || t.name
 from (values
-  ('get_reservation', '予約内容（客室ID・部屋番号・滞在日・人数・プラン・料金）を取得する', 'read', 'reservation'),
-  ('search_reservations', '期間に滞在がかかる予約を探す。query を渡すと、お名前（空白は無視）か部屋番号で絞る', 'read', 'search'),
-  ('list_guest_notes', 'お客様メモ（記念日・お好み・引き継ぎなど）の一覧', 'read', 'preload'),
-  ('list_request_history', '滞在中の依頼履歴', 'read', 'preload'),
-  ('append_guest_note', 'お客様メモに追記する（既存の記載は変更できない）', 'write', null),
-  ('append_request_history', '依頼履歴に追記する', 'write', null)
-) as t (name, description, access, role);
+  ('get_reservation', '予約内容（客室ID・部屋番号・滞在日・人数・プラン・料金）を取得する', 'reservation', true),
+  ('search_reservations', '期間に滞在がかかる予約を探す。query を渡すと、お名前（空白は無視）か部屋番号で絞る', 'search', true),
+  ('list_guest_notes', 'お客様メモ（記念日・お好み・引き継ぎなど）の一覧', 'preload', true),
+  ('list_request_history', '滞在中の依頼履歴', 'preload', true),
+  ('append_guest_note', 'お客様メモに追記する（既存の記載は変更できない）', null, true),
+  ('append_request_history', '依頼履歴に追記する', null, false)
+) as t (name, description, role, enabled);
 
 -- スタッフのAI相談で使うツールは、相談するスタッフにも権限が要る（ゲストの情報を見られるグループに付ける）
 insert into group_permissions (group_id, permission_key)
 select g, 'integration.pms.' || t
 from unnest(array['00000000-0000-0000-0000-00000000b001', '00000000-0000-0000-0000-00000000b004']::uuid[]) g,
   unnest(array['get_reservation', 'search_reservations', 'list_guest_notes', 'list_request_history']) t;
-
--- AIエージェントに使わせるツール（ツール1つ＝権限1つ。plan 4.8）
-insert into member_permissions (member_id, permission_key)
-select '00000000-0000-0000-0000-00000000a0a1'::uuid, 'integration.pms.' || t
-from unnest(array['get_reservation', 'search_reservations', 'list_guest_notes', 'list_request_history', 'append_guest_note']) t;
 
 insert into ai_instructions (hotel_id, scope, integration_id, body) values
   ('00000000-0000-0000-0000-000000000001', 'integration', '00000000-0000-0000-0000-000000009001',

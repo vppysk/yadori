@@ -1,8 +1,8 @@
 import type { Member } from "./auth";
 import { query, transaction } from "./db";
 
-// メンバーと権限（plan 4.8）: 人・AIエージェント・外部システムを同じメンバーとして扱い、
-// 機能ごとの権限をグループ（プリセット）と個別付与（期限・範囲付き）で与える。実効権限は合計（拒否はない）
+// メンバーと権限（plan 4.8）: 機能ごとの権限をグループ（プリセット）と個別付与（期限・範囲付き）で与える。実効権限は合計（拒否はない）。
+// 人（スタッフ）だけを扱う。AIに任せる業務は担当範囲とコスト、使わせるツールと実績の出力口の接続元は外部連携で決める（docs/007_ai_settings.md）
 
 export type PermissionDef = { key: string; category: string; label: string; scope_kind: "facility" | "area" | null };
 export type GroupRow = { id: string; name: string; is_preset: boolean; permissions: { key: string; scope_ids: string[] | null }[] };
@@ -14,7 +14,10 @@ export type MembersData = { permissions: PermissionDef[]; groups: GroupRow[]; me
 
 export async function getMembersData(hotelId: string): Promise<MembersData> {
   const [permissions, groups, members, scopes] = await Promise.all([
-    query<PermissionDef>("select key, category, label, scope_kind from permissions order by category, key"),
+    // Webページの取得・実績の読み取りは人に付ける権限ではないため出さない
+    query<PermissionDef>(
+      "select key, category, label, scope_kind from permissions where key not in ('integration.web_fetch.read', 'integration.work_events.read') order by category, key",
+    ),
     query<GroupRow>(
       `select g.id, g.name, g.is_preset,
          coalesce(json_agg(json_build_object('key', gp.permission_key, 'scope_ids', gp.scope_ids)) filter (where gp.permission_key is not null), '[]') permissions
@@ -29,7 +32,7 @@ export async function getMembersData(hotelId: string): Promise<MembersData> {
                    from member_permissions p left join members gm on gm.id = p.granted_by
                    where p.member_id = m.id and (p.expires_at is null or p.expires_at > now())), '[]') grants,
          coalesce((select array_agg(distinct permission_key) from effective_permissions where member_id = m.id), '{}') effective
-       from members m where m.hotel_id = $1 order by m.kind, m.created_at`,
+       from members m where m.hotel_id = $1 and m.kind = 'human' order by m.created_at`,
       [hotelId],
     ),
     query<ScopeOption>(
@@ -43,7 +46,9 @@ export async function getMembersData(hotelId: string): Promise<MembersData> {
 }
 
 async function assertSameHotel(hotelId: string, table: "members" | "permission_groups", id: string) {
-  const rows = await query(`select 1 from ${table} where id = $1 and hotel_id = $2`, [id, hotelId]);
+  // この画面で権限を付けるのは人だけ（AIエージェント・外部システムは出していない）
+  const extra = table === "members" ? " and kind = 'human'" : "";
+  const rows = await query(`select 1 from ${table} where id = $1 and hotel_id = $2${extra}`, [id, hotelId]);
   if (rows.length === 0) throw new Error("対象が見つかりません");
 }
 

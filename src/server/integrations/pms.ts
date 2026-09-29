@@ -1,20 +1,20 @@
 import { query, queryOne } from "../db";
-import { aiMayUse, callTool, listAiTools, memberMayUse, renderToolResult, type Integration } from "./mcp";
+import { callTool, listAiTools, memberMayUse, renderToolResult, type Integration } from "./mcp";
 
 // 予約・客室管理システムとの変換層。plan 3章「ゲスト文脈」、docs/007_ai_settings.md。
 // 会話の最初の予約の取得は本人確認に当たるため、連携係に選ばせず、/manage で「ゲストの予約の取得」に指定したツールをここで呼ぶ。
-// 相手の項目名を自前の形に直し、使わない項目（料金など）は落とす。どのツールもAIエージェントの権限を必ず確認する。
+// 相手の項目名を自前の形に直し、使わない項目（料金など）は落とす。/manage で「AIに使わせる」にしたツールだけを呼ぶ。
 // スタッフのAI相談（staffMemberId あり）では、相談しているスタッフにも同じツールの権限が必要（人・AI共通のツール1つ＝権限1つ。plan 4.8）
 
 type ReservationTool = { integration: Integration; name: string; permission_key: string };
 
-// ゲストの予約の取得に使うツール。デモは1ホテルのため、有効な連携先から1つ引く（複数ホテルではゲストのURLにホテルを含めて引き当てる）
+// ゲストの予約の取得に使うツール（AIに使わせるもの）。デモは1ホテルのため、有効な連携先から1つ引く（複数ホテルではゲストのURLにホテルを含めて引き当てる）
 async function reservationTool(role: "reservation" | "search"): Promise<ReservationTool | undefined> {
   return queryOne<ReservationTool>(
     `select t.name, t.permission_key,
        json_build_object('id', i.id, 'hotel_id', i.hotel_id, 'name', i.name, 'slug', i.slug, 'endpoint_env', i.endpoint_env, 'token_env', i.token_env) integration
      from integration_tools t join integrations i on i.id = t.integration_id
-     where t.role = $1 and i.kind = 'mcp' and i.active order by i.name limit 1`,
+     where t.role = $1 and t.ai_enabled and i.kind = 'mcp' and i.active order by i.name limit 1`,
     [role],
   );
 }
@@ -54,10 +54,9 @@ type RawReservation = {
 export async function getGuestContext(reservationId: string, options: { staffMemberId?: string } = {}): Promise<GuestContext | undefined> {
   const tool = await reservationTool("reservation");
   if (!tool) throw new Error("ゲストの予約を取得する連携が設定されていません（/manage/integrations）");
-  if (!(await aiMayUse(tool.integration.hotel_id, tool.permission_key))) throw new Error("AIエージェントに予約内容の取得の権限がありません");
   if (options.staffMemberId && !(await memberMayUse(options.staffMemberId, tool.permission_key))) throw new Error("予約内容の取得の権限がありません");
 
-  const raw = await callTool<RawReservation>(tool.integration, tool.name, { reservation_id: reservationId });
+  const raw = await callTool<RawReservation>(tool.integration, tool.name, { reservation_id: reservationId }, { purpose: "guest_context", staffMemberId: options.staffMemberId });
   if (!raw || raw.error || raw.hotel_id !== tool.integration.hotel_id) return undefined;
   // 変換層: 相手の項目名を自前の形に直し、使わない項目（料金など）は落とす。部屋は客室IDで自前の部屋マスタに当て、表示名を使う
   const room = raw.room_id
@@ -82,7 +81,7 @@ async function preload(hotelId: string, reservationId: string, staffMemberId?: s
   const results = await Promise.all(
     tools.map(async (t) => {
       try {
-        const data = await callTool<unknown>(t.integration, t.name, { reservation_id: reservationId });
+        const data = await callTool<unknown>(t.integration, t.name, { reservation_id: reservationId }, { purpose: "guest_context", staffMemberId });
         return { integrationId: t.integration_id, integrationName: t.integration.name, description: t.description || t.name, text: renderToolResult(data) };
       } catch (error) {
         console.warn("[pms] ゲストの情報を読めなかった", t.integration.name, t.name, error);
@@ -103,9 +102,8 @@ export async function searchReservations(
 ): Promise<GuestSummary[]> {
   const tool = await reservationTool("search");
   if (!tool || tool.integration.hotel_id !== hotelId) return [];
-  if (!(await aiMayUse(hotelId, tool.permission_key))) throw new Error("AIエージェントに予約の検索の権限がありません");
   if (!(await memberMayUse(staffMemberId, tool.permission_key))) throw new Error("予約の検索の権限がありません");
-  const { reservations } = await callTool<{ reservations: RawReservation[] }>(tool.integration, tool.name, { hotel_id: hotelId, ...params });
+  const { reservations } = await callTool<{ reservations: RawReservation[] }>(tool.integration, tool.name, { hotel_id: hotelId, ...params }, { purpose: "search", staffMemberId });
   const labels = new Map(
     (await query<{ id: string; label: string }>("select id, label from rooms where hotel_id = $1 and id = any($2)", [
       hotelId, reservations.map((r) => r.room_id).filter(Boolean),
