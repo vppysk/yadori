@@ -82,7 +82,8 @@
 - `audit_logs`: 誰が、どの権限で、何をしたか
 
 ### ホテル別マスタ（4.4）
-- `wage_rates`（役職別の時給）、`time_bands.wage_multiplier`（時間帯の割増）、`handling_times`（パターン別の想定対応時間。オーダーは受付と配達を分ける）、`model_prices`（USD/100万トークン、改定履歴つき）、`hotels` の目標値とインフラ月額
+- `hotels.hourly_wage_jpy`（時給。ホテル全体で1つ）、`hotels.night_premium_rate`（法定の深夜割増。22〜5時、25%以上。時間帯ごとの割増は廃止）、`handling_times`（パターン別の想定対応時間）、`model_prices`（USD/100万トークン、改定履歴つき）。役職別の時給（`wage_rates`）・目標値・インフラ月額は2026-09-29に廃止
+- `ai_models`（仕事ごとのモデル。ゲストへの回答（業務ごと）とAI相談）、`model_reports`（定期評価の提案レポート）、`model_trials`（試験運用。一部を別のモデルで処理し、目標を外れたら自動で中断）、`talk_request_reviews`（「人と話したい」の理由の分類）、`hotels` の満足度の目標、`llm_calls.unanswered`（AI相談で答えられなかったか）・`llm_calls.demo`（デモ実績）。業務×時間帯の担当（`ai_assignments`）は2026-09-29に廃止。設計は `000_plan.md` 4.3
 - デモ用の時給・対応時間は本人が入力する方針のため、`seed.sql` には入れていない
 
 ### 予約・客室管理システムのモック（`mock_pms` スキーマ）

@@ -52,18 +52,6 @@ export async function currentTimeBand(hotel: Hotel, at = new Date()): Promise<Ti
   );
 }
 
-export type Assignment = { handler: "human" | "small" | "medium" | "large"; thinking: boolean };
-
-// パターン×時間帯のAI担当（plan 4.3）。未設定なら小型モデル
-export async function getAssignment(hotelId: string, pattern: Pattern, timeBandId?: string): Promise<Assignment> {
-  if (!timeBandId) return { handler: "small", thinking: false };
-  const row = await queryOne<Assignment>(
-    "select handler, thinking from ai_assignments where hotel_id = $1 and pattern = $2 and time_band_id = $3",
-    [hotelId, pattern, timeBandId],
-  );
-  return row ?? { handler: "small", thinking: false };
-}
-
 export async function getAiAgentMemberId(hotelId: string): Promise<string | undefined> {
   const row = await queryOne<{ id: string }>(
     "select id from members where hotel_id = $1 and kind = 'ai_agent' and active order by created_at limit 1",

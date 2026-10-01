@@ -5,10 +5,11 @@
 
 insert into hotels (id, name) values ('00000000-0000-0000-0000-000000000001', 'デモホテル');
 
-insert into time_bands (hotel_id, name, starts_at, ends_at, wage_multiplier, sort) values
-  ('00000000-0000-0000-0000-000000000001', '日中', '07:00', '17:00', 1.0, 1),
-  ('00000000-0000-0000-0000-000000000001', '夕方', '17:00', '22:00', 1.1, 2),
-  ('00000000-0000-0000-0000-000000000001', '深夜', '22:00', '07:00', 1.25, 3);
+-- 深夜は法定の深夜（22〜5時）に合わせる。深夜割増は hotels.night_premium_rate
+insert into time_bands (hotel_id, name, starts_at, ends_at, sort) values
+  ('00000000-0000-0000-0000-000000000001', '日中', '05:00', '17:00', 1),
+  ('00000000-0000-0000-0000-000000000001', '夕方', '17:00', '22:00', 2),
+  ('00000000-0000-0000-0000-000000000001', '深夜', '22:00', '05:00', 3);
 
 -- ---------- メンバーと権限 ----------
 
@@ -136,20 +137,13 @@ insert into facility_values (facility_id, field_id, source_id, title, body, vali
   ('00000000-0000-0000-0000-00000000f003', '00000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-00000000d001', null, '休業', '[2026-10-01,2027-06-30]'),
   ('00000000-0000-0000-0000-00000000f001', '00000000-0000-0000-0000-0000000000e2', '00000000-0000-0000-0000-00000000d001', '秋の特別ディナー', '', '[2026-09-01,2026-10-20]');
 
--- ---------- AIの担当範囲・指示・ガードレール（UIモックのサンプル） ----------
--- 案内・オーダーの回答は中型（Super）。小型（Lightning）は情報のない項目を推測で答えることがあった（2026-09-25 検証）
+-- ---------- AIのモデル・指示・ガードレール（UIモックのサンプル） ----------
+-- 仕事ごとのモデルは Super から始め、定期評価で見直す（docs/000_plan.md 4.3）。クレームはUltra固定でコードで決める。
+-- 小型（Lightning）は情報のない項目を推測で答えることがあった（2026-09-25 検証）
 
-insert into ai_assignments (hotel_id, pattern, time_band_id, handler, locked)
-select h.id, a.pattern, tb.id, a.handler, a.pattern = 'complaint'
-from hotels h
-join time_bands tb on tb.hotel_id = h.id
-join (values
-  ('info', 1, 'medium'), ('info', 2, 'medium'), ('info', 3, 'medium'),
-  ('order', 1, 'medium'), ('order', 2, 'medium'), ('order', 3, 'medium'),
-  ('external', 1, 'medium'), ('external', 2, 'medium'), ('external', 3, 'human'),
-  ('reservation', 1, 'human'), ('reservation', 2, 'human'), ('reservation', 3, 'human'),
-  ('complaint', 1, 'large'), ('complaint', 2, 'large'), ('complaint', 3, 'large')
-) as a (pattern, band_sort, handler) on a.band_sort = tb.sort;
+insert into ai_models (hotel_id, job, pattern, tier)
+select h.id, j.job, j.pattern, 'medium'
+from hotels h cross join (values ('answer', 'info'), ('answer', 'order'), ('answer', 'external'), ('answer', 'reservation'), ('staff_ask', '')) j (job, pattern);
 
 -- ゲスト対応AIの指示（1本）。回答後のチェック項目（reply_checks）は、管理PCで保存したときに上位モデルが抜き出す
 insert into ai_instructions (hotel_id, scope, body) values

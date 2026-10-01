@@ -2,7 +2,7 @@ import { requireMember } from "@/server/auth";
 import { listRevisions } from "@/server/policy";
 
 const KIND_LABELS: Record<string, string> = {
-  ai_assignments: "担当範囲",
+  ai_assignments: "AIのモデル・満足度の目標",
   ai_instructions: "ゲスト対応AIの指示",
   integrations: "外部連携",
 };

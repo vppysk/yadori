@@ -2,13 +2,12 @@
 
 import { refresh } from "next/cache";
 import { audit, authorize, can, PermissionError } from "@/server/auth";
-import { applyAssignments, type Handler } from "@/server/dashboard";
+import { saveAssumptions, saveTargets, type Assumptions } from "@/server/dashboard";
 import { addIntegration, saveConnection, syncIntegration, type ConnectionInput } from "@/server/integrations-admin";
-import { saveMasters, type Masters } from "@/server/masters";
 import { grantPermission, revokeGrant, saveGroup, setMemberGroup } from "@/server/members";
+import { approveReport, dismissReport, stopTrial, type Decision } from "@/server/model-review";
 import { addWebhook, deleteWebhook, sendTest } from "@/server/webhooks";
 import { addExportClient, deleteExportClient, saveExportClient, type ExportClientInput } from "@/server/export-clients";
-import { replay, type ReplayRequest, type ReplayResult } from "@/server/replay";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -22,28 +21,41 @@ async function guard(fn: () => Promise<void>): Promise<Result> {
   }
 }
 
-export async function applyAssignmentsAction(next: Record<string, Handler>): Promise<Result> {
+// モデルの見直し（docs/000_plan.md 4.3）: 提案レポートの承認（全部適用か試験運用）・見送り、試験運用の中断、満足度の目標
+export async function approveReportAction(reportId: string, decision: Decision): Promise<Result> {
   return guard(async () => {
     const member = await authorize("settings.ai_assignment");
-    await applyAssignments(member, next);
-    await audit(member, "settings.ai_assignment", "ai_assignments.apply");
+    await approveReport(member, reportId, decision);
+    await audit(member, "settings.ai_assignment", "model_report.approve", { type: "model_report", id: reportId }, decision);
     refresh();
   });
 }
 
-// 精密見積もり: 変更した業務ごとに過去の質問を2つのモデルで再生する（LLMを呼ぶため、1回に2業務まで）
-export async function runReplayAction(requests: ReplayRequest[]): Promise<{ ok: true; results: ReplayResult[] } | { ok: false; error: string }> {
-  try {
+export async function dismissReportAction(reportId: string): Promise<Result> {
+  return guard(async () => {
     const member = await authorize("settings.ai_assignment");
-    const targets = requests.slice(0, 2);
-    const results: ReplayResult[] = [];
-    for (const r of targets) results.push(await replay(member.hotel_id, r));
-    await audit(member, "settings.ai_assignment", "ai_assignments.replay", undefined, { requests: targets });
-    return { ok: true, results };
-  } catch (error) {
-    console.error("[runReplayAction]", error);
-    return { ok: false, error: error instanceof Error ? error.message : "精密見積もりに失敗しました" };
-  }
+    await dismissReport(member, reportId);
+    await audit(member, "settings.ai_assignment", "model_report.dismiss", { type: "model_report", id: reportId });
+    refresh();
+  });
+}
+
+export async function stopTrialAction(trialId: string): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.ai_assignment");
+    await stopTrial(member, trialId);
+    await audit(member, "settings.ai_assignment", "model_trial.stop", { type: "model_trial", id: trialId });
+    refresh();
+  });
+}
+
+export async function saveTargetsAction(targets: { unansweredMax: number; aiTalkMax: number }): Promise<Result> {
+  return guard(async () => {
+    const member = await authorize("settings.ai_assignment");
+    await saveTargets(member, targets);
+    await audit(member, "settings.ai_assignment", "targets.save", undefined, targets);
+    refresh();
+  });
 }
 
 // 外部連携の接続（docs/007_ai_settings.md）: 接続先、AIに使わせるツール（ツールごとの権限）、システムが決まった場面で呼ぶツール
@@ -78,11 +90,11 @@ export async function addIntegrationAction(input: { name: string; slug: string; 
   }
 }
 
-export async function saveMastersAction(input: Omit<Masters, "jobTitles" | "actualMinutes">): Promise<Result> {
+export async function saveAssumptionsAction(input: Assumptions): Promise<Result> {
   return guard(async () => {
     const member = await authorize("settings.masters");
-    await saveMasters(member, input);
-    await audit(member, "settings.masters", "masters.save");
+    await saveAssumptions(member, input);
+    await audit(member, "settings.masters", "assumptions.save");
     refresh();
   });
 }

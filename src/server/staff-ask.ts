@@ -12,6 +12,7 @@ import { getFacilityInfo, listFacilityNames, searchDocuments } from "./knowledge
 import { recordLlmCall } from "./metrics";
 import { consultIntegrations } from "./integration-agent";
 import { resolveGuests, type GuestMention } from "./staff-ask-guests";
+import { staffAskTier } from "./ai-jobs";
 
 // スタッフ向けの相談相手（plan 4.1）: 新人が、ゲストと同じ知識ベース（マスタ・特記事項・マニュアル）に質問できる。
 // 会話（セッション）は人ごとに複数持てる。特定のゲストに言及すると、予約・客室管理システムと対応アラートから情報を取る（staff-ask-guests.ts）
@@ -123,16 +124,20 @@ export async function askAi(
     text,
   ].join("\n");
 
+  // モデルは定期評価で見直す（試験運用中は一部を試すモデルで処理する。docs/000_plan.md 4.3）
+  const tier = await staffAskTier(hotel.id);
   const requestContext = new RequestContext<ConciergeContext>();
-  requestContext.set("tier", "medium");
+  requestContext.set("tier", tier);
   requestContext.set("thinking", false);
   requestContext.set("instructions", instructions);
   let reply = "うまく答えられませんでした。上長に確認してください。";
   let usedSources: string[] | undefined;
-  let usage: LlmUsage = { modelId: modelIdFor("medium"), inputTokens: 0, outputTokens: 0, reasoningTokens: 0, ms: 0 };
+  let usage: LlmUsage = { modelId: modelIdFor(tier), inputTokens: 0, outputTokens: 0, reasoningTokens: 0, ms: 0 };
+  // 答えられなかったか（モデルごとの品質の比較に使う。docs/000_plan.md 4.3）
+  let unanswered = true;
   try {
     const answer = await generateAnswer(
-      { tier: "medium", thinking: false, instructions },
+      { tier, thinking: false, instructions },
       [
         ...history.map((m): ModelMessage => (m.role === "user" ? { role: "user", content: m.content } : { role: "assistant", content: m.content })),
         { role: "user", content: latest } satisfies ModelMessage,
@@ -142,6 +147,7 @@ export async function askAi(
     reply = cleanReply(answer.reply) || reply;
     usage = answer.usage;
     usedSources = answer.used_sources;
+    unanswered = answer.unanswered_questions.length > 0 || /上長に確認/.test(reply);
   } catch (error) {
     console.warn("[staff-ask] 回答を作れなかった", error);
   }
@@ -156,6 +162,6 @@ export async function askAi(
     "insert into messages (conversation_id, role, content, citations) values ($1, 'assistant', $2, $3) returning id",
     [conversationId, reply, citations.length ? JSON.stringify(citations) : null],
   );
-  await recordLlmCall({ hotelId: hotel.id, conversationId, messageId: id, purpose: "staff_ask", pattern: "info", thinking: false, usage });
+  await recordLlmCall({ hotelId: hotel.id, conversationId, messageId: id, purpose: "staff_ask", pattern: "info", thinking: false, usage, unanswered });
   return { sessionId: conversationId, mentions: guests.mentions };
 }

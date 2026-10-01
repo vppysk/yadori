@@ -2,7 +2,7 @@ import type { Member } from "./auth";
 import { query, transaction } from "./db";
 
 // メンバーと権限（plan 4.8）: 機能ごとの権限をグループ（プリセット）と個別付与（期限・範囲付き）で与える。実効権限は合計（拒否はない）。
-// 人（スタッフ）だけを扱う。AIに任せる業務は担当範囲とコスト、使わせるツールと実績の出力口の接続元は外部連携で決める（docs/007_ai_settings.md）
+// 人（スタッフ）だけを扱う。AIに任せる業務とモデルはAIの成果と割り振り、使わせるツールと実績の出力口の接続元は外部連携で決める（docs/007_ai_settings.md）
 
 export type PermissionDef = { key: string; category: string; label: string; scope_kind: "facility" | "area" | null };
 export type GroupRow = { id: string; name: string; is_preset: boolean; permissions: { key: string; scope_ids: string[] | null }[] };

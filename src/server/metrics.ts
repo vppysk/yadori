@@ -25,16 +25,18 @@ export async function recordLlmCall(params: {
   thinking: boolean;
   usage: LlmUsage;
   request?: unknown;
+  unanswered?: boolean;
 }): Promise<number> {
   const cost = await costUsd(params.usage);
   await query(
     `insert into llm_calls (hotel_id, conversation_id, message_id, purpose, pattern, model_id, thinking,
-       input_tokens, output_tokens, reasoning_tokens, duration_ms, cost_usd, request)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+       input_tokens, output_tokens, reasoning_tokens, duration_ms, cost_usd, request, unanswered)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
     [
       params.hotelId, params.conversationId ?? null, params.messageId ?? null, params.purpose, params.pattern ?? null,
       params.usage.modelId, params.thinking, params.usage.inputTokens, params.usage.outputTokens,
       params.usage.reasoningTokens, params.usage.ms, cost, params.request ? JSON.stringify(params.request) : null,
+      params.unanswered ?? null,
     ],
   );
   return cost;

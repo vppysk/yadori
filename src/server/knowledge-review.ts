@@ -6,6 +6,8 @@ import { generateStructured } from "@/lib/llm/structured";
 import { ISO_TIMESTAMP, query, queryOne } from "./db";
 import { getHotel, localNow } from "./hotel";
 import { recordLlmCall } from "./metrics";
+import { evaluateModels } from "./model-review";
+import { reviewTalkRequests } from "./talk-reviews";
 
 // 会話ログの定期評価（docs/004_knowledge_gap_review.md）: 前回以降にゲストの発言があった会話を読み、
 // AIが答えられなかった質問を見つけて追記の提案（knowledge_gaps）にまとめる。スタッフが代わりに答えていれば回答の下書きにする
@@ -99,6 +101,10 @@ export async function runKnowledgeReview(hotelId: string): Promise<ReviewResult>
       }
     }
     for (const gapId of touched) cost += await draftAnswer(hotelId, gapId);
+    // 「人と話したい」の理由の分類（モデルの最適化の満足度の指標。docs/000_plan.md 4.3）
+    cost += await reviewTalkRequests(hotelId);
+    // 分類のあとにモデルの見直し（提案レポート）を更新する。失敗しても定期評価は通す
+    await evaluateModels(hotelId).catch((error) => console.error("[knowledge-review] モデルの見直しに失敗", error));
     const cursor = conversations.reduce<string | null>((max, c) => (!max || c.last_at > max ? c.last_at : max), null) ?? from;
     await query(
       `update knowledge_review_runs set status = 'done', finished_at = now(), cursor = $2, conversations = $3, questions = $4, new_gaps = $5, cost_usd = $6

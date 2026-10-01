@@ -137,11 +137,8 @@ export async function completeTicket(member: Member, ticketId: string) {
     return { ...rows[0], conversationId: ticket.conversation_id };
   });
   if (!done) return;
-  // 人の対応の実績（配達）。人件費は時給マスタ（未入力なら0）と対応時間から計算する
-  const wage = await queryOne<{ hourly_wage_jpy: number }>(
-    "select hourly_wage_jpy from wage_rates where hotel_id = $1 and job_title = $2",
-    [member.hotel_id, member.job_title ?? ""],
-  );
+  // 人の対応の実績（配達）。人件費は前提の値の時給（未入力なら0）と対応時間から計算する
+  const wage = await queryOne<{ hourly_wage_jpy: number }>("select hourly_wage_jpy from hotels where id = $1 and hourly_wage_jpy is not null", [member.hotel_id]);
   await recordWorkEvent({
     hotelId: member.hotel_id, conversationId: done.conversationId ?? undefined, ticketId, pattern: "order", handlerKind: "human",
     handler: member.job_title ?? "スタッフ", durationMs: done.handling_ms,

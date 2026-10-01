@@ -111,9 +111,10 @@ export async function extract(hotelId: string, title: string, body: string, opti
     registerMockToolFixture("read_facility_info", mockExtract);
   }
 
+  const tier = "medium";
   // 1. 資料に出てくる施設を洗い出し、登録済みの施設と照合する（照合はコード）
   const listed = await generateStructured({
-    tier: "medium",
+    tier,
     schema: listSchema,
     name: "list_facilities",
     description: "ホテルの資料に出てくる施設を洗い出す",
@@ -150,7 +151,7 @@ export async function extract(hotelId: string, title: string, body: string, opti
           )
         : [];
       const { object, usage } = await generateStructured({
-        tier: "medium",
+        tier,
         schema: extractSchema,
         name: "read_facility_info",
         description: `ホテルの資料から「${target.name}」の期間付きの案内を取り出す`,

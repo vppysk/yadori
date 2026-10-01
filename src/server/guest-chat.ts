@@ -8,7 +8,8 @@ import { addDays, ISO_TIMESTAMP, query, queryOne } from "./db";
 import { getGuestContext, type GuestContext } from "./guest-context";
 import { checkReply, unansweredCount } from "./guardrails";
 import { activeGuestRequest, cancelGuestRequest, createHandoff, type GuestRequest, type HandoffKind } from "./handoffs";
-import { currentTimeBand, getAssignment, getHotel, localNow, type Hotel, type Pattern } from "./hotel";
+import { currentTimeBand, getHotel, localNow, type Hotel, type Pattern } from "./hotel";
+import { answerTier } from "./ai-jobs";
 import { cleanReply, fmtDate, noticeCitations, renderFacilities, type Citation } from "./answer-context";
 import { autoUpdateCitations, getAutoUpdates, renderAutoUpdates, type AutoUpdate } from "./source-fetch";
 import { getFacilityInfo, listFacilityNames, searchDocuments, type FacilityInfo } from "./knowledge";
@@ -158,7 +159,9 @@ async function handOffToStaff(
     ? `${accepted}あわせてスタッフにおつなぎします。こちらの画面でそのままお待ちください。`
     : "承知しました。スタッフにおつなぎします。こちらの画面でそのままお待ちください。");
   await insertMessage(conversationId, "assistant", reply);
-  await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern, timeBandId, handlerKind: "human", handler: "引き継ぎ", outcome: "handed_off", signals: { wants_staff: true } });
+  // 安全に関わる内容は「人と話したい」と別に数える（満足度の指標に混ぜない）
+  const signals = options.kind === "safety" ? { safety: true } : { wants_staff: true };
+  await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern, timeBandId, handlerKind: "human", handler: "引き継ぎ", outcome: "handed_off", signals });
   return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
 }
 
@@ -232,18 +235,8 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   }
 
   const primary = PATTERN_PRIORITY.find((p) => intents.some((i) => i.pattern === p)) ?? "info";
-  const assignment = await getAssignment(hotel.id, primary, band?.id);
-
-  // 人に直接回す設定の業務（オーダーは受付済みなので除く）
-  if (assignment.handler === "human" && primary !== "order") {
-    await createHandoff({ hotelId: hotel.id, kind: "staff_assigned", conversationId, roomNumber: guest.roomNumber, summary: text, messageId: userMessageId });
-    const reply = "担当のスタッフからご案内いたします。少々お待ちください。";
-    await insertMessage(conversationId, "assistant", reply);
-    await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern: primary, timeBandId: band?.id, handlerKind: "human", handler: "引き継ぎ", outcome: "handed_off" });
-    return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
-  }
-
-  const tier: ModelTier = assignment.handler === "human" ? "small" : assignment.handler;
+  // 回答のモデルは業務ごと（定期評価で見直す。クレームはUltra固定。docs/000_plan.md 4.3）。人とAIの分担は、ルールと連携の権限で決める
+  const tier: ModelTier = await answerTier(hotel.id, primary);
   // 外部の連携先が要る発言（周辺・外部の予約、予約・客室）は、連携係がツールを選んで調べる。書き込みは利用ルールで決められているときだけ積む
   const integrationFacts = intents.some((i) => i.pattern === "external" || i.pattern === "reservation")
     ? await consultIntegrations({ guest, conversationId, text, history })
@@ -251,7 +244,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   const { answer, facilities, autoUpdates, failure } = await draftAnswer({
     hotel, guest, text, history, routed: routed.result, allFacilityNames: facilityNames, order, orderUpdate: followUp, integrationFacts: integrationFacts?.text,
     openTickets: await describeOpenTickets(conversationId, hotel.timezone),
-    hasComplaint: complaints.length > 0, tier, thinking: assignment.thinking,
+    hasComplaint: complaints.length > 0, tier, thinking: false,
   });
   const usage: LlmUsage = answer?.usage ?? { modelId: modelIdFor(tier), inputTokens: 0, outputTokens: 0, reasoningTokens: 0, ms: 0 };
   // 答えられなかったか（ガードレールの「同じ会話で2回答えられなかった」と実績に使う）。未回答の質問の一覧は会話ログの定期評価で作る（knowledge-review.ts）
@@ -306,7 +299,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   const assistantMessageId = await insertMessage(conversationId, "assistant", reply, citations);
   const costUsd = await recordLlmCall({
     hotelId: hotel.id, conversationId, messageId: assistantMessageId, purpose: "answer", pattern: primary,
-    thinking: assignment.thinking, usage,
+    thinking: false, usage,
   });
   const costJpy = costUsd * Number(hotel.fx_usd_jpy);
   const answered = intents.filter((i) => i.pattern !== "order");
@@ -327,9 +320,8 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   return { reply, citations, tickets: await listConversationTickets(conversationId) };
 }
 
-// 回答の下書き（DBには書かない）: 滞在日で館内情報を取り、指示を組み立てて回答係に答えさせる。
-// ゲスト対応と、精密見積もりの再生（replay.ts）で共通に使う
-export async function draftAnswer(params: {
+// 回答の下書き（DBには書かない）: 滞在日で館内情報を取り、指示を組み立てて回答係に答えさせる
+async function draftAnswer(params: {
   hotel: Hotel;
   guest: GuestContext;
   text: string;

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 現状
 
 ホテル運営AIエージェント（Nebius x NVIDIA Global AI Hackathon 応募作品、締切 2026-10-30 10:00 PDT）。
-W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番号]`、現場スマホ `/staff/*`、管理PC `/admin/*`（オーダー管理・AIの設定・対応アラート）、経営 `/manage/*`（担当範囲とコスト・外部連携・変更履歴・マスタ）。
+W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番号]`、現場スマホ `/staff/*`、管理PC `/admin/*`（オーダー管理・AIの設定・対応アラート）、経営 `/manage/*`（AIの成果と割り振り・外部連携・変更履歴・メンバーと権限）。
 計画書のハッカソン範囲の画面・機能は一通り実装済み（メンバーと権限は `/manage/members`）。残りはW5（ホスティング・README・デモ動画・提出）。
 スタッフ画面は `/staff/login` でメンバーを選ぶデモ用ログイン（パスワードなし）。
 
@@ -19,7 +19,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `npm run dev:shifts`: デモのスタッフを今日出勤させる（割り当ての確認に必要）
 - `npm run try:guest -- R-1203 "プール何時まで？"`: ゲストの1通を画面なしで処理する（`.env.local` の `LLM_MODE` に従う）
 - `npm run dev:cron`: 期限の監視（`/api/cron/tickets`）、URLの資料の定期取得（`/api/cron/sources`）、会話ログの定期評価（`/api/cron/knowledge-review`、1日1回・現地3時以降）を1分ごとに呼ぶ（`npm run dev` と並行して起動）
-- `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績を生成（`signals.demo=true`）／ `npm run dev:seed-alerts`: 対応アラートに分類ごとの未対応・対応中を入れる（予約番号 `DEMO-*` の架空の会話）／ `npm run dev:seed-gaps`: 未回答の質問を、定期評価が今日3時に実行された状態で入れる（予約番号 `DEMO-GAP-*` の前日の会話）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
+- `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績（150室・月約1万通）とAIの呼び出し・試験運用・「人と話したい」の理由の分類を生成（`signals.demo=true`・`llm_calls.demo`・`model_trials.demo`・`talk_request_reviews.demo`）。最後にモデルの定期評価を実行して提案レポートを作る／ `npm run dev:seed-alerts`: 対応アラートに分類ごとの未対応・対応中を入れる（予約番号 `DEMO-*` の架空の会話）／ `npm run dev:seed-gaps`: 未回答の質問を、定期評価が今日3時に実行された状態で入れる（予約番号 `DEMO-GAP-*` の前日の会話）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
 - DBのマイグレーション追加後は `npx supabase db push --db-url "$DATABASE_URL"`（`.env.local` を読み込んでから）
 - デモ・検証用の資料は `docs/demo/`（冬季営業のお知らせのPDF・画像、施設の取り違えと新しい施設の確認用の文章。使い方と期待する読み取りは `docs/demo/README.md`）
 - テストランナーは未導入
@@ -37,7 +37,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - MCP: `src/mcp/pms-server.ts`（予約・客室管理のモック、`/api/mcp/pms`）と `src/mcp/work-events-server.ts`（実績の出力口、`/api/mcp/work-events`）。どちらもBearerトークン必須。実績の出力口は接続元（外部システムのメンバー）ごとのトークンの環境変数（`members.token_env`）で接続元を特定し、その接続元の権限を確認して監査ログに残す（`export-clients.ts`。設定は `/manage/integrations` の「実績の出力口」）。外部連携は `src/server/integrations/mcp.ts`（連携先ごとの接続・ツールの取得 `syncTools`・呼び出し）。AIに使わせるかはツールごとの設定（`integration_tools.ai_enabled`、`/manage/integrations`）。ツールの種類（読み取り／書き込み）は持たず、「スタッフの確認後に送る」ツールだけ `integration_writes` に積む。呼び出しはすべて監査ログ（`audit_logs.action = 'integration.tool_call'`）に残す（`mcp.ts` の `callTool`）。スタッフのAI相談では相談する人にもツールの権限（`integration.<slug>.<ツール名>`）が要る。ツールの用途（`role`）が決まっているもの（ゲストの予約の取得・予約の検索・毎回読むゲストの情報）は `integrations/pms.ts`（変換層、料金などを落とす）が呼び、それ以外は `integration-agent.ts`（連携係）がLLMで選ぶ（`docs/007_ai_settings.md`）
 - `src/server/source-fetch.ts`: URLの資料（管理PCの案内情報 → 資料）。反映のしかたを資料ごとに選ぶ（`reflect_mode`）。自動反映は値に読み取らず、取得のたびに中型で要約・影響判定して【自動取得の最新情報】として回答に渡し、変わったら管理PCのバッジ（`unseen_update`）と、影響があれば現場スマホに通知する。以下は承認して反映の場合: 登録時に `integrations/web-fetch.ts`（Tavily Extract）で取得して読み取り、確認・承認する。定期取得（`/api/cron/sources`、検索はしない）で本文が変わったら読み直して「更新の確認待ち」（`update_pending`）にし、承認で差し替える（承認までは前の版で案内）。資料を承認できる人に通知。期間限定で頻度を上げられる（`info_source_boosts`）。定期取得はAIの権限 `integration.web_fetch.read` を確認する。Webページの取得（Tavily）は画面に設定もコストも出さない。旧「外部の情報源」（`external-sources.ts`・【外部の最新情報】）は統合して削除した（`docs/006_guide_info.md`）
 - 引き継ぎの種類はきっかけごとに保存し、管理PC `/admin/handoffs`（対応アラート）の分類は `src/lib/handoff-kinds.ts` でまとめる。LLMの失敗は `src/lib/llm/errors.ts` の `classifyLlmError` で原因を分け、`system_error` の引き継ぎに残す（期待した出力が返らないときは `InvalidOutputError` を投げる）
-- `src/server/guardrails.ts`: 応答後のチェック（`checkReply`）。必ず人に引き継ぐ条件は設定せず `guest-chat.ts` で常に判定する。チェック項目は `reply-checks.ts`（固定の項目＋指示・利用ルールを保存したときにUltraが抜き出した項目）。指示は1本（`policy.ts`、管理PCの「答え方」）。`dashboard.ts`／`replay.ts`: 簡易・精密見積もり
+- `src/server/guardrails.ts`: 応答後のチェック（`checkReply`）。必ず人に引き継ぐ条件は設定せず `guest-chat.ts` で常に判定する。チェック項目は `reply-checks.ts`（固定の項目＋指示・利用ルールを保存したときにUltraが抜き出した項目）。指示は1本（`policy.ts`、管理PCの「答え方」）。`dashboard.ts`: 経営ダッシュボード `/manage`（成果・取りこぼし・満足度の目標・AIの仕事の一覧・前提の値）。`model-review.ts`: モデルの見直し `/manage/models`（`docs/000_plan.md` 4.3）。会話ログの定期評価のあとに `evaluateModels` が過去30日の実績から仕事ごとの提案レポート（`model_reports`。切り替え／試験運用）を作り、人が承認（全部適用か、割合・期間を決めて試験運用）する。試験運用は `/api/cron/tickets` の `monitorTrials` が満足度の目標を外れたら自動で中断する。人に回る率の差は片側95%の悲観値で判断する。人が直接受ける設定・業務×時間帯の担当はない（人とAIの分担はルールと連携の権限で決める）。`cost-basis.ts`: 時給・対応時間・深夜割増・単価。`talk-reviews.ts`: 「人と話したい」の理由を会話ログの定期評価で分類し、直前の回答のモデル・業務と一緒に残す（AIの応対が原因の率を満足度の目標に使う。理由は `src/lib/talk-causes.ts`）。`ai-jobs.ts`: 仕事ごとのモデル（見直しの対象はゲストへの回答（業務ごと）とAI相談、`ai_models`。クレームはUltra固定）と実行時の選択（`answerTier`・`staffAskTier`、試験運用中は一部を試すモデルに振る）、AIの仕事の一覧（`llm_calls.purpose` → 仕事）。AIを呼ぶ処理を足したら `recordLlmCall` の purpose を `AI_JOBS` に対応させる
 - Mastraの全HTTP API（`/api/mastra/*`）は公開しない（誰でもエージェントを呼べてしまうため削除済み）
 - `src/mastra/`: Mastraのエージェント。`src/app/api/mastra/[...mastra]/route.ts` でMastraのHTTP APIを `/api/mastra/*` に公開（`prefix` とフォルダ位置を一致させる）
 - `scripts/verify-llm.ts`: LLM層の確認スクリプト。`registerMockToolFixture` でモック時の強制ツール呼び出しの戻り値を登録する
@@ -62,7 +62,7 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - 情報にないことを「ございません」と断定しやすいので、指示で禁止している。未回答の質問は会話ログの定期評価で見つける（1通ごとの記録はしない）
 - 定期評価（Super）は「苦情や依頼は抜き出さない」と指示しても返すため、発言の種類を分類させて情報の質問だけをコードで残している（`knowledge-review.ts`）。スタッフの名乗りや「確認して折り返します」も下書きに入れがちなので、指示と `has_information` で除いている
 - 禁止事項の後チェックは中型（Super）。小型は値引きの約束や他の客の情報を見逃した
-- 精密見積もりのAI採点は差が出にくい（どちらも4点になりがち）。採点基準の改善は未着手。指示の変更を過去の会話で試す機能は廃止した
+- 精密見積もり（過去ログの再生とAI採点）は、採点の差が出なかったため廃止し、試験運用（一部を別のモデルで処理した実績）に置き換えた（`000_plan.md` 4.3）。指示の変更を過去の会話で試す機能も廃止した
 - 実績の記録（`recordWorkEvent`）のたびにWebhookを `after()` で送る。本文のHMAC-SHA256を `X-Hotel-Agent-Signature` に付ける
 - 案内の回答は中型（Super）が既定。小型（Lightning）はデータのない項目（朝食時間など）を推測で答えた。ルーターは小型で可
 - ルーターは「スタッフと話したい」自体を complaint の要望にすることがある。指示で禁止し、`wants_staff` のときは短い要約の会話希望を要望から除いている（`router.ts` の `isTalkRequestOnly`）。人への引き継ぎは、同じ発言のオーダー発行とクレームの引き継ぎを済ませてから行う
@@ -98,7 +98,7 @@ TypeScriptで統一: Next.js（App Router）＋ Mastra（Next.jsに組み込み�
 - **知識は2層**: 期間で変わる情報（営業時間・メニュー・特記事項）は期間付きの構造化**マスタ**、日付で変わらない説明文だけを**RAG**に入れる。回答は「ゲストの滞在日」基準で答え分ける（今日の日付ではない）。特記事項はマスタの各施設内の項目で、有効期間中は通常営業情報より優先
 - **オーダーの割り当ては機械ロジック**（役割×エリアの担当、エリアの担当を優先して全館の担当へ、品目ごとの重み1〜3pt、人ごとの累計＋未完了ptが最小の人へ）。LLMは文章から品目・数量を読み取る部分のみ。公平性の説明・再現性のため
 - **指示は自然文、権限はデータで固定**: プロンプトで書く内容は柔軟でも、外部連携の読み書き範囲・禁止事項・引き継ぎ条件は構造化設定のガードレールで固定し、プロンプトで越えられないようにする（4.7）
-- **権限は機能（MCPツール1つ＝権限1つ）単位**で、人（と外部システム）に付ける。実効権限は所属グループと個別付与の合計（拒否なし、範囲は広い方が有効）（4.8）。AIエージェントは権限を持たず、任せる業務は担当範囲とコスト、使わせるツールは外部連携で決める（`/manage/members` はスタッフだけ。外部システムは実績の出力口の接続元として外部連携で設定する。2026-09-29）
+- **権限は機能（MCPツール1つ＝権限1つ）単位**で、人（と外部システム）に付ける。実効権限は所属グループと個別付与の合計（拒否なし、範囲は広い方が有効）（4.8）。AIエージェントは権限を持たず、任せる業務とモデルは「AIの成果と割り振り」、使わせるツールは外部連携で決める（`/manage/members` はスタッフだけ。外部システムは実績の出力口の接続元として外部連携で設定する。2026-09-29）
 - **人のシフト・配置最適化は作らない**。実績を標準形式（CSV/JSON・Webhook・MCP）で出力し、将来の配置エンジンと疎結合にする（4.5, 11章）
 - **既存システムとの境界**: ゲスト文脈の取得と引き継ぎの書き戻しは、予約・客室管理システムへのMCP経由（デモはモックMCP）。内部モデルは自前仕様、入口は変換層で既存に合わせる
 - スタッフ画面は2系統: **現場スマホ**（オーダー・AI相談・通知。編集機能なし。対応アラート（引き継ぎ）は載せず、通知もしない。管理PCで受ける）と**管理PC**（マスタ・特記事項編集など）。特記事項を含む情報編集はPCのみ（4.6）
@@ -106,5 +106,5 @@ TypeScriptで統一: Next.js（App Router）＋ Mastra（Next.jsに組み込み�
 ## 作業上の注意
 
 - 提出物の要件（公開リポジトリ＋OSSライセンス、セットアップ手順、READMEでNemotron/Token Factoryの使いどころを明記、英語の3分デモ動画）は `000_plan.md` 7章。デモ台本は10章で、実装の優先度はこの場面に合わせる
-- デモ用マスタの数値（時給・対応時間）は本人が入力する方針のため、勝手に決めない
+- デモ用の前提の値（時給・対応時間。`/manage` の「前提を編集」）は本人が入力する方針のため、勝手に決めない
 - UIモック未作成: メンバーと権限（4.8）の画面

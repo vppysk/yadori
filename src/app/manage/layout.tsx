@@ -10,14 +10,14 @@ export default async function ManageLayout({ children }: LayoutProps<"/manage">)
   const member = await requireMember("/manage");
   const [keys, hotel] = await Promise.all([permissionKeys(member.id), getHotel(member.hotel_id)]);
   const tabs = [
-    { href: "/manage", label: "担当範囲とコスト", allowed: keys.has("settings.ai_assignment") },
+    { href: "/manage", label: "AIの成果", allowed: keys.has("settings.ai_assignment") },
+    { href: "/manage/models", label: "モデルの見直し", allowed: keys.has("settings.ai_assignment") },
     { href: "/manage/integrations", label: "外部連携", allowed: keys.has("settings.integrations") },
     { href: "/manage/history", label: "変更履歴", allowed: ["settings.ai_assignment", "settings.ai_policy", "settings.integrations"].some((k) => keys.has(k)) },
-    { href: "/manage/masters", label: "マスタ", allowed: keys.has("settings.masters") },
     { href: "/manage/members", label: "メンバーと権限", allowed: keys.has("settings.members") },
   ].filter((t) => t.allowed);
   if (tabs.length === 0) {
-    return <main className="p-8 text-sm text-ink-sub">この画面の権限がありません（AIの担当範囲・外部連携・マスタ・メンバーと権限のいずれか）</main>;
+    return <main className="p-8 text-sm text-ink-sub">この画面の権限がありません（AIの成果とモデルの見直し・外部連携・メンバーと権限のいずれか）</main>;
   }
   return (
     <div className="flex min-h-dvh flex-col gap-4.5 bg-canvas px-9 pt-7 pb-8 text-ink">
