@@ -1,5 +1,6 @@
 // 開発・デモ用: 管理PCの対応アラートに、分類ごと（安全・会話希望・クレーム・AIでは対応できない）の未対応と対応中を入れる。
 // 予約番号 DEMO-* の架空の会話を作り、引き継ぎを直接登録する（通知・お客様メモへの書き戻し・LLMは使わない）。何度実行しても入れ直すだけ
+import { isEn } from "@/lib/i18n";
 import { query, transaction } from "@/server/db";
 
 const HOTEL_ID = "00000000-0000-0000-0000-000000000001";
@@ -22,7 +23,7 @@ type Alert = {
   failure?: { stage?: "answer" | "guardrail"; cause?: string; detail: string; modelId?: string };
 };
 
-const ALERTS: Alert[] = [
+const ALERTS_JA: Alert[] = [
   {
     room: "1108", kind: "safety", minutesAgo: 6, trigger: 0,
     summary: "子どもが39度の熱を出し、ぐったりしている。近くの病院を知りたい",
@@ -139,6 +140,127 @@ const ALERTS: Alert[] = [
     },
   },
 ];
+
+// 英語のデモ（NEXT_PUBLIC_APP_LOCALE=en）
+const ALERTS_EN: Alert[] = [
+  {
+    room: "1108", kind: "safety", minutesAgo: 6, trigger: 0,
+    summary: "Child has a 39°C fever and is very weak. Wants a nearby clinic",
+    messages: [
+      ["user", "My son has a fever of 39°C and he's very weak. Is there a clinic nearby that can see him now?"],
+      ["assistant", "We're connecting you with staff right away. If it's a life-threatening emergency, please call 119 (ambulance/fire) immediately."],
+    ],
+  },
+  {
+    room: "902", kind: "safety", minutesAgo: 25, trigger: 0, acceptedBy: YAMAMOTO,
+    summary: "Slipped in the bathroom and hurt their back. Can stand but in pain",
+    messages: [
+      ["user", "I slipped in the bathroom and hurt my lower back. I can stand, but it really hurts."],
+      ["assistant", "We're connecting you with staff right away. If it's a life-threatening emergency, please call 119 (ambulance/fire) immediately."],
+      ["staff", "This is Ken from the front desk. I'm coming to your room now. Please don't move and wait there. (Staff: Ken Yamamoto)"],
+    ],
+  },
+  {
+    room: "805", kind: "talk_request", minutesAgo: 3, guestRequested: true,
+    summary: "The guest tapped \"Talk to staff\"",
+    messages: [
+      ["user", "What time is check-out tomorrow?"],
+      ["assistant", "Check-out is by 11:00."],
+      ["assistant", "Certainly. We're connecting you with a staff member. Please wait on this screen."],
+    ],
+  },
+  {
+    room: "1302", kind: "talk_request", minutesAgo: 18, trigger: 0, guestRequested: true, acceptedBy: TANAKA,
+    summary: "Wants to plan an anniversary surprise with staff",
+    messages: [
+      ["user", "It's my wife's birthday, so I'd like to talk to someone directly about a surprise."],
+      ["assistant", "Certainly. We're connecting you with a staff member. Please wait on this screen."],
+      ["staff", "This is Aiko, the supervisor. Congratulations! We can arrange a cake or flowers. What would you like? (Staff: Aiko Tanaka)"],
+    ],
+  },
+  {
+    room: "1406", kind: "complaint", minutesAgo: 9, trigger: 2,
+    summary: "Heating won't warm the room. Second message; unhappy about the slow response",
+    messages: [
+      ["user", "The room is still cold even with the heating turned up."],
+      ["assistant", "We're very sorry for the inconvenience. Could you check that the remote is set to \"Heat\" mode?"],
+      ["user", "I already checked. It's been 30 minutes and nothing has changed. How long do I have to wait?"],
+      ["assistant", "We're very sorry to keep you waiting. A staff member will contact you right away."],
+    ],
+  },
+  {
+    room: "612", kind: "complaint", minutesAgo: 40, trigger: 0, acceptedBy: YAMAMOTO,
+    summary: "Can't sleep because of loud voices from the next room",
+    messages: [
+      ["user", "The people next door have been loud for ages and I can't sleep."],
+      ["assistant", "We're very sorry for the disturbance. A staff member will take care of it right away."],
+      ["staff", "This is Ken from the front desk. We've spoken to the guests next door. Please let us know if it continues. (Staff: Ken Yamamoto)"],
+    ],
+  },
+  {
+    room: "1010", kind: "staff_assigned", minutesAgo: 12, trigger: 0,
+    summary: "Wants to move tomorrow's dinner reservation from 19:00 to 20:00",
+    messages: [
+      ["user", "Can I move tomorrow's dinner reservation from 7pm to 8pm?"],
+      ["assistant", "A staff member will help you with that shortly."],
+    ],
+  },
+  {
+    room: "1511", kind: "guardrail_blocked", minutesAgo: 15, trigger: 0,
+    summary: "The AI reply broke the rule \"Never promise discounts, compensation or refunds\" and was blocked. Guest said: Housekeeping never came today, can I get a discount?",
+    messages: [
+      ["user", "Housekeeping never came today. Can I get a discount for that?"],
+      ["assistant", "A staff member will follow up with you shortly. Thank you for your patience."],
+    ],
+    failure: {
+      detail: "Reason: promised a refund\nBlocked reply: We're sorry housekeeping missed your room. We will refund ¥1,000 for today's cleaning.",
+    },
+  },
+  {
+    room: "708", kind: "unanswerable", minutesAgo: 30, trigger: 2, acceptedBy: TANAKA,
+    summary: "Couldn't answer twice in the same conversation. Latest question: Is there a pet hotel nearby?",
+    messages: [
+      ["user", "Is there a coin laundry near the hotel?"],
+      ["assistant", "I'm sorry, I don't have that information. I'll check with the staff and get back to you."],
+      ["user", "Is there somewhere nearby that can look after our dog?"],
+      ["assistant", "I'm sorry, I'll check with the staff and get back to you."],
+      ["staff", "This is Aiko, the supervisor. There's a coin laundry a 3-minute walk away. I'll check on pet care and get back to you. (Staff: Aiko Tanaka)"],
+    ],
+  },
+  {
+    room: "1204", kind: "system_error", minutesAgo: 4, trigger: 0,
+    summary: "The AI couldn't write a reply to: When is the breakfast lounge least crowded tomorrow?",
+    messages: [
+      ["user", "When is the breakfast lounge least crowded tomorrow?"],
+      ["assistant", "We'll check and get back to you shortly. Thank you for your patience."],
+    ],
+    failure: { stage: "answer", cause: "timeout", detail: "TimeoutError: The operation was aborted due to timeout", modelId: "nvidia/nemotron-3-super-120b-a12b" },
+  },
+  {
+    room: "1305", kind: "system_error", minutesAgo: 20, trigger: 0, acceptedBy: YAMAMOTO,
+    summary: "The AI couldn't write a reply to: Are there towels at the onsen?",
+    messages: [
+      ["user", "Are there towels at the onsen?"],
+      ["assistant", "We'll check and get back to you shortly. Thank you for your patience."],
+      ["staff", "This is Ken from the front desk. Face towels and bath towels are provided at Yukimi Onsen. (Staff: Ken Yamamoto)"],
+    ],
+    failure: { stage: "answer", cause: "timeout", detail: "TimeoutError: The operation was aborted due to timeout", modelId: "nvidia/nemotron-3-super-120b-a12b" },
+  },
+  {
+    room: "915", kind: "system_error", minutesAgo: 50, trigger: 0,
+    summary: "The AI reply couldn't be checked, so it wasn't sent. Guest said: Do I need to reserve parking?",
+    messages: [
+      ["user", "Do I need to reserve parking?"],
+      ["assistant", "A staff member will follow up with you shortly. Thank you for your patience."],
+    ],
+    failure: {
+      stage: "guardrail", cause: "api_error", modelId: "nvidia/nemotron-3-super-120b-a12b",
+      detail: "HTTP 429 AI_APICallError: Rate limit exceeded\nBlocked reply: No reservation is needed. Parking is ¥1,000 per night.",
+    },
+  },
+];
+
+const ALERTS = isEn ? ALERTS_EN : ALERTS_JA;
 
 async function main() {
   // 前回入れた分を消す（引き継ぎは会話を消しても残るため先に消す）

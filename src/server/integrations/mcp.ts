@@ -1,6 +1,7 @@
 import { MCPClient } from "@mastra/mcp";
 import { query, queryOne, transaction } from "../db";
 import { getAiAgentMemberId } from "../hotel";
+import { tr } from "@/lib/i18n";
 
 // 外部連携（MCP）の共通部分。連携先ごとに接続し、ツールの一覧（説明・入力スキーマ）の取得と呼び出しを行う。
 // どのツールをAIに使わせるかは、外部連携の画面でツールごとに選ぶ（integration_tools.ai_enabled）。docs/007_ai_settings.md。
@@ -26,7 +27,7 @@ const globalForMcp = globalThis as unknown as { mcpClients?: Map<string, MCPClie
 function client(integration: Integration): MCPClient {
   const url = integration.endpoint_env ? process.env[integration.endpoint_env] : undefined;
   const token = integration.token_env ? process.env[integration.token_env] : undefined;
-  if (!url) throw new Error(`連携先「${integration.name}」の接続先（${integration.endpoint_env ?? "未設定"}）が環境変数にありません`);
+  if (!url) throw new Error(tr(`連携先「${integration.name}」の接続先（${integration.endpoint_env ?? "未設定"}）が環境変数にありません`, `The endpoint for \"${integration.name}\" (${integration.endpoint_env ?? "not set"}) is missing from the environment`));
   globalForMcp.mcpClients ??= new Map();
   const key = `${integration.id}:${url}`;
   let c = globalForMcp.mcpClients.get(key);
@@ -95,7 +96,7 @@ export async function callTool<T>(integration: Integration, name: string, args: 
   try {
     const toolsets = await client(integration).listToolsets();
     const tool = toolsets[integration.slug]?.[name];
-    if (!tool?.execute) throw new Error(`連携先「${integration.name}」にツール ${name} がありません`);
+    if (!tool?.execute) throw new Error(tr(`連携先「${integration.name}」にツール ${name} がありません`, `\"${integration.name}\" has no tool named ${name}`));
     // エージェントを介さず直接呼ぶため、実行コンテキストは空で渡す
     result = parseResult<T>(await tool.execute(args, {} as Parameters<typeof tool.execute>[1]));
     return result;

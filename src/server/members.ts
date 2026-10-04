@@ -1,5 +1,6 @@
 import type { Member } from "./auth";
 import { query, transaction } from "./db";
+import { tr } from "@/lib/i18n";
 
 // メンバーと権限（plan 4.8）: 機能ごとの権限をグループ（プリセット）と個別付与（期限・範囲付き）で与える。実効権限は合計（拒否はない）。
 // 人（スタッフ）だけを扱う。AIに任せる業務とモデルはAIの成果と割り振り、使わせるツールと実績の出力口の接続元は外部連携で決める（docs/007_ai_settings.md）
@@ -49,7 +50,7 @@ async function assertSameHotel(hotelId: string, table: "members" | "permission_g
   // この画面で権限を付けるのは人だけ（AIエージェント・外部システムは出していない）
   const extra = table === "members" ? " and kind = 'human'" : "";
   const rows = await query(`select 1 from ${table} where id = $1 and hotel_id = $2${extra}`, [id, hotelId]);
-  if (rows.length === 0) throw new Error("対象が見つかりません");
+  if (rows.length === 0) throw new Error(tr("対象が見つかりません", "Target not found"));
 }
 
 export async function setMemberGroup(actor: Member, memberId: string, groupId: string, on: boolean) {
@@ -93,6 +94,6 @@ export async function saveGroup(actor: Member, groupId: string | null, input: { 
       await client.query("insert into group_permissions (group_id, permission_key, scope_ids) values ($1, $2, $3)", [id, p.key, p.scope_ids?.length ? p.scope_ids : null]);
     }
     const { rows } = await client.query<{ ok: boolean }>("select has_permission($1, 'settings.members') ok", [actor.id]);
-    if (!rows[0].ok) throw new Error("自分の「メンバーと権限の管理」がなくなるため保存できません");
+    if (!rows[0].ok) throw new Error(tr("自分の「メンバーと権限の管理」がなくなるため保存できません", "You can't remove your own permission to manage members"));
   });
 }

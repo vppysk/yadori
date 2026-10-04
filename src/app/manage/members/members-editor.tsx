@@ -3,9 +3,16 @@
 import { useState, useTransition } from "react";
 import type { GroupRow, MemberRow, MembersData } from "@/server/members";
 import { grantPermissionAction, revokeGrantAction, saveGroupAction, setMemberGroupAction } from "../actions";
+import { tr } from "@/lib/i18n";
 
-const KIND_LABEL: Record<MemberRow["kind"], string> = { human: "スタッフ", ai_agent: "AIエージェント", external_system: "外部システム" };
-const CATEGORY_LABEL: Record<string, string> = { order: "オーダー", knowledge: "情報", handling: "対応", settings: "設定", integration: "外部連携" };
+const KIND_LABEL: Record<MemberRow["kind"], string> = { human: tr("スタッフ", "Staff"), ai_agent: tr("AIエージェント", "AI agent"), external_system: tr("外部システム", "External system") };
+const CATEGORY_LABEL: Record<string, string> = {
+  order: tr("オーダー", "Orders"),
+  knowledge: tr("情報", "Knowledge"),
+  handling: tr("対応", "Handling"),
+  settings: tr("設定", "Settings"),
+  integration: tr("外部連携", "Integrations"),
+};
 
 // 期限の既定は今日の21時（応援の例）
 function tonight(): string {
@@ -20,18 +27,23 @@ export function MembersEditor({ data }: { data: MembersData }) {
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>, ok?: string) =>
     startTransition(async () => {
       const r = await fn();
-      setMessage(r.ok ? (ok ? { kind: "ok", text: ok } : null) : { kind: "error", text: r.error ?? "失敗しました" });
+      setMessage(r.ok ? (ok ? { kind: "ok", text: ok } : null) : { kind: "error", text: r.error ?? tr("失敗しました", "Failed") });
     });
   const permLabel = (key: string) => data.permissions.find((p) => p.key === key)?.label ?? key;
-  const scopeLabel = (ids: string[] | null) => (ids?.length ? ids.map((id) => data.scopes.find((s) => s.id === id)?.label ?? "?").join("、") : "全体");
+  const scopeLabel = (ids: string[] | null) => (ids?.length ? ids.map((id) => data.scopes.find((s) => s.id === id)?.label ?? "?").join(tr("、", ", ")) : tr("全体", "All"));
 
   return (
     <div className="flex flex-col gap-5">
       {message && <p className={`rounded-lg px-3.5 py-2.5 text-sm ${message.kind === "ok" ? "bg-primary-soft text-primary" : "bg-danger-soft text-danger"}`}>{message.text}</p>}
       <section className="flex flex-col rounded-[14px] border border-line bg-surface">
         <div className="flex flex-col gap-1 px-5 pt-4.5 pb-2">
-          <h2 className="text-base font-bold">メンバー</h2>
-          <p className="text-xs text-ink-sub">スタッフの権限を管理します（AIに任せる業務とモデルはAIの成果と割り振り、AIに使わせるツールと実績の出力口の接続元は外部連携で設定します）。実効権限は、所属グループと個別付与の合計です（範囲は広い方が有効、拒否はありません）。</p>
+          <h2 className="text-base font-bold">{tr("メンバー", "Members")}</h2>
+          <p className="text-xs text-ink-sub">
+            {tr(
+              "スタッフの権限を管理します（AIに任せる業務とモデルはAIの成果と割り振り、AIに使わせるツールと実績の出力口の接続元は外部連携で設定します）。実効権限は、所属グループと個別付与の合計です（範囲は広い方が有効、拒否はありません）。",
+              "Manage staff permissions (AI jobs and models are set in AI results; the tools the AI may use and export clients are set in Integrations). Effective permissions are the sum of group and individual grants (the wider scope wins; there are no denies).",
+            )}
+          </p>
         </div>
         {data.members.map((m) => (
           <MemberCard key={m.id} member={m} data={data} pending={pending} run={run} permLabel={permLabel} scopeLabel={scopeLabel} />
@@ -77,21 +89,24 @@ function MemberCard({ member: m, data, pending, run, permLabel, scopeLabel }: { 
             );
           })}
         </div>
-        <span className="text-xs text-ink-sub">実効 {m.effective.length}件</span>
+        <span className="text-xs text-ink-sub">{tr(`実効 ${m.effective.length}件`, `${m.effective.length} effective`)}</span>
       </div>
       <div className="flex flex-wrap items-center gap-2 pl-[calc(6rem+2rem+0.75rem)] text-xs">
         {m.grants.map((g) => (
           <span key={g.id} className="flex items-center gap-1.5 rounded-lg bg-caution-soft px-2.5 py-1 text-caution">
-            個別: {permLabel(g.permission_key)}（{scopeLabel(g.scope_ids)}）
-            {g.expires_at ? ` ・ ${new Date(g.expires_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}まで` : " ・ 無期限"}
-            <button type="button" aria-label="個別付与を取り消す" disabled={pending} onClick={() => run(() => revokeGrantAction(g.id))} className="min-h-7 px-1">
+            {tr("個別: ", "Individual: ")}
+            {permLabel(g.permission_key)} ({scopeLabel(g.scope_ids)})
+            {g.expires_at
+               ? tr(" ・ ", " · until ") + new Date(g.expires_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) + tr("まで", "")
+               : tr(" ・ 無期限", " · no expiry")}
+            <button type="button" aria-label={tr("個別付与を取り消す", "Revoke grant")} disabled={pending} onClick={() => run(() => revokeGrantAction(g.id))} className="min-h-7 px-1">
               ×
             </button>
           </span>
         ))}
         {adding ? (
           <span className="flex flex-wrap items-center gap-1.5 rounded-lg bg-canvas p-1.5">
-            <select aria-label="権限" value={perm} onChange={(e) => (setPerm(e.target.value), setScope(""))} className="min-h-9 rounded-lg border border-line-input px-1.5">
+            <select aria-label={tr("権限", "Permission")} value={perm} onChange={(e) => (setPerm(e.target.value), setScope(""))} className="min-h-9 rounded-lg border border-line-input px-1.5">
               {data.permissions.map((p) => (
                 <option key={p.key} value={p.key}>
                   {CATEGORY_LABEL[p.category]}: {p.label}
@@ -99,16 +114,16 @@ function MemberCard({ member: m, data, pending, run, permLabel, scopeLabel }: { 
               ))}
             </select>
             {def?.scope_kind && (
-              <select aria-label="範囲" value={scope} onChange={(e) => setScope(e.target.value)} className="min-h-9 rounded-lg border border-line-input px-1.5">
-                <option value="">全体</option>
+              <select aria-label={tr("範囲", "Scope")} value={scope} onChange={(e) => setScope(e.target.value)} className="min-h-9 rounded-lg border border-line-input px-1.5">
+                <option value="">{tr("全体", "All")}</option>
                 {scopeOptions.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.label}のみ
+                    {tr(`${s.label}のみ`, `${s.label} only`)}
                   </option>
                 ))}
               </select>
             )}
-            <input aria-label="期限" type="datetime-local" value={expires} onChange={(e) => setExpires(e.target.value)} className="min-h-9 rounded-lg border border-line-input px-1.5" />
+            <input aria-label={tr("期限", "Expires")} type="datetime-local" value={expires} onChange={(e) => setExpires(e.target.value)} className="min-h-9 rounded-lg border border-line-input px-1.5" />
             <button
               type="button"
               disabled={pending}
@@ -116,18 +131,18 @@ function MemberCard({ member: m, data, pending, run, permLabel, scopeLabel }: { 
                 const r = await grantPermissionAction({ memberId: m.id, permissionKey: perm, scopeIds: scope ? [scope] : null, expiresAt: expires || null });
                 if (r.ok) setAdding(false);
                 return r;
-              }, "個別に付与しました")}
+              }, tr("個別に付与しました", "Granted"))}
               className="min-h-9 rounded-lg bg-dark px-3 font-bold text-white"
             >
-              付与
+              {tr("付与", "Grant")}
             </button>
             <button type="button" onClick={() => setAdding(false)} className="min-h-9 px-2 text-ink-sub">
-              やめる
+              {tr("やめる", "Cancel")}
             </button>
           </span>
         ) : (
           <button type="button" onClick={() => setAdding(true)} className="min-h-8 rounded-lg border border-dashed border-[#BDB6AA] px-2.5 text-ink-sub">
-            ＋ 期限付きで個別に付与
+            {tr("＋ 期限付きで個別に付与", "+ Grant individually with expiry")}
           </button>
         )}
       </div>
@@ -158,17 +173,17 @@ function GroupMatrix({ data, pending, run }: { data: MembersData; pending: boole
     <section className="flex flex-col gap-3 rounded-[14px] border border-line bg-surface px-5 py-4.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col gap-1">
-          <h2 className="text-base font-bold">グループ（プリセット）と権限</h2>
-          <p className="text-xs text-ink-sub">MCPのツール1つ＝権限1つ。範囲付き（施設・エリア）の権限は、ここでは既存の範囲を保ったまま付け外しします。</p>
+          <h2 className="text-base font-bold">{tr("グループ（プリセット）と権限", "Groups (presets) & permissions")}</h2>
+          <p className="text-xs text-ink-sub">{tr("MCPのツール1つ＝権限1つ。範囲付き（施設・エリア）の権限は、ここでは既存の範囲を保ったまま付け外しします。", "One MCP tool = one permission. Scoped permissions (facility/area) keep their existing scope when toggled here.")}</p>
         </div>
         <span className="flex gap-1.5">
-          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="新しいグループ名" className="min-h-9 rounded-lg border border-line-input px-2.5 text-sm" />
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={tr("新しいグループ名", "New group name")} className="min-h-9 rounded-lg border border-line-input px-2.5 text-sm" />
           <button type="button" disabled={pending || !newName.trim()} onClick={() => run(async () => {
             const r = await saveGroupAction(null, { name: newName, permissions: [] });
             if (r.ok) setNewName("");
             return r;
-          }, "グループを作りました")} className="min-h-9 rounded-lg border border-dashed border-[#BDB6AA] px-3 text-sm text-ink-sub disabled:opacity-40">
-            ＋ 作成
+          }, tr("グループを作りました", "Group created"))} className="min-h-9 rounded-lg border border-dashed border-[#BDB6AA] px-3 text-sm text-ink-sub disabled:opacity-40">
+            {tr("＋ 作成", "+ Create")}
           </button>
         </span>
       </div>
@@ -176,7 +191,7 @@ function GroupMatrix({ data, pending, run }: { data: MembersData; pending: boole
         <table className="w-full min-w-[900px] text-[13px]">
           <thead>
             <tr className="text-left text-xs text-ink-sub">
-              <th className="py-2 font-normal">権限</th>
+              <th className="py-2 font-normal">{tr("権限", "Permission")}</th>
               {data.groups.map((g) => (
                 <th key={g.id} className="px-1 py-2 text-center font-normal">
                   {g.name}
@@ -184,8 +199,8 @@ function GroupMatrix({ data, pending, run }: { data: MembersData; pending: boole
                     <button type="button" disabled={pending} onClick={() => run(() => saveGroupAction(g.id, {
                       name: g.name,
                       permissions: [...edits[g.id]].map((key) => ({ key, scope_ids: scopesOf(g, key) })),
-                    }), `「${g.name}」を保存しました`)} className="mt-1 block w-full rounded bg-primary py-1 text-[11px] font-bold text-white">
-                      保存
+                    }), tr(`「${g.name}」を保存しました`, `Saved "${g.name}"`))} className="mt-1 block w-full rounded bg-primary py-1 text-[11px] font-bold text-white">
+                      {tr("保存", "Save")}
                     </button>
                   )}
                 </th>
@@ -208,7 +223,7 @@ function GroupMatrix({ data, pending, run }: { data: MembersData; pending: boole
                       onChange={() => toggle(g.id, p.key)}
                       className="size-4.5 accent-primary"
                     />
-                    {scopesOf(g, p.key) && <span className="block text-[10px] text-caution">範囲付き</span>}
+                    {scopesOf(g, p.key) && <span className="block text-[10px] text-caution">{tr("範囲付き", "Scoped")}</span>}
                   </td>
                 ))}
               </tr>

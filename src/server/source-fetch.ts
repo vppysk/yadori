@@ -10,6 +10,7 @@ import { getHotel, localNow } from "./hotel";
 import { extract } from "./info-sources";
 import { extractPages, tavilyConfigured, webFetchAllowed } from "./integrations/web-fetch";
 import { recordLlmCall } from "./metrics";
+import { ALERT_PREFIX, tr } from "@/lib/i18n";
 
 // URLの資料（docs/006_guide_info.md）。反映のしかたを資料ごとに選ぶ
 // - 承認して反映（approval）: 登録時に取得して読み取り、確認・承認してから案内に使う。
@@ -40,24 +41,24 @@ function sameUrl(a: string, b: string) {
 const withPurpose = (content: string, purpose: string) => (purpose ? `（このページで見る内容: ${purpose}）\n${content}` : content);
 
 export const urlSourceSchema = z.object({
-  title: z.string().trim().min(1, "資料の名前を入力してください").max(200),
-  url: z.url("URLの形式が正しくありません").refine((u) => /^https?:\/\//.test(u), "http(s) のURLを入力してください"),
+  title: z.string().trim().min(1, tr("資料の名前を入力してください", "Please enter a source name")).max(200),
+  url: z.url(tr("URLの形式が正しくありません", "Invalid URL")).refine((u) => /^https?:\/\//.test(u), tr("http(s) のURLを入力してください", "Please enter an http(s) URL")),
   purpose: z.string().trim().max(300),
-  interval_minutes: z.number().int().refine((n) => INTERVAL_OPTIONS.includes(n), "取得間隔を選んでください"),
+  interval_minutes: z.number().int().refine((n) => INTERVAL_OPTIONS.includes(n), tr("取得間隔を選んでください", "Please choose a fetch interval")),
   is_external: z.boolean(),
   reflect_mode: z.enum(["approval", "auto"]),
 });
 
 // URLを登録する。その場で取得し、承認して反映なら読み取って確認待ちに、自動反映なら要約してすぐ案内に使う（取得できなければ登録しない）
 export async function createUrlSource(member: Member, input: z.infer<typeof urlSourceSchema>): Promise<string> {
-  if (!tavilyConfigured()) throw new Error("URLの取得が使えない状態です。管理者に連絡してください");
+  if (!tavilyConfigured()) throw new Error(tr("URLの取得が使えない状態です。管理者に連絡してください", "URL fetching isn't available. Please contact your administrator"));
   const extracted = await extractPages(member.hotel_id, [input.url]);
   const page = extracted.pages.find((p) => sameUrl(p.url, input.url)) ?? extracted.pages[0];
   const content = page ? normalize(page.content) : "";
-  if (!content) throw new Error(`ページを取得できませんでした: ${extracted.failed[0]?.error ?? "本文が空です"}`);
+  if (!content) throw new Error(tr(`ページを取得できませんでした: ${extracted.failed[0]?.error ?? "本文が空です"}`, `Couldn't fetch the page: ${extracted.failed[0]?.error ?? "empty body"}`));
   if (input.reflect_mode === "auto") {
     const analysis = await analyze(member.hotel_id, { title: input.title, url: input.url, purpose: input.purpose }, content);
-    if (!analysis) throw new Error("ページを要約できませんでした。時間をおいてもう一度お試しください");
+    if (!analysis) throw new Error(tr("ページを要約できませんでした。時間をおいてもう一度お試しください", "Couldn't summarize the page. Please try again later"));
     const created = await queryOne<{ id: string }>(
       `insert into info_sources (hotel_id, title, body, status, created_by, url, is_external, purpose, fetch_interval_minutes,
          last_fetched_at, last_success_at, last_status, content_hash, reflect_mode, auto_summary, auto_impact, auto_staff_message, auto_updated_at)
@@ -104,7 +105,7 @@ export async function runUrlSourceChecks(hotelId: string, sourceIds?: string[]) 
     sourceIds ? [hotelId, sourceIds] : [hotelId],
   );
   if (due.length === 0) return { fetched: 0, changed: 0, failed: 0 };
-  if (!(await webFetchAllowed(hotelId))) return { fetched: 0, changed: 0, failed: 0, skipped: "Webページの取得が許可されていません" };
+  if (!(await webFetchAllowed(hotelId))) return { fetched: 0, changed: 0, failed: 0, skipped: tr("Webページの取得が許可されていません", "Web fetching isn't permitted") };
 
   // 同じ時刻に取得したことにして、失敗しても毎分取り直さないようにする
   await query("update info_sources set last_fetched_at = now() where id = any ($1)", [due.map((s) => s.id)]);
@@ -125,7 +126,7 @@ export async function runUrlSourceChecks(hotelId: string, sourceIds?: string[]) 
     const content = page ? normalize(page.content) : "";
     if (!content) {
       failed++;
-      const error = extracted.failed.find((f) => sameUrl(f.url, source.url))?.error ?? "本文を取得できませんでした";
+      const error = extracted.failed.find((f) => sameUrl(f.url, source.url))?.error ?? tr("本文を取得できませんでした", "Couldn't get the page text");
       await query("update info_sources set last_status = 'error', last_error = $2 where id = $1", [source.id, error.slice(0, 300)]);
       continue;
     }
@@ -153,7 +154,7 @@ export async function runUrlSourceChecks(hotelId: string, sourceIds?: string[]) 
       }
     } catch (error) {
       console.warn("[source-fetch] 読み取れなかった", { source: source.title, error });
-      await query("update info_sources set last_status = 'error', last_error = $2 where id = $1", [source.id, `読み取りに失敗: ${String(error).slice(0, 250)}`]);
+      await query("update info_sources set last_status = 'error', last_error = $2 where id = $1", [source.id, tr(`読み取りに失敗: ${String(error).slice(0, 250)}`, `Reading failed: ${String(error).slice(0, 250)}`)]);
     }
   }
   return { fetched: due.length - failed, changed, failed, credits: extracted.credits };
@@ -163,7 +164,7 @@ export async function runUrlSourceChecks(hotelId: string, sourceIds?: string[]) 
 async function reflectAutomatically(hotelId: string, source: DueSource, content: string, hash: string) {
   const analysis = await analyze(hotelId, source, content);
   if (!analysis) {
-    await query("update info_sources set last_status = 'error', last_error = '要約できませんでした' where id = $1", [source.id]);
+    await query("update info_sources set last_status = 'error', last_error = $2 where id = $1", [source.id, tr("要約できませんでした", "Couldn't summarize")]);
     return;
   }
   await query(
@@ -176,7 +177,7 @@ async function reflectAutomatically(hotelId: string, source: DueSource, content:
   const resolved = analysis.impact === "none" && previous !== "none";
   const raised = analysis.impact === "alert" || (analysis.impact === "notice" && previous === "none");
   if (raised || resolved) {
-    await notifyStaff(hotelId, source, resolved ? `影響は解消しました。${analysis.summary}` : analysis.staff_message || analysis.summary, analysis.impact === "alert");
+    await notifyStaff(hotelId, source, resolved ? tr(`影響は解消しました。${analysis.summary}`, `The impact has cleared. ${analysis.summary}`) : analysis.staff_message || analysis.summary, analysis.impact === "alert");
   }
 }
 
@@ -187,7 +188,7 @@ async function notifyStaff(hotelId: string, source: DueSource, body: string, ale
      select m.id, 'external_update', $2, $3, 'info_source', $4
      from members m where m.hotel_id = $1 and m.kind = 'human' and m.active
        and (has_permission(m.id, 'handling.consult') or has_permission(m.id, 'handling.handoff.accept'))`,
-    [hotelId, `${alert ? "【要注意】" : ""}${source.title}`, body, source.id],
+    [hotelId, `${alert ? ALERT_PREFIX : ""}${source.title}`, body, source.id],
   );
 }
 
@@ -249,15 +250,23 @@ export async function getAutoUpdates(hotelId: string): Promise<AutoUpdate[]> {
   return rows.map((r) => ({ title: r.title, url: r.url, summary: r.summary, impact: r.impact, external: r.is_external, checkedAt: r.checked_at }));
 }
 
-const checkedLabel = (checkedAt: string) => `${fmtDate(checkedAt.slice(0, 10))} ${checkedAt.slice(11)}時点`;
+const checkedLabel = (checkedAt: string) => tr(`${fmtDate(checkedAt.slice(0, 10))} ${checkedAt.slice(11)}時点`, `as of ${fmtDate(checkedAt.slice(0, 10))} ${checkedAt.slice(11)}`);
 
 // 案内情報と同じく、最後の発言の前に付ける文章
 export function renderAutoUpdates(updates: AutoUpdate[]): string[] {
   if (updates.length === 0) return [];
   return [
     "",
-    "【自動取得の最新情報】（ホテルが登録したWebページから自動で取得・要約したもの。時点より後に変わっている可能性がある）",
-    ...updates.map((u) => `・${u.title}（${checkedLabel(u.checkedAt)}${u.impact === "alert" ? "・要注意" : ""}${u.external ? "・外部情報" : ""}）: ${u.summary}`),
+    tr(
+      "【自動取得の最新情報】（ホテルが登録したWebページから自動で取得・要約したもの。時点より後に変わっている可能性がある）",
+      "[Auto-fetched latest updates] (automatically fetched and summarized from web pages the hotel registered; may have changed since)",
+    ),
+    ...updates.map((u) =>
+      tr(
+        `・${u.title}（${checkedLabel(u.checkedAt)}${u.impact === "alert" ? "・要注意" : ""}${u.external ? "・外部情報" : ""}）: ${u.summary}`,
+        `- ${u.title} (${checkedLabel(u.checkedAt)}${u.impact === "alert" ? ", alert" : ""}${u.external ? ", external" : ""}): ${u.summary}`,
+      ),
+    ),
   ];
 }
 
@@ -267,7 +276,7 @@ export function autoUpdateCitations(updates: AutoUpdate[], usedNames: string[] |
   const baseName = (title: string) => title.replace(/[（(].*?[）)]/g, "").trim();
   return updates
     .filter((u) => usedNames?.some((n) => n.includes(u.title) || u.title.includes(n)) || (baseName(u.title) && reply.includes(baseName(u.title))))
-    .map((u) => ({ kind: "web" as const, label: `${u.title}（${checkedLabel(u.checkedAt)}）`, url: u.url }));
+    .map((u) => ({ kind: "web" as const, label: tr(`${u.title}（${checkedLabel(u.checkedAt)}）`, `${u.title} (${checkedLabel(u.checkedAt)})`), url: u.url }));
 }
 
 // 資料を承認できる人に、更新の確認を依頼する
@@ -276,7 +285,12 @@ async function notifyApprovers(hotelId: string, source: DueSource) {
     `insert into notifications (member_id, kind, title, body, ref_type, ref_id)
      select m.id, 'source_update', $2, $3, 'info_source', $4
      from members m where m.hotel_id = $1 and m.kind = 'human' and m.active and has_permission(m.id, 'knowledge.facility.edit')`,
-    [hotelId, `資料の更新を確認してください: ${source.title}`, "Webページの内容が変わりました。管理PCの案内情報で確認して承認すると、案内が新しい内容に切り替わります。", source.id],
+    [
+      hotelId,
+      tr(`資料の更新を確認してください: ${source.title}`, `Please review a source update: ${source.title}`),
+      tr("Webページの内容が変わりました。管理PCの案内情報で確認して承認すると、案内が新しい内容に切り替わります。", "The web page changed. Review and approve it on the admin console to switch answers to the new content."),
+      source.id,
+    ],
   );
 }
 
@@ -293,7 +307,7 @@ export async function setReflectMode(member: Member, sourceId: string, mode: Ref
            auto_updated_at = null, unseen_update = false, content_hash = null where id = $1 and hotel_id = $2 and url is not null and reflect_mode <> 'approval' returning id`,
     [sourceId, member.hotel_id],
   );
-  if (!row) throw new Error("URLの資料が見つからないか、すでにその反映のしかたです");
+  if (!row) throw new Error(tr("URLの資料が見つからないか、すでにその反映のしかたです", "URL source not found, or it already uses that mode"));
   if (mode === "auto") await query("delete from facility_values where source_id = $1", [sourceId]);
 }
 
@@ -308,13 +322,13 @@ export async function countUnseenUpdates(hotelId: string): Promise<number> {
 }
 
 export async function updateUrlSettings(member: Member, sourceId: string, patch: { active?: boolean; interval_minutes?: number }) {
-  if (patch.interval_minutes !== undefined && !INTERVAL_OPTIONS.includes(patch.interval_minutes)) throw new Error("取得間隔を選んでください");
+  if (patch.interval_minutes !== undefined && !INTERVAL_OPTIONS.includes(patch.interval_minutes)) throw new Error(tr("取得間隔を選んでください", "Please choose a fetch interval"));
   const row = await queryOne<{ id: string }>(
     `update info_sources set active = coalesce($3, active), fetch_interval_minutes = coalesce($4, fetch_interval_minutes)
      where id = $1 and hotel_id = $2 and url is not null returning id`,
     [sourceId, member.hotel_id, patch.active ?? null, patch.interval_minutes ?? null],
   );
-  if (!row) throw new Error("URLの資料が見つかりません");
+  if (!row) throw new Error(tr("URLの資料が見つかりません", "URL source not found"));
 }
 
 // 更新の確認待ちの版を見送る。承認済みの内容のまま案内を続け、同じ内容を再び確認待ちにしない
@@ -324,20 +338,20 @@ export async function dismissUpdate(member: Member, sourceId: string) {
      where id = $1 and hotel_id = $2 and status = 'update_pending' returning id`,
     [sourceId, member.hotel_id],
   );
-  if (!row) throw new Error("更新の確認待ちではありません");
+  if (!row) throw new Error(tr("更新の確認待ちではありません", "There is no update to review"));
 }
 
 export const boostInputSchema = z.object({
-  interval_minutes: z.number().int().refine((n) => INTERVAL_OPTIONS.includes(n), "取得間隔を選んでください"),
+  interval_minutes: z.number().int().refine((n) => INTERVAL_OPTIONS.includes(n), tr("取得間隔を選んでください", "Please choose a fetch interval")),
   // ホテル現地の日時（datetime-local の値）
-  starts_at: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "開始日時を入力してください"),
-  ends_at: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "終了日時を入力してください"),
-  reason: z.string().trim().min(1, "理由を入力してください（例: 台風の接近）").max(100),
+  starts_at: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, tr("開始日時を入力してください", "Please enter a start time")),
+  ends_at: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, tr("終了日時を入力してください", "Please enter an end time")),
+  reason: z.string().trim().min(1, tr("理由を入力してください（例: 台風の接近）", "Please enter a reason (e.g. storm approaching)")).max(100),
 });
 
 // 期間を限定して取得の頻度を上げる（台風の接近など）
 export async function addBoost(member: Member, sourceId: string, input: z.infer<typeof boostInputSchema>) {
-  if (input.ends_at <= input.starts_at) throw new Error("終了は開始より後にしてください");
+  if (input.ends_at <= input.starts_at) throw new Error(tr("終了は開始より後にしてください", "The end must be after the start"));
   const hotel = await getHotel(member.hotel_id);
   const rows = await query<{ id: string }>(
     `insert into info_source_boosts (source_id, interval_minutes, during, reason, created_by)
@@ -345,7 +359,7 @@ export async function addBoost(member: Member, sourceId: string, input: z.infer<
      from info_sources s where s.id = $1 and s.hotel_id = $2 and s.url is not null returning id`,
     [sourceId, member.hotel_id, input.interval_minutes, input.starts_at, input.ends_at, hotel.timezone, input.reason, member.id],
   );
-  if (rows.length === 0) throw new Error("URLの資料が見つかりません");
+  if (rows.length === 0) throw new Error(tr("URLの資料が見つかりません", "URL source not found"));
 }
 
 export async function deleteBoost(member: Member, boostId: string) {

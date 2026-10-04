@@ -3,6 +3,7 @@ import { llmMode, registerMockToolFixture } from "@/lib/llm/models";
 import { generateStructured, type LlmUsage } from "@/lib/llm/structured";
 import { matchCatalog, type OrderCandidates, type RequestedLine } from "./order-match";
 import type { CatalogItem } from "./orders";
+import { isEn, tr } from "@/lib/i18n";
 
 const PATTERNS = ["info", "order", "external", "reservation", "complaint"] as const;
 
@@ -18,7 +19,7 @@ function routeSchema(facilityNames: string[]) {
       .array(
         z.object({
           pattern: z.enum(PATTERNS),
-          summary: z.string().describe("この要望の要約（日本語）"),
+          summary: z.string().describe(tr("この要望の要約（日本語）", "Short summary of this request (in English)")),
           requested: z
             .array(
               z.object({
@@ -119,6 +120,8 @@ export async function route(
       "【未完了のご依頼】にある品の催促・状況の質問（「まだ？」「いつ来る？」）は order にも complaint にもせず、order_follow_up で表す。ほかに要望がなければ intents は空でよい。強い不満の言葉があれば strong_emotion も true にする。",
       "【未完了のご依頼】は参考情報。【ゲストの発言】に出てこない品を order に入れない。",
       "【未完了のご依頼】のお届けの時刻を指定・変更したいとき（「8:30〜40に届けてもらえる？」）は、order にせず order_reschedule で表す。",
+      "ゲストの発言は日本語以外（英語など）のこともある。どの言語でも同じように分類し、label はゲストが言った品名をそのまま書く。",
+      ...(isEn ? ["Write every summary in English."] : []),
     ].join("\n"),
     // 未完了のご依頼を先に付ける（催促を新しい依頼と取り違えないように）
     prompt: openOrders.length
@@ -128,13 +131,14 @@ export async function route(
   return { result: normalize(object, catalog, openOrders, message), usage };
 }
 
-// 人との会話を求めるだけの短い要約（「騒音のためスタッフと話したい」のように苦情を含むものは残す）
-const TALK_REQUEST = /(スタッフ|人|係の方)(と|に|との)(話|代わ|つな|会話)/;
-const isTalkRequestOnly = (summary: string) => summary.length <= 15 && TALK_REQUEST.test(summary);
+// 人との会話を求めるだけの短い要約（「騒音のためスタッフと話したい」のように苦情を含むものは残す）。英語の要約は長くなるため上限を変える
+const TALK_REQUEST = /(スタッフ|人|係の方)(と|に|との)(話|代わ|つな|会話)|\b(talk|speak|chat)\b.*\b(staff|person|human|someone|agent)\b|real person/i;
+const isTalkRequestOnly = (summary: string) => summary.length <= (/[a-z]/i.test(summary) ? 40 : 15) && TALK_REQUEST.test(summary);
 
 const norm = (s: string) => s.normalize("NFKC").replace(/\s+/g, "").toLowerCase();
-const FOLLOW_UP_WORDS = /まだ|いつ|遅い|遅れ|来ない|こない|届かない|どうなって|状況|何分|以内|急い|早く|早め/;
-const ADD_WORDS = /追加|もう(1|一|ひと|少し)|もっと|別に|ほかに/;
+// 英語は空白を除いた形（norm）で照合する（「not yet」→「notyet」）
+const FOLLOW_UP_WORDS = /まだ|いつ|遅い|遅れ|来ない|こない|届かない|どうなって|状況|何分|以内|急い|早く|早め|yet|still|when|where|late|howlong|eta|status|hurry|asap|waiting|arrive|minutes/;
+const ADD_WORDS = /追加|もう(1|一|ひと|少し)|もっと|別に|ほかに|another|more|extra|additional|also/;
 
 // 「8:30〜40」「8:30〜8:40」「8時半〜9時」の終わりの時刻（HH:MM）。始まりの時刻と同じ範囲のときだけ
 function rangeUntil(said: string, start: string): string | undefined {
@@ -148,6 +152,18 @@ function rangeUntil(said: string, start: string): string | undefined {
   const [hour, min] = m[5] || m[6] || m[0].endsWith("時") ? [second, m[5] ? Number(m[5]) : m[6] ? 30 : 0] : second > 23 || second > startMin ? [startHour, second] : [second, 0];
   if (hour > 23 || min > 59) return undefined;
   return `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+// 英語の発言で、Lightningが分類の説明をそのまま写した要望（「Guest is asking about things outside the hotel.」）を
+// 複数返すことがあった（2026-10-04 検証）。要約と発言で4文字以上の語（先頭4文字）が1つも重ならない要望は捨てる。日本語の発言には使わない
+const GENERIC_WORDS = new Set(["guest", "asks", "asking", "about", "wants", "would", "like", "requests", "request", "information", "hotel", "facilities", "services", "service", "things", "outside", "their", "room", "with", "from", "that", "this", "there", "expressing", "dissatisfaction", "problem", "modifying", "checking", "reservation", "delivered", "deliver", "some", "they", "have", "need"]);
+const contentStems = (text: string) =>
+  new Set((text.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => !GENERIC_WORDS.has(w)).map((w) => w.slice(0, 4)));
+const isEnglish = (text: string) => /[a-z]/i.test(text) && !/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(text);
+function relatedToMessage(summary: string, message: string): boolean {
+  if (!isEnglish(message)) return true;
+  const said = contentStems(message);
+  return [...contentStems(summary)].some((s) => said.has(s));
 }
 
 function normalize(raw: RawRoute, catalog: CatalogItem[], openOrders: OpenOrderItem[], message: string): RouteResult {
@@ -170,12 +186,19 @@ function normalize(raw: RawRoute, catalog: CatalogItem[], openOrders: OpenOrderI
   // 「20分以内」を 0:20 と読んだり、「タオル1枚追加で、10時に」を時間変更にしたりしたため（2026-09-28 検証）、
   // 時刻が「数字＋:／時」の形で発言にあり、追加の依頼の言葉がないときだけ時間の変更とする
   const said = norm(message);
-  const hourSaid = at ? new RegExp(`(^|\\D)0?${Number(at.time.slice(0, 2))}(:|時)`).test(said) : false;
+  const hour = at ? Number(at.time.slice(0, 2)) : 0;
+  // 英語の「9pm」「9 o'clock」も時刻を言ったとみなす（12時間表記）
+  const hourSaid = at
+    ? new RegExp(`(^|\\D)0?${hour}(:|時)`).test(said) || new RegExp(`(^|\\D)${hour % 12 || 12}(:\\d{2})?(am|pm|a\\.m|p\\.m|o'?clock)`).test(said)
+    : false;
   const reschedule = at && hourSaid && !ADD_WORDS.test(said) ? at : undefined;
   const until = reschedule ? (rangeUntil(said, reschedule.time) ?? parseDeliverAt({ day: reschedule.day, time: raw.order_reschedule?.until ?? "" })?.time) : undefined;
   const followUp = !reschedule && followUpWords && (raw.order_follow_up || asksOpenItem);
   // 他の要望があるときの、中身のない要望（空の要約）は捨てる
-  const nonEmpty = raw.intents.filter((intent, _, all) => intent.summary.trim() !== "" || all.length === 1);
+  const nonEmpty = raw.intents
+    .filter((intent, _, all) => intent.summary.trim() !== "" || all.length === 1)
+    .filter((intent, i, all) => intent.pattern === "order" || all.length === 1 || relatedToMessage(intent.summary, message))
+    .filter((intent, i, all) => all.findIndex((o) => o.pattern === intent.pattern && o.summary === intent.summary) === i);
   // 指示しても「スタッフと話したい」自体を complaint などの要望にすることがあるため、wants_staff のときは取り除く
   const withoutTalk = raw.wants_staff ? nonEmpty.filter((intent) => !isTalkRequestOnly(intent.summary)) : nonEmpty;
   // 催促のときは、未完了のご依頼と同じ品（同じ分類）の読み取りを落とす。指示しても催促の品を order として返すことがあるため。
@@ -202,7 +225,7 @@ function normalize(raw: RawRoute, catalog: CatalogItem[], openOrders: OpenOrderI
     return requested.length ? [{ ...intent, requested }] : [];
   });
   const kept =
-    spoken.length > 0 || followUp || reschedule ? spoken : [{ pattern: "info" as const, summary: raw.wants_staff ? "スタッフとの会話を希望" : message }];
+    spoken.length > 0 || followUp || reschedule ? spoken : [{ pattern: "info" as const, summary: raw.wants_staff ? tr("スタッフとの会話を希望", "Wants to talk to staff") : message }];
   const intents = kept
     .map((intent): RouteIntent => {
       if (intent.pattern !== "order") return { pattern: intent.pattern, summary: intent.summary };

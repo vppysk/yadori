@@ -3,16 +3,17 @@ import { generateStructured } from "@/lib/llm/structured";
 import type { PoolClient } from "pg";
 import { query } from "./db";
 import { recordLlmCall } from "./metrics";
+import { tr } from "@/lib/i18n";
 
 // 回答後のチェック項目（docs/007_ai_settings.md 3.1）。ガードレールの画面設定は廃止し、
 // ホテルが何を書いても守る固定の項目と、指示・利用ルールから上位モデル（Ultra）が抜き出した項目で、回答後に違反を判定する（guardrails.ts）
 
 // 固定の項目（plan 4.7 の「してはいけないこと」）
 export const FIXED_CHECKS = [
-  "値引き・補償・返金を約束しない",
-  "他のお客様の情報（部屋番号・氏名など）を話さない",
-  "体調に関する助言をせず、フロントへつなぐ",
-  "他社のホテル・旅館を勧めない",
+  tr("値引き・補償・返金を約束しない", "Never promise discounts, compensation or refunds"),
+  tr("他のお客様の情報（部屋番号・氏名など）を話さない", "Never share other guests' information (room numbers, names, etc.)"),
+  tr("体調に関する助言をせず、フロントへつなぐ", "Never give medical advice; connect the guest to the front desk"),
+  tr("他社のホテル・旅館を勧めない", "Never recommend other hotels or inns"),
 ];
 
 export type ReplyCheck = { id: string; source_type: "instruction" | "integration"; integration_id: string | null; body: string };

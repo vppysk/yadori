@@ -4,6 +4,7 @@ import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
 import { getAiAgentMemberId, getHotel, localNow, type Hotel } from "./hotel";
 import { recordWorkEvent } from "./metrics";
 import { assignUnassigned, getRoom, lockAssignment, pickAssignee } from "./orders";
+import { ALL_AREAS, LIST_SEP, roomLabel, tr } from "@/lib/i18n";
 
 // ---------- 出勤（オン／オフだけ。担当の役割・エリアは担当表で決まる。plan 4.2） ----------
 
@@ -14,7 +15,7 @@ export async function getMyDuties(member: Member): Promise<MyDuties> {
   const hotel = await getHotel(member.hotel_id);
   const [duties, shift] = await Promise.all([
     query<{ label: string }>(
-      `select r.name || ' ' || coalesce(a.name, '全館') label
+      `select r.name || ' ' || coalesce(a.name, '${ALL_AREAS}') label
        from member_duties d join job_roles r on r.id = d.job_role_id left join areas a on a.id = d.area_id
        where d.member_id = $1 order by r.name, a.sort nulls first, a.name`,
       [member.id],
@@ -67,7 +68,7 @@ export type MyTicket = {
 export async function listMyTickets(memberId: string): Promise<MyTicket[]> {
   return query<MyTicket>(
     `select t.id, t.room_number, t.status, t.weight,
-       string_agg(l.item_name || ' × ' || l.quantity, ' ・ ' order by l.id) items, t.note, t.requested_for,
+       string_agg(l.item_name || ' × ' || l.quantity, '${tr(" ・ ", ", ")}' order by l.id) items, t.note, t.requested_for,
        t.assigned_at, t.started_at, t.due_at, t.due_at < now() overdue,
        t.check_requested_at is not null and t.check_replied_at is null check_pending, t.check_source, t.check_message,
        (select e.reason from ticket_events e where e.ticket_id = t.id and e.member_id = $1 and e.type in ('assigned', 'reassigned')
@@ -102,7 +103,7 @@ async function lockOwnTicket(client: PoolClient, member: Member, ticketId: strin
     "select id, status, conversation_id, room_number, started_at, hotel_id from tickets where id = $1 and assignee_id = $2 for update",
     [ticketId, member.id],
   );
-  if (!rows[0]) throw new Error("このオーダーはあなたの担当ではありません");
+  if (!rows[0]) throw new Error(tr("このオーダーはあなたの担当ではありません", "This order isn't assigned to you"));
   return rows[0];
 }
 
@@ -121,7 +122,7 @@ export async function completeTicket(member: Member, ticketId: string) {
     if (ticket.status !== "doing" && ticket.status !== "new") return undefined;
     const { rows } = await client.query<{ items: string; on_time: boolean; handling_ms: number }>(
       `update tickets set status = 'done', done_at = now(), started_at = coalesce(started_at, now()) where id = $1
-       returning (select string_agg(item_name || '×' || quantity, '、' order by id) from ticket_lines where ticket_id = $1) items,
+       returning (select string_agg(item_name || '×' || quantity, '${LIST_SEP}' order by id) from ticket_lines where ticket_id = $1) items,
          now() <= due_at on_time, (extract(epoch from (now() - coalesce(started_at, now()))) * 1000)::int handling_ms`,
       [ticketId],
     );
@@ -130,7 +131,7 @@ export async function completeTicket(member: Member, ticketId: string) {
     if (ticket.conversation_id) {
       await client.query("insert into messages (conversation_id, role, content) values ($1, 'assistant', $2)", [
         ticket.conversation_id,
-        `${rows[0].items}をお届けしました。ほかにご用があればお気軽にどうぞ。`,
+        tr(`${rows[0].items}をお届けしました。ほかにご用があればお気軽にどうぞ。`, `Your ${rows[0].items} has been delivered. Let us know if there's anything else we can do.`),
       ]);
       await client.query("insert into ticket_events (ticket_id, type, actor_id) values ($1, 'guest_notified', $2)", [ticketId, member.id]);
     }
@@ -141,7 +142,7 @@ export async function completeTicket(member: Member, ticketId: string) {
   const wage = await queryOne<{ hourly_wage_jpy: number }>("select hourly_wage_jpy from hotels where id = $1 and hourly_wage_jpy is not null", [member.hotel_id]);
   await recordWorkEvent({
     hotelId: member.hotel_id, conversationId: done.conversationId ?? undefined, ticketId, pattern: "order", handlerKind: "human",
-    handler: member.job_title ?? "スタッフ", durationMs: done.handling_ms,
+    handler: member.job_title ?? tr("スタッフ", "Staff"), durationMs: done.handling_ms,
     costJpy: wage ? (wage.hourly_wage_jpy * done.handling_ms) / 3_600_000 : 0,
     outcome: "resolved", signals: { on_time: done.on_time, phase: "delivery" },
   });
@@ -152,14 +153,14 @@ export async function completeTicket(member: Member, ticketId: string) {
 export async function declineTicket(member: Member, ticketId: string, reason: string, options: { allowStarted?: boolean } = {}) {
   await transaction(async (client) => {
     const ticket = await lockOwnTicket(client, member, ticketId);
-    if (ticket.status !== "new" && !(options.allowStarted && ticket.status === "doing")) throw new Error("着手済みのオーダーは返せません");
+    if (ticket.status !== "new" && !(options.allowStarted && ticket.status === "doing")) throw new Error(tr("着手済みのオーダーは返せません", "You can't hand back an order you've started"));
     const settings = await getHotel(ticket.hotel_id);
-    if (settings.order_decline_reason_required && !reason.trim()) throw new Error("理由を選んでください");
+    if (settings.order_decline_reason_required && !reason.trim()) throw new Error(tr("理由を選んでください", "Please choose a reason"));
     await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'declined', $2, $2, $3)", [
       ticketId, member.id, reason,
     ]);
     const hotel = await getHotel(ticket.hotel_id);
-    await reassign(client, hotel, ticketId, `${member.display_name}が「対応できない」（${reason}）`);
+    await reassign(client, hotel, ticketId, tr(`${member.display_name}が「対応できない」（${reason}）`, `${member.display_name} can't handle it (${reason})`));
   });
 }
 
@@ -198,19 +199,29 @@ export async function reassign(client: PoolClient, hotel: Hotel, ticketId: strin
   if (options.stale && ticket.assignee_id && next) {
     await client.query(
       "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_released', $2, $3, 'ticket', $4)",
-      [ticket.assignee_id, `${ticket.room_number}号室のオーダーは対応不要になりました`, `${why}ため、${next.name}に割り当て直しました`, ticketId],
+      [
+        ticket.assignee_id,
+        tr(`${ticket.room_number}号室のオーダーは対応不要になりました`, `${roomLabel(ticket.room_number)} order no longer needs you`),
+        tr(`${why}ため、${next.name}に割り当て直しました`, `${why}, so it was reassigned to ${next.name}`),
+        ticketId,
+      ],
     );
   }
   await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'reassigned', $2, $3, $4)", [
-    ticketId, next?.id ?? null, aiMemberId ?? null, next ? `${why} → ${next.reason}` : `${why} → 担当できる人がいない`,
+    ticketId, next?.id ?? null, aiMemberId ?? null, next ? `${why} → ${next.reason}` : `${why} → ${tr("担当できる人がいない", "no one available")}`,
   ]);
   if (next) {
     await client.query(
       "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_assigned', $2, $3, 'ticket', $4)",
-      [next.id, `${ticket.room_number}号室のオーダー（再割り当て）`, why, ticketId],
+      [next.id, tr(`${ticket.room_number}号室のオーダー（再割り当て）`, `Order for ${roomLabel(ticket.room_number)} (reassigned)`), why, ticketId],
     );
   }
-  await notifySupervisors(client, hotel.id, `${ticket.room_number}号室のオーダーを再割り当て`, next ? `${why}。新しい担当: ${next.name}` : `${why}。担当者がいません`, ticketId);
+  await notifySupervisors(
+    client, hotel.id,
+    tr(`${ticket.room_number}号室のオーダーを再割り当て`, `${roomLabel(ticket.room_number)} order reassigned`),
+    next ? tr(`${why}。新しい担当: ${next.name}`, `${why}. New assignee: ${next.name}`) : tr(`${why}。担当者がいません`, `${why}. No one is assigned`),
+    ticketId,
+  );
 }
 
 export async function notifySupervisors(client: PoolClient, hotelId: string, title: string, body: string, ticketId: string) {
@@ -242,9 +253,9 @@ export async function replyToGuest(member: Member, handoffId: string, text: stri
   const handoff = await queryOne<{ conversation_id: string | null }>("select conversation_id from handoffs where id = $1 and hotel_id = $2", [
     handoffId, member.hotel_id,
   ]);
-  if (!handoff?.conversation_id) throw new Error("この引き継ぎには会話がありません");
+  if (!handoff?.conversation_id) throw new Error(tr("この引き継ぎには会話がありません", "This handoff has no conversation"));
   await query("insert into messages (conversation_id, role, content) values ($1, 'staff', $2)", [
-    handoff.conversation_id, `${text}（スタッフ ${member.display_name}）`,
+    handoff.conversation_id, tr(`${text}（スタッフ ${member.display_name}）`, `${text} (Staff: ${member.display_name})`),
   ]);
 }
 

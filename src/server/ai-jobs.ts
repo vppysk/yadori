@@ -1,6 +1,7 @@
 import type { ModelTier } from "@/lib/llm/models";
 import { query, queryOne } from "./db";
 import type { Pattern } from "./hotel";
+import { tr } from "@/lib/i18n";
 
 // AIの仕事ごとのモデル（docs/000_plan.md 4.3）。見直しの対象は、ゲストへの回答（業務ごと）とAI相談（ai_models）。
 // 試験運用中は一部（share）を試すモデルで処理し、実測を集める（結果は llm_calls・work_events にモデル付きで残る）
@@ -8,11 +9,11 @@ import type { Pattern } from "./hotel";
 // 見直しの対象の仕事。pattern はゲストへの回答の業務（AI相談は ''）
 export type ModelJob = "answer" | "staff_ask";
 export const REVIEWED_JOBS: { job: ModelJob; pattern: string; label: string }[] = [
-  { job: "answer", pattern: "info", label: "ゲストへの回答：案内" },
-  { job: "answer", pattern: "order", label: "ゲストへの回答：オーダー受付" },
-  { job: "answer", pattern: "external", label: "ゲストへの回答：館外の案内" },
-  { job: "answer", pattern: "reservation", label: "ゲストへの回答：予約の問い合わせ" },
-  { job: "staff_ask", pattern: "", label: "AI相談" },
+  { job: "answer", pattern: "info", label: tr("ゲストへの回答：案内", "Guest replies: hotel info") },
+  { job: "answer", pattern: "order", label: tr("ゲストへの回答：オーダー受付", "Guest replies: orders") },
+  { job: "answer", pattern: "external", label: tr("ゲストへの回答：館外の案内", "Guest replies: local info") },
+  { job: "answer", pattern: "reservation", label: tr("ゲストへの回答：予約の問い合わせ", "Guest replies: reservations") },
+  { job: "staff_ask", pattern: "", label: tr("AI相談", "Staff AI") },
 ];
 export const jobKey = (job: ModelJob, pattern: string) => (pattern ? `${job}:${pattern}` : job);
 export const jobLabel = (job: ModelJob, pattern: string) => REVIEWED_JOBS.find((j) => j.job === job && j.pattern === pattern)?.label ?? job;
@@ -22,15 +23,15 @@ export const COMPLAINT_TIER: ModelTier = "large";
 
 // 画面のAIの仕事の一覧（llm_calls.purpose → 仕事）。固定の仕事は理由を添える
 export const AI_JOBS: { key: string; purposes: string[]; group: string; label: string; reviewed?: boolean; fixedReason?: string }[] = [
-  { key: "answer", purposes: ["answer"], group: "ゲスト対応", label: "回答（業務ごと。クレームはUltra固定）", reviewed: true },
-  { key: "router", purposes: ["router"], group: "ゲスト対応", label: "発言の振り分け", fixedReason: "1通ごとに必ず通るため速さを優先。品名・数量の読み取りだけで、照合はコードで行う" },
-  { key: "guardrail", purposes: ["guardrail"], group: "ゲスト対応", label: "回答後のチェック", fixedReason: "安全に関わるため。Lightningは値引きの約束や他の客の情報を見逃した" },
-  { key: "integration_agent", purposes: ["integration_agent"], group: "ゲスト対応", label: "連携係", fixedReason: "連携先のツールと引数を1回で正しく選ぶ必要があるため" },
-  { key: "staff_ask", purposes: ["staff_ask"], group: "スタッフ支援", label: "AI相談", reviewed: true },
-  { key: "source_extract", purposes: ["source_extract"], group: "情報の整備", label: "資料の読み取り", fixedReason: "品質の指標がまだないため（承認時の修正率は今後）" },
-  { key: "external_source", purposes: ["external_source"], group: "情報の整備", label: "URLの要約・影響判定", fixedReason: "費用は資料（URL）の数と取得頻度に比例する" },
-  { key: "knowledge_review", purposes: ["knowledge_review", "talk_review"], group: "情報の整備", label: "会話ログの定期評価（未回答の質問・「人と話したい」の理由）", fixedReason: "品質の指標がまだないため" },
-  { key: "other", purposes: [], group: "その他", label: "その他（チェック項目の抜き出し・メモの作成など）", fixedReason: "設定の保存時などにまれに呼ぶ" },
+  { key: "answer", purposes: ["answer"], group: tr("ゲスト対応", "Guest service"), label: tr("回答（業務ごと。クレームはUltra固定）", "Replies (per request type; complaints fixed to Ultra)"), reviewed: true },
+  { key: "router", purposes: ["router"], group: tr("ゲスト対応", "Guest service"), label: tr("発言の振り分け", "Message routing"), fixedReason: tr("1通ごとに必ず通るため速さを優先。品名・数量の読み取りだけで、照合はコードで行う", "Runs on every message, so speed comes first. It only reads item names and quantities; matching is done in code") },
+  { key: "guardrail", purposes: ["guardrail"], group: tr("ゲスト対応", "Guest service"), label: tr("回答後のチェック", "Reply check"), fixedReason: tr("安全に関わるため。Lightningは値引きの約束や他の客の情報を見逃した", "Safety-critical. Lightning missed discount promises and other guests' info") },
+  { key: "integration_agent", purposes: ["integration_agent"], group: tr("ゲスト対応", "Guest service"), label: tr("連携係", "Integration agent"), fixedReason: tr("連携先のツールと引数を1回で正しく選ぶ必要があるため", "Must pick the right tool and arguments in one shot") },
+  { key: "staff_ask", purposes: ["staff_ask"], group: tr("スタッフ支援", "Staff support"), label: tr("AI相談", "Staff AI"), reviewed: true },
+  { key: "source_extract", purposes: ["source_extract"], group: tr("情報の整備", "Knowledge upkeep"), label: tr("資料の読み取り", "Document reading"), fixedReason: tr("品質の指標がまだないため（承認時の修正率は今後）", "No quality metric yet (edit rate at approval is planned)") },
+  { key: "external_source", purposes: ["external_source"], group: tr("情報の整備", "Knowledge upkeep"), label: tr("URLの要約・影響判定", "URL summary & impact"), fixedReason: tr("費用は資料（URL）の数と取得頻度に比例する", "Cost scales with the number of URLs and fetch frequency") },
+  { key: "knowledge_review", purposes: ["knowledge_review", "talk_review"], group: tr("情報の整備", "Knowledge upkeep"), label: tr("会話ログの定期評価（未回答の質問・「人と話したい」の理由）", "Daily chat log review (unanswered questions, reasons for wanting staff)"), fixedReason: tr("品質の指標がまだないため", "No quality metric yet") },
+  { key: "other", purposes: [], group: tr("その他", "Other"), label: tr("その他（チェック項目の抜き出し・メモの作成など）", "Other (check extraction, notes, etc.)"), fixedReason: tr("設定の保存時などにまれに呼ぶ", "Called rarely, e.g. when saving settings") },
 ];
 
 export type ActiveTrial = { id: string; tier: ModelTier; share: number };

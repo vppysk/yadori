@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { after } from "next/server";
 import type { Member } from "./auth";
 import { query } from "./db";
+import { tr } from "@/lib/i18n";
 
 // 実績の出力口のWebhook（plan 4.5）。実績イベントが記録されるたびに、登録先へPOSTする。
 // 本文のHMAC-SHA256を X-Hotel-Agent-Signature に付ける（受け手は登録時のシークレットで検証する）
@@ -17,7 +18,7 @@ export async function listWebhooks(hotelId: string): Promise<WebhookRow[]> {
 
 export async function addWebhook(member: Member, url: string): Promise<string> {
   const parsed = new URL(url);
-  if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") throw new Error("https のURLを指定してください");
+  if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") throw new Error(tr("https のURLを指定してください", "Please use an https URL"));
   const secret = randomBytes(24).toString("hex");
   await query("insert into webhook_subscriptions (hotel_id, url, secret) values ($1, $2, $3)", [member.hotel_id, parsed.toString(), secret]);
   return secret;
@@ -64,6 +65,6 @@ export function dispatchWorkEvent(hotelId: string, event: Record<string, unknown
 
 export async function sendTest(member: Member, id: string) {
   const [sub] = await query<{ url: string; secret: string }>("select url, secret from webhook_subscriptions where id = $1 and hotel_id = $2", [id, member.hotel_id]);
-  if (!sub) throw new Error("Webhookが見つかりません");
-  return deliver(sub.url, sub.secret, { type: "test", data: { message: "テスト送信", sent_at: new Date().toISOString() } });
+  if (!sub) throw new Error(tr("Webhookが見つかりません", "Webhook not found"));
+  return deliver(sub.url, sub.secret, { type: "test", data: { message: tr("テスト送信", "Test"), sent_at: new Date().toISOString() } });
 }

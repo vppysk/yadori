@@ -8,6 +8,7 @@ import {
 } from "./facility-fields";
 import { getHotel, localNow } from "./hotel";
 import { recordLlmCall } from "./metrics";
+import { tr } from "@/lib/i18n";
 
 // 資料（docs/002_facility_master_design.md）: スタッフは資料を入れるだけ。AIが施設・項目・内容・期間を読み取り、
 // スタッフが「新しい施設・項目か、既存と同じか」と内容・期間の重なりを確認して承認する。施設も項目も事前には決めない。
@@ -15,6 +16,10 @@ import { recordLlmCall } from "./metrics";
 
 // 「全体」欄（施設に属さないホテル全体の案内。チェックイン、駐車場など）を資料の中で指す名前
 export const GLOBAL_NAME = "全体";
+
+// AIが「全体」欄を指した名前か（英語の資料では「Hotel-wide」「General」などと書かれる）
+const isGlobalName = (name: string, globalName?: string) =>
+  normName(name) === normName(GLOBAL_NAME) || (globalName !== undefined && normName(name) === normName(globalName)) || /^(hotel-?wide|general|overall)$/i.test(normName(name));
 
 // pending=確認待ち / approved=承認済み / update_pending=承認済み・URLの更新の確認待ち（前の版の値で案内中）
 export type SourceStatus = "pending" | "approved" | "update_pending";
@@ -89,9 +94,15 @@ const extractSchema = z.object({
 // （施設ごとに読ませると「大浴場は通常どおり営業」の資料で、大浴場に「ランチ 休業」を入れることがあった）
 function grounded(item: { title?: string; body: string }, quotes: string[], doc: string): boolean {
   const source = normName(doc);
-  const text = normName(quotes.filter((q) => source.includes(normName(q).slice(0, 12))).join(" ")).replace(/,/g, "");
-  const body = normName(item.body).replace(/,/g, "");
-  const tokens = [...(body.match(/\d{1,2}:\d{2}|\d{3,}/g) ?? []), ...(body.includes("休") ? ["休"] : []), ...(item.title ? [normName(item.title)] : [])];
+  const text = normName(quotes.filter((q) => source.includes(normName(q).slice(0, 12))).join(" ")).replace(/,/g, "").toLowerCase();
+  const body = normName(item.body).replace(/,/g, "").toLowerCase();
+  // 英語の資料は「closed」を「休」と同じく扱う（大文字小文字は区別しない）
+  const tokens = [
+    ...(body.match(/\d{1,2}:\d{2}|\d{3,}/g) ?? []),
+    ...(body.includes("休") ? ["休"] : []),
+    ...(body.includes("closed") ? ["closed"] : []),
+    ...(item.title ? [normName(item.title).toLowerCase()] : []),
+  ];
   return tokens.every((t) => text.includes(t));
 }
 
@@ -121,7 +132,7 @@ export async function extract(hotelId: string, title: string, body: string, opti
     system: [
       options.external
         ? "ホテルの外の資料（周辺の施設・交通機関・自治体などのお知らせ）に出てくる、ゲストに案内する施設や路線（公園、観光施設、店、駅、バス路線など）の名前を挙げる。ホテル自体の案内があれば館内の施設名で挙げる。"
-        : "ホテルの資料に出てくる、ゲストが利用する館内の施設（レストラン、大浴場、プール、スパなど）の名前を挙げる。",
+        : "ホテルの資料に出てくる、ゲストが利用する館内の施設（レストラン、大浴場、プール、スパなど）やサービスの窓口（レンタル、ショップ、アクティビティなど）の名前を挙げる。登録済みにない新しい施設・サービスも必ず挙げる。",
       `施設に属さないホテル全体の案内（チェックイン・チェックアウト、駐車場、Wi-Fi など）があれば「${GLOBAL_NAME}」も挙げる。`,
       ...(known.length ? [`登録済みの施設: ${known.map((f) => f.name).join("、")}（同じ施設ならこの名前で挙げる）`] : []),
       "ゲストへの案内（時間・料金・利用方法など）が書かれていない施設は挙げない。",
@@ -133,7 +144,7 @@ export async function extract(hotelId: string, title: string, body: string, opti
   // 「全体」（チェックイン・駐車場など）は挙げられないことがあったため、毎回読み取りの対象にする
   if (global) targets.set(facilityRef.id(global.id), { ref: facilityRef.id(global.id), name: global.name, id: global.id });
   for (const name of listed.object.facilities.map((n) => n.trim()).filter(Boolean)) {
-    const existing = normName(name) === normName(GLOBAL_NAME) ? global : matchName(known, name);
+    const existing = isGlobalName(name, global?.name) ? global : matchName(known, name);
     const target = existing ? { ref: facilityRef.id(existing.id), name: existing.name, id: existing.id } : { ref: facilityRef.name(name), name, id: null };
     targets.set(target.ref, target);
   }
@@ -194,7 +205,13 @@ export async function extract(hotelId: string, title: string, body: string, opti
     for (const item of object.items) {
       if (target.id !== null && target.id === global?.id && duplicatesOther(item)) continue;
       // 「通常どおり営業」「変更なし」だけの内容は案内に使わない（指示しても取り出すことがあるため、コードで外す）
-      if (/^(通常(どおり|通り)|変更(なし|ありません))/.test(normName(item.body))) continue;
+      if (/^(通常(どおり|通り)|変更(なし|ありません))|^(open)?(asusual|normal|regular|standard|nochange|unchanged)|asusual|continue/i.test(normName(item.body))) continue;
+      // 「全体」は毎回読むため、資料にない一般論（「Wi-Fiは館内で無料」など）を作ることがあった（2026-10-04 検証）。
+      // 時刻・金額・休みの記載がない件は、内容か項目名が抜き出した文にあるときだけ使う
+      if (target.id !== null && target.id === global?.id && !/\d|休|closed/i.test(item.body)) {
+        const quoted = normName(object.quotes.join(" ")).toLowerCase();
+        if (!quoted.includes(normName(item.body).toLowerCase()) && !quoted.includes(normName(item.field).toLowerCase())) continue;
+      }
       const to = item.to && DATE.test(item.to) ? item.to : null;
       if (!item.field.trim() || !item.body.trim() || !DATE.test(item.from) || (to && to < item.from)) continue;
       if (!grounded(item, object.quotes, body)) {
@@ -225,7 +242,7 @@ export async function createSource(member: Member, input: { title: string; fileN
 // 外部情報のフラグを付け外しする（登録後に直すため）
 export async function setExternal(member: Member, sourceId: string, isExternal: boolean) {
   const row = await queryOne<{ id: string }>("update info_sources set is_external = $3 where id = $1 and hotel_id = $2 returning id", [sourceId, member.hotel_id, isExternal]);
-  if (!row) throw new Error("資料が見つかりません");
+  if (!row) throw new Error(tr("資料が見つかりません", "Source not found"));
 }
 
 // ---------- 確認 ----------
@@ -300,12 +317,12 @@ export const approveSchema = z.object({
     z.object({
       key: z.string().min(1),
       facility: z.string().min(1),
-      field: z.string().trim().min(1, "項目名を入力してください").max(40),
+      field: z.string().trim().min(1, tr("項目名を入力してください", "Please enter an item name")).max(40),
       title: z.string().trim().max(80).nullable(),
-      body: z.string().trim().min(1, "内容が空の行があります").max(1000),
+      body: z.string().trim().min(1, tr("内容が空の行があります", "Some rows have empty content")).max(1000),
       from: z.string().regex(DATE),
       to: z.string().regex(DATE).nullable(),
-    }).refine((r) => !r.to || r.from <= r.to, "期間の開始が終了より後になっています"),
+    }).refine((r) => !r.to || r.from <= r.to, tr("期間の開始が終了より後になっています", "The start date is after the end date")),
   ),
   // 重なりごとに優先する側の key
   winner: z.record(z.string(), z.string()),
@@ -315,18 +332,18 @@ export const approveSchema = z.object({
 // 重なりはすべて選ばれている必要がある。他の資料の値の優先度は変えず、その間に入るように新しい値の優先度を決める
 export async function approveSource(member: Member, sourceId: string, input: z.infer<typeof approveSchema>): Promise<{ facilityIds: string[] }> {
   const review = await getSourceReview(member.hotel_id, sourceId);
-  if (!review) throw new Error("資料が見つかりません");
+  if (!review) throw new Error(tr("資料が見つかりません", "Source not found"));
   const rows = input.rows.map((r) => ({ ...r, title: r.title || null }));
   for (const r of rows) {
     const ref = parseFacilityRef(r.facility);
-    if (ref.kind === "existing" && !review.facilities.some((f) => f.id === ref.id)) throw new Error("施設が見つかりません");
-    if (ref.kind === "new" && !ref.name.trim()) throw new Error("新しい施設の名前を入力してください");
+    if (ref.kind === "existing" && !review.facilities.some((f) => f.id === ref.id)) throw new Error(tr("施設が見つかりません", "Facility not found"));
+    if (ref.kind === "new" && !ref.name.trim()) throw new Error(tr("新しい施設の名前を入力してください", "Please enter a name for the new facility"));
   }
   const conflicts: Conflict[] = findConflicts(toCandidates(rows, review.fields), review.existing);
   const missing = conflicts.filter((c) => ![c.a, c.b].includes(input.winner[c.key]));
-  if (missing.length) throw new Error(`期間が重なっている${missing.length}件で、優先する方を選んでください`);
+  if (missing.length) throw new Error(tr(`期間が重なっている${missing.length}件で、優先する方を選んでください`, `Choose which one takes priority for ${missing.length} overlapping item(s)`));
   const priorities = assignPriorities(rows, new Map(review.existing.map((e) => [e.key, e.priority])), conflicts, input.winner);
-  if (!priorities) throw new Error("優先する方の選び方が矛盾しています（AよりB、BよりC、CよりA のようになっています）");
+  if (!priorities) throw new Error(tr("優先する方の選び方が矛盾しています（AよりB、BよりC、CよりA のようになっています）", "Your priority choices conflict (e.g. B over A, C over B, A over C)"));
 
   return transaction(async (client) => {
     // 新しい施設（同じ名前がすでにあればそれを使う）

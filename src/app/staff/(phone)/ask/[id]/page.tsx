@@ -3,6 +3,7 @@ import { can, requireMember } from "@/server/auth";
 import { getHotel } from "@/server/hotel";
 import { getAskSession, listAskSessions } from "@/server/staff-ask";
 import { AskView } from "../ask-view";
+import { tr } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,7 @@ export default async function StaffAskSessionPage({ params }: PageProps<"/staff/
   const { id } = await params;
   const member = await requireMember(`/staff/ask/${id}`);
   if (!(await can(member.id, "handling.consult"))) {
-    return <main className="p-6 text-sm text-ink-sub">AIへの相談の権限がありません</main>;
+    return <main className="p-6 text-sm text-ink-sub">{tr("AIへの相談の権限がありません", "You don't have permission to ask the AI")}</main>;
   }
   const [session, sessions, canViewGuests, hotel] = await Promise.all([
     getAskSession(member, id),

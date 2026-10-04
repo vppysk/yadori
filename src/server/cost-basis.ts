@@ -1,11 +1,18 @@
 import { configuredModelId, type ModelTier } from "@/lib/llm/models";
 import { query, queryOne } from "./db";
 import type { Pattern } from "./hotel";
+import { tr } from "@/lib/i18n";
 
 // 人が対応した場合のコストとAIの単価の前提（docs/000_plan.md 4.3）。経営ダッシュボードとモデルの見直しで共通に使う
 
 export const TIERS: ModelTier[] = ["small", "medium", "large"];
-export const PATTERN_LABELS: Record<Pattern, string> = { info: "案内", order: "オーダー受付", external: "館外の案内", reservation: "予約の問い合わせ", complaint: "クレーム" };
+export const PATTERN_LABELS: Record<Pattern, string> = {
+  info: tr("案内", "Hotel info"),
+  order: tr("オーダー受付", "Orders"),
+  external: tr("館外の案内", "Local info"),
+  reservation: tr("予約の問い合わせ", "Reservations"),
+  complaint: tr("クレーム", "Complaints"),
+};
 export const PATTERNS = Object.keys(PATTERN_LABELS) as Pattern[];
 
 // 前提の値が未入力のときのサンプル値（画面に「サンプル値」と出す）
@@ -60,7 +67,7 @@ export async function getCostBasis(hotelId: string): Promise<CostBasis> {
     sample: !settings?.hourly_wage_jpy || handling.length === 0,
     fxUsdJpy: Number(settings?.fx_usd_jpy ?? 150),
     nightPremiumRate: nightRate,
-    bands: bands.map((b) => ({ id: b.id, name: b.name, range: `${b.starts_at}–${b.ends_at}時`, multiplier: bandMultiplier(Number(b.starts_at), Number(b.ends_at), nightRate) })),
+    bands: bands.map((b) => ({ id: b.id, name: b.name, range: tr(`${b.starts_at}–${b.ends_at}時`, `${b.starts_at}:00–${b.ends_at}:00`), multiplier: bandMultiplier(Number(b.starts_at), Number(b.ends_at), nightRate) })),
     prices: Object.fromEntries(
       TIERS.map((tier) => {
         const modelId = configuredModelId(tier);

@@ -3,17 +3,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BellIcon, ChatIcon, OrdersIcon } from "@/components/icons";
+import { tr } from "@/lib/i18n";
 
 const TABS = [
-  { href: "/staff/orders", label: "オーダー", Icon: OrdersIcon },
-  { href: "/staff/ask", label: "AIに相談", Icon: ChatIcon },
-  { href: "/staff/notifications", label: "通知", Icon: BellIcon },
+  { href: "/staff/orders", label: tr("オーダー", "Orders"), Icon: OrdersIcon },
+  { href: "/staff/ask", label: tr("AIに相談", "Ask AI"), Icon: ChatIcon },
+  { href: "/staff/notifications", label: tr("通知", "Alerts"), Icon: BellIcon },
 ];
 
 export function PhoneNav({ unread }: { unread: number }) {
   const pathname = usePathname();
   return (
-    <nav aria-label="スタッフメニュー" className="grid grid-cols-3 border-t border-line bg-surface px-2 pt-1.5 pb-6">
+    <nav aria-label={tr("スタッフメニュー", "Staff menu")} className="grid grid-cols-3 border-t border-line bg-surface px-2 pt-1.5 pb-6">
       {TABS.map(({ href, label, Icon }) => {
         const active = pathname.startsWith(href);
         return (

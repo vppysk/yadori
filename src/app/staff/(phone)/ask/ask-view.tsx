@@ -7,6 +7,7 @@ import { ArrowIcon, CloseIcon, MenuIcon, PersonIcon, PlusIcon } from "@/componen
 import type { AskMessage, AskSession } from "@/server/staff-ask";
 import type { GuestMention, GuestSearchResult } from "@/server/staff-ask-guests";
 import { archiveAskSessionAction, askAiAction, searchGuestsAction } from "../../actions";
+import { tr } from "@/lib/i18n";
 
 // 1つの質問で選べるゲストの数（サーバー側の上限と同じ）
 const MAX_GUESTS = 3;
@@ -46,7 +47,7 @@ export function AskView({ session, sessions, canViewGuests, timezone }: Props) {
     startTransition(async () => {
       const result = await askAiAction(session?.id ?? null, text, selected.map((g) => g.reservationId));
       if (!result.ok) {
-        setError(result.error ?? "送信できませんでした");
+        setError(result.error ?? tr("送信できませんでした", "Couldn't send"));
         setPending(null);
         return;
       }
@@ -59,11 +60,11 @@ export function AskView({ session, sessions, canViewGuests, timezone }: Props) {
   return (
     <>
       <header className="flex items-center gap-2 bg-dark px-3 pt-4 pb-3 text-canvas">
-        <button type="button" onClick={() => setPanel("sessions")} aria-label="会話の一覧" className="flex size-11 shrink-0 items-center justify-center rounded-lg">
+        <button type="button" onClick={() => setPanel("sessions")} aria-label={tr("会話の一覧", "Conversations")} className="flex size-11 shrink-0 items-center justify-center rounded-lg">
           <MenuIcon />
         </button>
-        <h1 className="min-w-0 flex-1 truncate text-lg font-bold">{session ? session.title : "AIに相談"}</h1>
-        <Link href="/staff/ask" aria-label="新しい会話" className="flex size-11 shrink-0 items-center justify-center rounded-lg">
+        <h1 className="min-w-0 flex-1 truncate text-lg font-bold">{session ? session.title : tr("AIに相談", "Ask AI")}</h1>
+        <Link href="/staff/ask" aria-label={tr("新しい会話", "New conversation")} className="flex size-11 shrink-0 items-center justify-center rounded-lg">
           <PlusIcon />
         </Link>
       </header>
@@ -71,8 +72,15 @@ export function AskView({ session, sessions, canViewGuests, timezone }: Props) {
       <main ref={listRef} className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 py-4.5">
         {messages.length === 0 && pending === null && (
           <div className="mt-6 flex flex-col gap-2 text-center text-sm leading-relaxed text-ink-sub">
-            <p>館内ルール・マニュアル・特記事項など、わからないことを気軽に聞いてください。</p>
-            {canViewGuests && <p>「1203号室の方の要望は？」のように部屋番号やお名前を書くか、左下のボタンでゲストを選ぶと、予約情報と対応アラートをもとに答えます。</p>}
+            <p>{tr("館内ルール・マニュアル・特記事項など、わからないことを気軽に聞いてください。", "Ask anything about house rules, manuals or today's special notices.")}</p>
+            {canViewGuests && (
+              <p>
+                {tr(
+                  "「1203号室の方の要望は？」のように部屋番号やお名前を書くか、左下のボタンでゲストを選ぶと、予約情報と対応アラートをもとに答えます。",
+                  "Mention a room number or name (e.g. \"What did the guest in 1203 ask for?\") or pick a guest with the button at the bottom left, and the AI answers from the reservation and alerts.",
+                )}
+              </p>
+            )}
           </div>
         )}
         {messages.map((m) =>
@@ -96,7 +104,7 @@ export function AskView({ session, sessions, canViewGuests, timezone }: Props) {
         {pending !== null && (
           <>
             <Question text={pending.text} guests={pending.guests} />
-            <div className="self-start rounded-[16px_16px_16px_4px] border border-line bg-surface px-3.5 py-3 text-sm text-ink-sub">確認しています…</div>
+            <div className="self-start rounded-[16px_16px_16px_4px] border border-line bg-surface px-3.5 py-3 text-sm text-ink-sub">{tr("確認しています…", "Checking…")}</div>
           </>
         )}
         {error && <p role="alert" className="self-center rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p>}
@@ -110,7 +118,7 @@ export function AskView({ session, sessions, canViewGuests, timezone }: Props) {
                 {g.label}
                 <button
                   type="button"
-                  aria-label={`${g.label}を外す`}
+                  aria-label={tr(`${g.label}を外す`, `Remove ${g.label}`)}
                   onClick={() => setGuests((list) => list.filter((x) => x.reservationId !== g.reservationId))}
                   className="flex size-7 items-center justify-center rounded-full"
                 >
@@ -125,7 +133,7 @@ export function AskView({ session, sessions, canViewGuests, timezone }: Props) {
             <button
               type="button"
               onClick={() => setPanel("guests")}
-              aria-label="ゲストを選ぶ"
+              aria-label={tr("ゲストを選ぶ", "Choose a guest")}
               disabled={guests.length >= MAX_GUESTS}
               className="flex size-11 shrink-0 items-center justify-center rounded-full border border-line-input text-ink-sub disabled:opacity-40"
             >
@@ -133,17 +141,17 @@ export function AskView({ session, sessions, canViewGuests, timezone }: Props) {
             </button>
           )}
           <label htmlFor="s-msg" className="sr-only">
-            質問
+            {tr("質問", "Question")}
           </label>
           <input
             id="s-msg"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="わからないことを聞く"
+            placeholder={tr("わからないことを聞く", "Ask a question")}
             autoComplete="off"
             className="min-h-11 min-w-0 flex-1 rounded-full border border-line-input bg-canvas px-4 text-[15px] outline-none focus:border-primary"
           />
-          <button type="submit" aria-label="送信" disabled={pending !== null || !draft.trim()} className="flex size-11 shrink-0 items-center justify-center rounded-full bg-dark text-white disabled:opacity-40">
+          <button type="submit" aria-label={tr("送信", "Send")} disabled={pending !== null || !draft.trim()} className="flex size-11 shrink-0 items-center justify-center rounded-full bg-dark text-white disabled:opacity-40">
             <ArrowIcon />
           </button>
         </div>
@@ -172,7 +180,7 @@ function Question({ text, guests }: { text: string; guests: GuestMention[] }) {
         <div className="flex flex-wrap justify-end gap-1.5">
           {guests.map((g) => (
             <span key={g.reservationId} className="rounded-xl bg-primary-soft px-2.5 py-1 text-[11px] text-primary">
-              参照: {g.label}
+              {tr("参照: ", "About: ")}{g.label}
             </span>
           ))}
         </div>
@@ -191,28 +199,28 @@ function SessionsPanel({ current, sessions, timezone, onClose }: { current: stri
   return (
     <div className="fixed inset-0 z-20 bg-black/40" onClick={onClose}>
       <aside
-        aria-label="会話の一覧"
+        aria-label={tr("会話の一覧", "Conversations")}
         onClick={(e) => e.stopPropagation()}
         className="flex h-full w-[85%] max-w-[360px] flex-col bg-canvas"
       >
         <div className="flex items-center justify-between bg-dark px-4 pt-4 pb-3 text-canvas">
-          <h2 className="text-base font-bold">会話</h2>
-          <button type="button" onClick={onClose} aria-label="閉じる" className="flex size-11 items-center justify-center">
+          <h2 className="text-base font-bold">{tr("会話", "Conversations")}</h2>
+          <button type="button" onClick={onClose} aria-label={tr("閉じる", "Close")} className="flex size-11 items-center justify-center">
             <CloseIcon />
           </button>
         </div>
         <Link href="/staff/ask" onClick={onClose} className="mx-3 mt-3 flex min-h-11 items-center gap-2 rounded-lg border border-line-input bg-surface px-3 text-sm font-bold">
           <PlusIcon size={18} />
-          新しい会話
+          {tr("新しい会話", "New conversation")}
         </Link>
         <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3">
           {sessions.map((s) => (
             <li key={s.id} className={`flex items-center gap-1 rounded-lg ${s.id === current ? "bg-primary-soft" : ""}`}>
               {confirming === s.id ? (
                 <div className="flex min-h-11 flex-1 items-center justify-end gap-2 px-2">
-                  <span className="mr-auto truncate text-xs text-ink-sub">この会話を削除しますか</span>
+                  <span className="mr-auto truncate text-xs text-ink-sub">{tr("この会話を削除しますか", "Delete this conversation?")}</span>
                   <button type="button" onClick={() => setConfirming(null)} className="min-h-11 px-2 text-xs text-ink-sub">
-                    やめる
+                    {tr("やめる", "Cancel")}
                   </button>
                   <button
                     type="button"
@@ -226,7 +234,7 @@ function SessionsPanel({ current, sessions, timezone, onClose }: { current: stri
                     }
                     className="min-h-11 px-2 text-xs font-bold text-danger disabled:opacity-50"
                   >
-                    削除
+                    {tr("削除", "Delete")}
                   </button>
                 </div>
               ) : (
@@ -235,14 +243,14 @@ function SessionsPanel({ current, sessions, timezone, onClose }: { current: stri
                     <span className={`truncate text-sm ${s.id === current ? "font-bold text-primary" : ""}`}>{s.title}</span>
                     <span className="text-[11px] text-ink-sub">{fmt(s.updated_at)}</span>
                   </Link>
-                  <button type="button" onClick={() => setConfirming(s.id)} aria-label={`${s.title}を削除`} className="flex size-11 shrink-0 items-center justify-center text-ink-sub">
+                  <button type="button" onClick={() => setConfirming(s.id)} aria-label={tr(`${s.title}を削除`, `Delete ${s.title}`)} className="flex size-11 shrink-0 items-center justify-center text-ink-sub">
                     <CloseIcon size={16} />
                   </button>
                 </>
               )}
             </li>
           ))}
-          {sessions.length === 0 && <li className="p-4 text-center text-sm text-ink-sub">まだ会話はありません</li>}
+          {sessions.length === 0 && <li className="p-4 text-center text-sm text-ink-sub">{tr("まだ会話はありません", "No conversations yet")}</li>}
         </ul>
       </aside>
     </div>
@@ -271,13 +279,13 @@ function GuestPicker({ selected, onPick, onClose }: { selected: GuestMention[]; 
     <div className="fixed inset-0 z-20 flex flex-col justify-end bg-black/40" onClick={onClose}>
       <div
         role="dialog"
-        aria-label="ゲストを選ぶ"
+        aria-label={tr("ゲストを選ぶ", "Choose a guest")}
         onClick={(e) => e.stopPropagation()}
         className="mx-auto flex max-h-[80dvh] w-full max-w-[430px] flex-col gap-3 rounded-t-2xl bg-canvas px-4 pt-4 pb-6"
       >
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-bold">ゲストを選ぶ</h2>
-          <button type="button" onClick={onClose} aria-label="閉じる" className="flex size-11 items-center justify-center">
+          <h2 className="text-base font-bold">{tr("ゲストを選ぶ", "Choose a guest")}</h2>
+          <button type="button" onClick={onClose} aria-label={tr("閉じる", "Close")} className="flex size-11 items-center justify-center">
             <CloseIcon />
           </button>
         </div>
@@ -285,11 +293,11 @@ function GuestPicker({ selected, onPick, onClose }: { selected: GuestMention[]; 
           autoFocus
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="部屋番号かお名前"
-          aria-label="部屋番号かお名前"
+          placeholder={tr("部屋番号かお名前", "Room number or name")}
+          aria-label={tr("部屋番号かお名前", "Room number or name")}
           className="min-h-11 rounded-lg border border-line-input bg-surface px-3 text-[15px] outline-none focus:border-primary"
         />
-        <p className="text-xs text-ink-sub">{text ? "前後の滞在も含めて探します" : "今日滞在中のゲスト"}</p>
+        <p className="text-xs text-ink-sub">{text ? tr("前後の滞在も含めて探します", "Includes nearby stays") : tr("今日滞在中のゲスト", "Guests staying today")}</p>
         <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
           {result?.error && <li className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{result.error}</li>}
           {result?.guests.map((g) => {
@@ -311,9 +319,9 @@ function GuestPicker({ selected, onPick, onClose }: { selected: GuestMention[]; 
             );
           })}
           {!loading && !result?.error && result?.guests.length === 0 && (
-            <li className="p-4 text-center text-sm text-ink-sub">{text ? "見つかりません" : "今日滞在中のゲストはいません"}</li>
+            <li className="p-4 text-center text-sm text-ink-sub">{text ? tr("見つかりません", "No matches") : tr("今日滞在中のゲストはいません", "No guests staying today")}</li>
           )}
-          {loading && <li className="p-4 text-center text-sm text-ink-sub">探しています…</li>}
+          {loading && <li className="p-4 text-center text-sm text-ink-sub">{tr("探しています…", "Searching…")}</li>}
         </ul>
       </div>
     </div>

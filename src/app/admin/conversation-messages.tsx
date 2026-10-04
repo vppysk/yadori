@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { tr } from "@/lib/i18n";
 
-const ROLE_LABELS = { user: "ゲスト", assistant: "AI", staff: "スタッフ" } as const;
+const ROLE_LABELS = { user: tr("ゲスト", "Guest"), assistant: "AI", staff: tr("スタッフ", "Staff") } as const;
 
 export type PanelMessage = { id: string; role: "user" | "assistant" | "staff"; content: string; created_at: string };
 
@@ -47,7 +48,7 @@ export function ConversationMessages({ messages, targetId, targetLabel }: { mess
           </li>
         );
       })}
-      {messages.length === 0 && <li className="text-sm text-ink-sub">会話はありません</li>}
+      {messages.length === 0 && <li className="text-sm text-ink-sub">{tr("会話はありません", "No messages")}</li>}
     </ol>
   );
 }

@@ -5,10 +5,11 @@
 import { configuredModelId, type ModelTier } from "@/lib/llm/models";
 import { query } from "@/server/db";
 import { evaluateModels } from "@/server/model-review";
+import { tr } from "@/lib/i18n";
 
 const HOTEL_ID = "00000000-0000-0000-0000-000000000001";
 const DAYS = 30;
-// デモ用ホテルは東京（時刻の分布を現地時刻で作る）
+// デモ用ホテルは日本（時刻の分布を現地時刻で作る）
 const TZ_OFFSET_HOURS = 9;
 
 type Pattern = "info" | "order" | "external" | "reservation" | "complaint";
@@ -37,7 +38,10 @@ const TRIALS: { job: "answer" | "staff_ask"; pattern: string; tier: ModelTier; s
   // 同じ仕事の試験運用は期間を重ねない
   {
     job: "answer", pattern: "info", tier: "small", share: 0.1, startsDaysAgo: 30, endsInDays: -24,
-    stopReason: "自動中断: 答えられなかった 5.5%（目標 5.0%以下）・AI起因の会話希望 1.5%（目標 1.0%以下）、実測 104件",
+    stopReason: tr(
+      "自動中断: 答えられなかった 5.5%（目標 5.0%以下）・AI起因の会話希望 1.5%（目標 1.0%以下）、実測 104件",
+      "Auto-stopped: unanswered 5.5% (target ≤ 5.0%), AI-caused staff requests 1.5% (target ≤ 1.0%), measured on 104 cases",
+    ),
   },
   { job: "answer", pattern: "info", tier: "large", share: 0.3, startsDaysAgo: 23, endsInDays: -9 },
   { job: "staff_ask", pattern: "", tier: "large", share: 0.1, startsDaysAgo: 12, endsInDays: 4 },
@@ -186,7 +190,7 @@ async function main() {
         if (i >= handed) return { outcome: "resolved", signals: {} };
         if (i < handed * 0.55) return { outcome: "unanswered", signals: {} };
         if (i < handed * 0.8) return { outcome: "handed_off", signals: { wants_staff: true } };
-        return { outcome: "handed_off", signals: { guardrail_blocked: "値引きや補償の約束" } };
+        return { outcome: "handed_off", signals: { guardrail_blocked: tr("値引きや補償の約束", "Promised a discount or compensation") } };
       }),
     );
     // 「人と話したい」の理由の分類（AIの応対が原因の割合をモデルで変える）
@@ -220,7 +224,7 @@ async function main() {
   for (let n = 0; n < SAFETY_MONTHLY; n++) {
     const at = sampleTime(INQUIRY_HOURS);
     events.push({
-      hotel_id: HOTEL_ID, pattern: "info", time_band_id: bands[bandIndexOf(bands, at)].id, handler_kind: "human", handler: "引き継ぎ", input_tokens: 0, output_tokens: 0,
+      hotel_id: HOTEL_ID, pattern: "info", time_band_id: bands[bandIndexOf(bands, at)].id, handler_kind: "human", handler: tr("引き継ぎ", "Handoff"), input_tokens: 0, output_tokens: 0,
       duration_ms: 0, cost_jpy: 0, outcome: "handed_off", signals: { demo: true, safety: true }, occurred_at: at.toISOString(),
     });
   }
@@ -228,7 +232,7 @@ async function main() {
   // オーダーの配達（人）。期限内対応はおよそ94%
   for (let n = 0; n < DELIVERIES; n++) {
     events.push({
-      hotel_id: HOTEL_ID, pattern: "order", time_band_id: null, handler_kind: "human", handler: "ハウスキーピング", input_tokens: 0, output_tokens: 0,
+      hotel_id: HOTEL_ID, pattern: "order", time_band_id: null, handler_kind: "human", handler: tr("ハウスキーピング", "Housekeeping"), input_tokens: 0, output_tokens: 0,
       duration_ms: Math.round(240_000 + Math.random() * 600_000), cost_jpy: 0, outcome: "resolved",
       signals: { demo: true, phase: "delivery", on_time: Math.random() < 0.94 }, occurred_at: sampleTime(DELIVERY_HOURS).toISOString(),
     });

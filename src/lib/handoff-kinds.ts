@@ -1,23 +1,24 @@
+import { tr } from "./i18n";
 // 引き継ぎの種類の表示名と、管理PCの対応アラートでの分類。種類はきっかけごとに保存し、画面の分類だけをまとめる
 
 export const HANDOFF_LABELS: Record<string, string> = {
-  talk_request: "スタッフとの会話を希望",
-  complaint: "クレーム",
-  overdue_order: "オーダー遅延",
-  unanswerable: "AIが回答できない質問",
-  safety: "安全に関わる内容",
-  staff_assigned: "スタッフが担当する業務",
-  guardrail_blocked: "AIの回答を止めた（禁止事項）",
-  system_error: "AIの不具合（回答できず）",
-  order_unavailable: "取り扱いのない品・品切れの依頼",
+  talk_request: tr("スタッフとの会話を希望", "Wants to talk to staff"),
+  complaint: tr("クレーム", "Complaint"),
+  overdue_order: tr("オーダー遅延", "Late order"),
+  unanswerable: tr("AIが回答できない質問", "AI couldn't answer"),
+  safety: tr("安全に関わる内容", "Safety issue"),
+  staff_assigned: tr("スタッフが担当する業務", "Handled by staff"),
+  guardrail_blocked: tr("AIの回答を止めた（禁止事項）", "AI reply blocked (rule)"),
+  system_error: tr("AIの不具合（回答できず）", "AI error (no reply)"),
+  order_unavailable: tr("取り扱いのない品・品切れの依頼", "Unavailable / out-of-stock item"),
 };
 
 // 対応アラートの分類。オーダー遅延はオーダーボードだけに出すため含めない
 export const ALERT_CATEGORIES = {
-  safety: { label: "安全", kinds: ["safety"] },
-  talk: { label: "スタッフとの会話希望", kinds: ["talk_request"] },
-  complaint: { label: "クレーム・強い不満", kinds: ["complaint"] },
-  ai: { label: "AIでは対応できない", kinds: ["staff_assigned", "guardrail_blocked", "unanswerable", "system_error", "order_unavailable"] },
+  safety: { label: tr("安全", "Safety"), kinds: ["safety"] },
+  talk: { label: tr("スタッフとの会話希望", "Wants staff"), kinds: ["talk_request"] },
+  complaint: { label: tr("クレーム・強い不満", "Complaint"), kinds: ["complaint"] },
+  ai: { label: tr("AIでは対応できない", "AI can't handle"), kinds: ["staff_assigned", "guardrail_blocked", "unanswerable", "system_error", "order_unavailable"] },
 } as const satisfies Record<string, { label: string; kinds: readonly string[] }>;
 
 export type AlertCategory = keyof typeof ALERT_CATEGORIES;
@@ -30,17 +31,17 @@ export function alertCategoryOf(kind: string): AlertCategory | undefined {
 
 // 「AIでは対応できない」の理由（行のラベルと絞り込みに使う）
 export const AI_REASONS: Record<string, string> = {
-  staff_assigned: "担当が人",
-  guardrail_blocked: "禁止事項に反した",
-  unanswerable: "2回答えられなかった",
-  system_error: "システムの不具合",
-  order_unavailable: "取り扱いのない品・品切れ",
+  staff_assigned: tr("担当が人", "Staff's job"),
+  guardrail_blocked: tr("禁止事項に反した", "Broke a rule"),
+  unanswerable: tr("2回答えられなかった", "Unanswered twice"),
+  system_error: tr("システムの不具合", "System error"),
+  order_unavailable: tr("取り扱いのない品・品切れ", "Unavailable item"),
 };
 
-export const FAILURE_STAGES: Record<string, string> = { answer: "回答の生成", guardrail: "禁止事項のチェック" };
+export const FAILURE_STAGES: Record<string, string> = { answer: tr("回答の生成", "writing the reply"), guardrail: tr("禁止事項のチェック", "rule check") };
 export const FAILURE_CAUSES: Record<string, string> = {
-  timeout: "応答がタイムアウト",
-  api_error: "APIエラー",
-  invalid_output: "回答の形式が不正",
-  unknown: "原因不明",
+  timeout: tr("応答がタイムアウト", "Timed out"),
+  api_error: tr("APIエラー", "API error"),
+  invalid_output: tr("回答の形式が不正", "Invalid output"),
+  unknown: tr("原因不明", "Unknown"),
 };

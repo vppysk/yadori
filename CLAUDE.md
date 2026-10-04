@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番号]`、現場スマホ `/staff/*`、管理PC `/admin/*`（オーダー管理・AIの設定・対応アラート）、経営 `/manage/*`（AIの成果と割り振り・外部連携・変更履歴・メンバーと権限）。
 計画書のハッカソン範囲の画面・機能は一通り実装済み（メンバーと権限は `/manage/members`）。残りはW5（ホスティング・README・デモ動画・提出）。
 スタッフ画面は `/staff/login` でメンバーを選ぶデモ用ログイン（パスワードなし）。
+プロダクト名は Yadori、デモホテルは Hotel Yukiakari Niseko（英語のデモ）。提出動画は英語のため、画面・AIの出力・デモデータは `NEXT_PUBLIC_APP_LOCALE=en` で英語にできる（既定は日本語）。デプロイは必須でなく、デモはローカルで収録する（公式ルールは test build 可）。
 
 ## コマンド
 
@@ -22,6 +23,8 @@ W1〜W4の主要機能を実装済み。画面は ゲスト `/guest/[予約番�
 - `npm run dev:seed-documents`: デモの館内マニュアルを埋め込み付きで登録 ／ `npm run dev:seed-activity`: ダッシュボード用に過去30日の実績（150室・月約1万通）とAIの呼び出し・試験運用・「人と話したい」の理由の分類を生成（`signals.demo=true`・`llm_calls.demo`・`model_trials.demo`・`talk_request_reviews.demo`）。最後にモデルの定期評価を実行して提案レポートを作る／ `npm run dev:seed-alerts`: 対応アラートに分類ごとの未対応・対応中を入れる（予約番号 `DEMO-*` の架空の会話）／ `npm run dev:seed-gaps`: 未回答の質問を、定期評価が今日3時に実行された状態で入れる（予約番号 `DEMO-GAP-*` の前日の会話）／ `npm run dev:reset-activity`: 会話・チケット・引き継ぎ・通知・計測を消す
 - DBのマイグレーション追加後は `npx supabase db push --db-url "$DATABASE_URL"`（`.env.local` を読み込んでから）
 - デモ・検証用の資料は `docs/demo/`（冬季営業のお知らせのPDF・画像、施設の取り違えと新しい施設の確認用の文章。使い方と期待する読み取りは `docs/demo/README.md`）
+- 英語デモ（収録用）: `.env.demo.local`（Git管理外）が `.env.local` を上書きする（`NEXT_PUBLIC_APP_LOCALE=en`・ローカルDB・`LLM_MODE=nebius`）。`npm run db:start` → `npm run demo:setup`（ローカルDBのリセット＋英語のデモデータ一式）→ `npm run demo`（起動）、`npm run demo:cron`、`npm run demo:try -- R-1203 "..."`。日本語のシードは `supabase/seed.ja.sql`（`npm run db:reset:ja`）。台本は `docs/demo/en/script.md`、英語の資料は `docs/demo/en/`
+- 文言は `src/lib/i18n.ts` の `tr("日本語", "English")`（画面・定型文・DBへ書く文言）。AIへの指示は `guest-chat.ts` の `buildInstructions` が英語のとき別の英文を使い、構造化出力は `structured.ts` が出力言語を足す。新しい文言は `tr` で両言語を書く
 - テストランナーは未導入
 
 ## コード構成

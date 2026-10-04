@@ -8,6 +8,7 @@ import { grantPermission, revokeGrant, saveGroup, setMemberGroup } from "@/serve
 import { approveReport, dismissReport, stopTrial, type Decision } from "@/server/model-review";
 import { addWebhook, deleteWebhook, sendTest } from "@/server/webhooks";
 import { addExportClient, deleteExportClient, saveExportClient, type ExportClientInput } from "@/server/export-clients";
+import { tr } from "@/lib/i18n";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -17,7 +18,7 @@ async function guard(fn: () => Promise<void>): Promise<Result> {
     return { ok: true };
   } catch (error) {
     if (!(error instanceof PermissionError)) console.error("[manage action]", error);
-    return { ok: false, error: error instanceof Error ? error.message : "保存できませんでした" };
+    return { ok: false, error: error instanceof Error ? error.message : tr("保存できませんでした", "Couldn't save") };
   }
 }
 
@@ -86,7 +87,7 @@ export async function addIntegrationAction(input: { name: string; slug: string; 
     return { ok: true, id };
   } catch (error) {
     if (!(error instanceof PermissionError)) console.error("[addIntegrationAction]", error);
-    return { ok: false, error: error instanceof Error ? error.message : "追加できませんでした" };
+    return { ok: false, error: error instanceof Error ? error.message : tr("追加できませんでした", "Couldn't add it") };
   }
 }
 
@@ -106,7 +107,7 @@ export async function setMemberGroupAction(memberId: string, groupId: string, on
     // 自分の管理権限を外してしまった場合は元に戻す
     if (!(await can(member.id, "settings.members"))) {
       await setMemberGroup(member, memberId, groupId, !on);
-      throw new Error("自分の「メンバーと権限の管理」がなくなるため変更できません");
+      throw new Error(tr("自分の「メンバーと権限の管理」がなくなるため変更できません", "You can't remove your own permission to manage members"));
     }
     await audit(member, "settings.members", on ? "member.group.add" : "member.group.remove", { type: "member", id: memberId }, { groupId });
     refresh();
@@ -134,7 +135,7 @@ export async function revokeGrantAction(grantId: string): Promise<Result> {
 export async function saveGroupAction(groupId: string | null, input: { name: string; permissions: { key: string; scope_ids: string[] | null }[] }): Promise<Result> {
   return guard(async () => {
     const member = await authorize("settings.members");
-    if (!input.name.trim()) throw new Error("グループ名を入力してください");
+    if (!input.name.trim()) throw new Error(tr("グループ名を入力してください", "Please enter a group name"));
     await saveGroup(member, groupId, input);
     await audit(member, "settings.members", groupId ? "group.save" : "group.create", groupId ? { type: "group", id: groupId } : undefined, { name: input.name });
     refresh();
@@ -149,7 +150,7 @@ export async function addWebhookAction(url: string): Promise<{ ok: true; secret:
     refresh();
     return { ok: true, secret };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "登録できませんでした" };
+    return { ok: false, error: error instanceof Error ? error.message : tr("登録できませんでした", "Couldn't register it") };
   }
 }
 
@@ -166,7 +167,7 @@ export async function testWebhookAction(id: string): Promise<Result> {
   return guard(async () => {
     const member = await authorize("settings.integrations");
     const r = await sendTest(member, id);
-    if (!r.ok) throw new Error(`送信に失敗しました（${r.status ?? "接続できない"}）`);
+    if (!r.ok) throw new Error(tr(`送信に失敗しました（${r.status ?? "接続できない"}）`, `Sending failed (${r.status ?? "couldn't connect"})`));
   });
 }
 

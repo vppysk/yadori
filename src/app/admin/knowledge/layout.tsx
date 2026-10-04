@@ -5,6 +5,7 @@ import { listFacilitiesForAdmin } from "@/server/knowledge-admin";
 import { countUnseenUpdates } from "@/server/source-fetch";
 import { FACILITY_KEYS, GUEST_AI_KEYS, INTEGRATION_USAGE_KEYS } from "../nav-items";
 import { KnowledgeNav } from "./knowledge-nav";
+import { tr } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 export default async function KnowledgeLayout({ children }: LayoutProps<"/admin/knowledge">) {
   const member = await requireMember("/admin/knowledge");
   const keys = await permissionKeys(member.id);
-  if (!GUEST_AI_KEYS.some((k) => keys.has(k))) return <main className="p-8 text-sm text-ink-sub">AIの設定を扱う権限がありません</main>;
+  if (!GUEST_AI_KEYS.some((k) => keys.has(k))) return <main className="p-8 text-sm text-ink-sub">{tr("AIの設定を扱う権限がありません", "You don't have permission for AI settings")}</main>;
   const showQuestions = keys.has("knowledge.question.answer");
   const showSources = keys.has("knowledge.facility.edit");
   const showFacilities = FACILITY_KEYS.some((k) => keys.has(k));

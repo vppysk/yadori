@@ -7,6 +7,7 @@ import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
 import { insertDocument } from "./documents";
 import { createSource } from "./info-sources";
 import { recordLlmCall } from "./metrics";
+import { tr } from "@/lib/i18n";
 
 // 未回答の質問（plan 4.1、docs/004_knowledge_gap_review.md）: 会話ログの定期評価で見つけた「AIが答えられなかった質問」を一覧にし、
 // 回答すると知識に入る。期間のない内容はよくある質問（RAG）、期間のある内容は資料（読み取り → 承認）にする
@@ -76,8 +77,8 @@ export async function answerGap(member: Member, gapId: string, answer: string): 
   const gap = await queryOne<{ question: string }>("select question from knowledge_gaps where id = $1 and hotel_id = $2 and status = 'open'", [
     gapId, member.hotel_id,
   ]);
-  if (!gap) throw new Error("この質問はすでに対応済みです");
-  const text = `質問: ${gap.question}\n\n回答: ${answer}`;
+  if (!gap) throw new Error(tr("この質問はすでに対応済みです", "This question has already been handled"));
+  const text = tr(`質問: ${gap.question}\n\n回答: ${answer}`, `Question: ${gap.question}\n\nAnswer: ${answer}`);
 
   if (llmMode() === "mock") registerMockToolFixture("choose_destination", { kind: "faq", reason: "モック" });
   const { object, usage } = await generateStructured({
@@ -96,7 +97,7 @@ export async function answerGap(member: Member, gapId: string, answer: string): 
 
   if (object.kind === "source") {
     // 資料はAIが施設・項目・期間を読み取り、案内情報でスタッフが承認したものだけを回答に使う
-    const sourceId = await createSource(member, { title: `未回答の質問から: ${gap.question}`.slice(0, 200), fileName: null, body: text });
+    const sourceId = await createSource(member, { title: tr(`未回答の質問から: ${gap.question}`, `From unanswered question: ${gap.question}`).slice(0, 200), fileName: null, body: text });
     await query(
       "update knowledge_gaps set status = 'answered', answer = $2, answered_by = $3, answered_at = now(), source_id = $4 where id = $1 and status = 'open'",
       [gapId, answer, member.id, sourceId],
@@ -105,10 +106,10 @@ export async function answerGap(member: Member, gapId: string, answer: string): 
   }
   await transaction(async (client) => {
     const { rowCount } = await client.query("select 1 from knowledge_gaps where id = $1 and status = 'open' for update", [gapId]);
-    if (!rowCount) throw new Error("この質問はすでに対応済みです");
+    if (!rowCount) throw new Error(tr("この質問はすでに対応済みです", "This question has already been handled"));
     const documentId = await insertDocument(client, {
       hotelId: member.hotel_id,
-      title: `よくある質問: ${gap.question}`,
+      title: tr(`よくある質問: ${gap.question}`, `FAQ: ${gap.question}`),
       source: "answered_question",
       text,
       createdBy: member.id,

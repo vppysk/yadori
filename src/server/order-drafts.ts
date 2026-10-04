@@ -6,6 +6,7 @@ import { recordWorkEvent } from "./metrics";
 import { createTickets, getCatalog, toRequestedFor, type CreatedTicket } from "./orders";
 import type { RouteIntent } from "./router";
 import { modelIdFor } from "@/lib/llm/models";
+import { tr } from "@/lib/i18n";
 
 // ゲストの選択待ち（docs/005_order.md 2章）: ルーターが読み取った依頼を品目の候補に当てて保存し、
 // ゲストが画面の選択欄で品目・数量・備考・お届け時間を確定したときにチケットを作る（LLMは通さない）
@@ -82,12 +83,12 @@ export async function proposeOrder(params: {
   }
   if (merged.unsupported.length || merged.paused.length) {
     const parts = [
-      merged.unsupported.length ? `取り扱いのない品: ${merged.unsupported.join("、")}` : "",
-      merged.paused.length ? `品切れ中: ${merged.paused.join("、")}` : "",
+      merged.unsupported.length ? tr(`取り扱いのない品: ${merged.unsupported.join("、")}`, `Not offered: ${merged.unsupported.join(", ")}`) : "",
+      merged.paused.length ? tr(`品切れ中: ${merged.paused.join("、")}`, `Out of stock: ${merged.paused.join(", ")}`) : "",
     ].filter(Boolean);
     await createHandoff({
       hotelId: hotel.id, kind: "order_unavailable", conversationId, roomNumber: guest.roomNumber, messageId,
-      summary: `${parts.join("／")}。代わりの品などをゲストに連絡する。ゲストの発言: ${text}`,
+      summary: tr(`${parts.join("／")}。代わりの品などをゲストに連絡する。ゲストの発言: ${text}`, `${parts.join(" / ")}. Contact the guest about alternatives. Guest said: ${text}`),
     });
   }
   return summarizeOrder(merged, draftId);
@@ -96,9 +97,15 @@ export async function proposeOrder(params: {
 // オーダーだけの発言への定型の返事（回答係のLLMは呼ばない）
 export function orderReply(summary: OrderSummary): string {
   return [
-    summary.draftId ? "お届けする品と数量を下の欄でご確認ください。よろしければ「この内容で依頼する」を押してください。" : "",
-    summary.paused.length ? `${summary.paused.join("、")}はただいま品切れのため、スタッフが確認してご連絡いたします。` : "",
-    summary.unsupported.length ? `${summary.unsupported.join("、")}はお取り扱いを確認し、スタッフから改めてご連絡いたします。` : "",
+    summary.draftId
+      ? tr("お届けする品と数量を下の欄でご確認ください。よろしければ「この内容で依頼する」を押してください。", "Please check the items and quantities below, then tap \"Place request\".")
+      : "",
+    summary.paused.length
+      ? tr(`${summary.paused.join("、")}はただいま品切れのため、スタッフが確認してご連絡いたします。`, `Sorry, the following is currently out of stock: ${summary.paused.join(", ")}. A staff member will check and get back to you.`)
+      : "",
+    summary.unsupported.length
+      ? tr(`${summary.unsupported.join("、")}はお取り扱いを確認し、スタッフから改めてご連絡いたします。`, `We'll check on your request (${summary.unsupported.join(", ")}), and a staff member will get back to you shortly.`)
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -108,10 +115,19 @@ export function orderReply(summary: OrderSummary): string {
 export function orderInstructions(summary: OrderSummary): string[] {
   return [
     ...(summary.draftId
-      ? [`・このメッセージのお届けの依頼（${summary.requested.join("、")}）は、画面の選択欄でお客様に品目・数量・お届け時間を選んでいただく。まだ手配していないので「手配しました」とは言わず、下の欄から依頼してほしいと一言伝える`]
+      ? [
+          tr(
+            `・このメッセージのお届けの依頼（${summary.requested.join("、")}）は、画面の選択欄でお客様に品目・数量・お届け時間を選んでいただく。まだ手配していないので「手配しました」とは言わず、下の欄から依頼してほしいと一言伝える`,
+            `- For the delivery request in this message (${summary.requested.join(", ")}), the guest chooses items, quantities and time in the form on screen. It has NOT been arranged yet, so don't say it was; briefly ask them to place the request using the form below.`,
+          ),
+        ]
       : []),
-    ...(summary.paused.length ? [`・品切れ中の品（${summary.paused.join("、")}）は、ただいま品切れのためスタッフが確認してご連絡すると伝える`] : []),
-    ...(summary.unsupported.length ? [`・品目マスタにない依頼（${summary.unsupported.join("、")}）は、スタッフが確認してご連絡すると伝える`] : []),
+    ...(summary.paused.length
+      ? [tr(`・品切れ中の品（${summary.paused.join("、")}）は、ただいま品切れのためスタッフが確認してご連絡すると伝える`, `- Out-of-stock items (${summary.paused.join(", ")}): say they are currently out of stock and staff will check and get back to them.`)]
+      : []),
+    ...(summary.unsupported.length
+      ? [tr(`・品目マスタにない依頼（${summary.unsupported.join("、")}）は、スタッフが確認してご連絡すると伝える`, `- Items we don't list (${summary.unsupported.join(", ")}): say staff will check and get back to them.`)]
+      : []),
   ];
 }
 
@@ -164,19 +180,19 @@ export async function submitDraft(params: { hotel: Hotel; guest: GuestContext; c
     "select lines from order_drafts where id = $1 and conversation_id = $2 and status = 'open'",
     [draftId, conversationId],
   );
-  if (!draft) throw new Error("このご依頼はすでに確定または取り消し済みです");
+  if (!draft) throw new Error(tr("このご依頼はすでに確定または取り消し済みです", "This request has already been placed or cancelled"));
   const offered = new Set(draft.lines.map((l) => l.itemId));
   const lines = input.lines.filter((l) => l.quantity > 0);
-  if (lines.length === 0) throw new Error("品目と数量をお選びください");
-  if (lines.some((l) => !offered.has(l.itemId))) throw new Error("選べない品目が含まれています");
-  if (!guest.roomId) throw new Error("お部屋が確認できません");
+  if (lines.length === 0) throw new Error(tr("品目と数量をお選びください", "Please choose items and quantities"));
+  if (lines.some((l) => !offered.has(l.itemId))) throw new Error(tr("選べない品目が含まれています", "Some items can't be selected"));
+  if (!guest.roomId) throw new Error(tr("お部屋が確認できません", "We couldn't identify your room"));
   const requestedFor = input.deliver ? await toRequestedFor(hotel, input.deliver.date, input.deliver.time) : null;
-  if (requestedFor && input.deliver!.date > guest.checkOut) throw new Error("ご滞在中の日時をお選びください");
+  if (requestedFor && input.deliver!.date > guest.checkOut) throw new Error(tr("ご滞在中の日時をお選びください", "Please choose a time during your stay"));
   const aiMemberId = await getAiAgentMemberId(hotel.id);
 
   const tickets = await transaction(async (client) => {
     const { rowCount } = await client.query("update order_drafts set status = 'submitted', closed_at = now() where id = $1 and status = 'open'", [draftId]);
-    if (!rowCount) throw new Error("このご依頼はすでに確定または取り消し済みです");
+    if (!rowCount) throw new Error(tr("このご依頼はすでに確定または取り消し済みです", "This request has already been placed or cancelled"));
     return createTickets(client, {
       hotel, roomId: guest.roomId!, lines, note: input.note, requestedFor, source: "ai_chat", conversationId, createdBy: aiMemberId,
     });

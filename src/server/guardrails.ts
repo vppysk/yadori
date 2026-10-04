@@ -4,6 +4,7 @@ import { generateStructured } from "@/lib/llm/structured";
 import { queryOne } from "./db";
 import { recordLlmCall } from "./metrics";
 import { allCheckBodies } from "./reply-checks";
+import { tr } from "@/lib/i18n";
 
 // ガードレール（plan 4.7、docs/007_ai_settings.md）: 画面では設定せず、内部で常に判定する。
 // 前: 必ず人に引き継ぐ条件（安全・強い不満・スタッフと話したい・2回答えられない。guest-chat.ts）
@@ -49,6 +50,6 @@ export async function checkReply(hotelId: string, reply: string, conversationId?
   } catch (error) {
     // 判定できないときは出してしまうより止める
     console.warn("[guardrails] 後チェックに失敗", error);
-    return { ok: false, rule: "判定できなかった", reason: String(error), failure: classifyLlmError(error) };
+    return { ok: false, rule: tr("判定できなかった", "Could not be checked"), reason: String(error), failure: classifyLlmError(error) };
   }
 }

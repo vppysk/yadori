@@ -3,6 +3,7 @@ import { permissionKeys, requireMember } from "@/server/auth";
 import { getUsage } from "@/server/integrations-admin";
 import { INTEGRATION_USAGE_KEYS } from "../../../nav-items";
 import { UsageEditor } from "./usage-editor";
+import { tr } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,7 @@ export default async function IntegrationUsagePage({ params }: PageProps<"/admin
   const { integrationId } = await params;
   const member = await requireMember(`/admin/knowledge/integrations/${integrationId}`);
   const keys = await permissionKeys(member.id);
-  if (!INTEGRATION_USAGE_KEYS.some((k) => keys.has(k))) return <main className="p-8 text-sm text-ink-sub">連携の使い方を扱う権限がありません</main>;
+  if (!INTEGRATION_USAGE_KEYS.some((k) => keys.has(k))) return <main className="p-8 text-sm text-ink-sub">{tr("連携の使い方を扱う権限がありません", "You don't have permission for connected-system rules")}</main>;
   const usage = await getUsage(member.hotel_id, integrationId);
   if (!usage) notFound();
   return (
@@ -19,7 +20,7 @@ export default async function IntegrationUsagePage({ params }: PageProps<"/admin
       <div className="flex flex-col gap-1">
         <h1 className="text-[22px] font-bold">{usage.name}</h1>
         <p className="text-[13px] text-ink-sub">
-          {usage.active ? "AIがこのシステムを使うときの決まりです。" : "この連携先は停止中です（AIは使いません）。"}
+          {usage.active ? tr("AIがこのシステムを使うときの決まりです。", "Rules the AI follows when using this system.") : tr("この連携先は停止中です（AIは使いません）。", "This connection is paused (the AI won't use it).")}
         </p>
       </div>
       <UsageEditor key={usage.id} usage={usage} canEditRule={keys.has("settings.integration_rules")} canConfirm={keys.has("handling.integration_write.confirm")} />

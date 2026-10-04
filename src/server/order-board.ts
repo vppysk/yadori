@@ -4,6 +4,7 @@ import { getHotel, localNow } from "./hotel";
 import { recordWorkEvent } from "./metrics";
 import { createTickets, getCatalog, getRoom, listRooms, pickAssignee, toRequestedFor, type CatalogItem, type CreatedTicket, type Room } from "./orders";
 import { notifySupervisors } from "./staff-work";
+import { ALL_AREAS, LIST_SEP, roomLabel, tr } from "@/lib/i18n";
 
 // 管理PCのオーダーボード（plan 4.2）: ステータス別のカンバン（エリアで絞り込み、期限の近い順）、フロントでの電話・来訪オーダーの登録、上長による手動割り当て
 
@@ -64,7 +65,7 @@ export async function getBoard(hotelId: string, areaId: string | null, viewerId:
        t.status, t.weight, t.source, cm.display_name created_by_name, t.assignee_id, am.display_name assignee_name,
        t.due_at, t.done_at, case when t.status = 'done' then 0 else greatest(0, floor(extract(epoch from (now() - t.due_at)) / 60)) end::int overdue_minutes,
        case when t.status = 'done' then greatest(0, floor(extract(epoch from (t.done_at - t.due_at)) / 60)) else 0 end::int late_minutes,
-       (select string_agg(l.item_name || ' × ' || l.quantity, '、' order by l.id) from ticket_lines l where l.ticket_id = t.id) items,
+       (select string_agg(l.item_name || ' × ' || l.quantity, '${LIST_SEP}' order by l.id) from ticket_lines l where l.ticket_id = t.id) items,
        t.note, t.requested_for, t.dispatched_at is not null dispatched,
        case when t.dispatched_at is null then t.requested_for - make_interval(mins => $5) end dispatch_at,
        t.check_requested_at, t.check_source, t.check_message, t.check_reply, t.check_replied_at, t.check_eta_at, t.check_reply_note, t.guest_nudges,
@@ -110,7 +111,7 @@ export async function previewAssignment(member: Member, roomId: string, itemIds:
   const catalog = await getCatalog(hotel.id);
   return transaction(async (client) => {
     const room = await getRoom(client, hotel.id, roomId);
-    if (!room) throw new Error("部屋が見つかりません");
+    if (!room) throw new Error(tr("部屋が見つかりません", "Room not found"));
     const roles = [...new Set(itemIds.map((id) => catalog.find((c) => c.id === id)?.job_role_id).filter((r): r is string => Boolean(r)))];
     const result: AssignmentPreview = [];
     for (const roleId of roles) {
@@ -136,13 +137,13 @@ export type RegisterOrderInput = {
 export async function registerOrder(member: Member, input: RegisterOrderInput): Promise<CreatedTicket[]> {
   const hotel = await getHotel(member.hotel_id);
   const lines = input.lines.filter((l) => l.quantity > 0);
-  if (lines.length === 0) throw new Error("品目と数量を選んでください");
+  if (lines.length === 0) throw new Error(tr("品目と数量を選んでください", "Please choose items and quantities"));
   const requestedFor = input.deliver ? await toRequestedFor(hotel, input.deliver.date, input.deliver.time) : null;
   const tickets = await transaction((client) =>
     createTickets(client, { hotel, roomId: input.roomId, lines, note: input.note, requestedFor, source: input.source, createdBy: member.id }),
   );
   for (const t of tickets) {
-    await recordWorkEvent({ hotelId: hotel.id, ticketId: t.id, pattern: "order", handlerKind: "human", handler: member.job_title ?? "フロント", outcome: "resolved", signals: { phase: "intake", source: input.source } });
+    await recordWorkEvent({ hotelId: hotel.id, ticketId: t.id, pattern: "order", handlerKind: "human", handler: member.job_title ?? tr("フロント", "Front desk"), outcome: "resolved", signals: { phase: "intake", source: input.source } });
   }
   return tickets;
 }
@@ -158,7 +159,7 @@ export async function assignManually(member: Member, ticketId: string, toMemberI
       [ticketId, member.hotel_id],
     );
     const ticket = rows[0];
-    if (!ticket) throw new Error("割り当てられるオーダーではありません");
+    if (!ticket) throw new Error(tr("割り当てられるオーダーではありません", "This order can't be assigned"));
     const { rows: ok } = await client.query<{ name: string; on_duty: boolean }>(
       `select m.display_name name,
          exists (select 1 from member_duties d where d.member_id = m.id and d.job_role_id = $4 and (d.area_id is null or d.area_id = $5)) on_duty
@@ -167,7 +168,7 @@ export async function assignManually(member: Member, ticketId: string, toMemberI
       [toMemberId, localNow(hotel.timezone).date, member.hotel_id, ticket.job_role_id, ticket.area_id],
     );
     const target = ok[0];
-    if (!target) throw new Error("この人は今日出勤していないか、担当になれません");
+    if (!target) throw new Error(tr("この人は今日出勤していないか、担当になれません", "This person isn't on shift today or can't be assigned"));
     await client.query(
       `update tickets set assignee_id = $2, assigned_at = now(), dispatched_at = coalesce(dispatched_at, now()), status = 'new', started_at = null,
          assignment_mode = 'manual',
@@ -176,22 +177,37 @@ export async function assignManually(member: Member, ticketId: string, toMemberI
        where id = $1`,
       [ticketId, toMemberId],
     );
-    const reason = `${member.display_name}が手動で割り当て${target.on_duty ? "" : "（担当外）"}`;
+    const reason = tr(`${member.display_name}が手動で割り当て${target.on_duty ? "" : "（担当外）"}`, `Manually assigned by ${member.display_name}${target.on_duty ? "" : " (not on this duty)"}`);
     await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'reassigned', $2, $3, $4)", [
       ticketId, toMemberId, member.id, reason,
     ]);
     await client.query(
       "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_assigned', $2, $3, 'ticket', $4)",
-      [toMemberId, `${ticket.room_number}号室のオーダー（手動割り当て）`, `${member.display_name}が割り当てました`, ticketId],
+      [
+        toMemberId,
+        tr(`${ticket.room_number}号室のオーダー（手動割り当て）`, `Order for ${roomLabel(ticket.room_number)} (manual)`),
+        tr(`${member.display_name}が割り当てました`, `Assigned by ${member.display_name}`),
+        ticketId,
+      ],
     );
     // 前の担当者が向かっている途中かもしれないため、対応不要を知らせる
     if (ticket.assignee_id && ticket.assignee_id !== toMemberId) {
       await client.query(
         "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_released', $2, $3, 'ticket', $4)",
-        [ticket.assignee_id, `${ticket.room_number}号室のオーダーは対応不要になりました`, `${member.display_name}が${target.name}に割り当て直しました`, ticketId],
+        [
+          ticket.assignee_id,
+          tr(`${ticket.room_number}号室のオーダーは対応不要になりました`, `${roomLabel(ticket.room_number)} order no longer needs you`),
+          tr(`${member.display_name}が${target.name}に割り当て直しました`, `${member.display_name} reassigned it to ${target.name}`),
+          ticketId,
+        ],
       );
     }
-    await notifySupervisors(client, member.hotel_id, `${ticket.room_number}号室のオーダーを手動で割り当て`, `${member.display_name}が${target.name}に割り当て`, ticketId);
+    await notifySupervisors(
+      client, member.hotel_id,
+      tr(`${ticket.room_number}号室のオーダーを手動で割り当て`, `${roomLabel(ticket.room_number)} order assigned manually`),
+      tr(`${member.display_name}が${target.name}に割り当て`, `${member.display_name} assigned it to ${target.name}`),
+      ticketId,
+    );
   });
 }
 
@@ -203,7 +219,7 @@ export async function assignCandidates(hotelId: string): Promise<AssignCandidate
   return query<AssignCandidate>(
     `select m.id, m.display_name name,
        coalesce(json_agg(json_build_object('jobRoleId', d.job_role_id, 'areaId', d.area_id)) filter (where d.member_id is not null), '[]') duties,
-       coalesce(string_agg(r.name || ' ' || coalesce(a.name, '全館'), '、' order by r.name, a.sort nulls first), '担当なし') "dutyLabel"
+       coalesce(string_agg(r.name || ' ' || coalesce(a.name, '${ALL_AREAS}'), '${LIST_SEP}' order by r.name, a.sort nulls first), '${tr("担当なし", "No duties")}') "dutyLabel"
      from member_shifts sh join members m on m.id = sh.member_id
      left join member_duties d on d.member_id = m.id
      left join job_roles r on r.id = d.job_role_id left join areas a on a.id = d.area_id
@@ -217,6 +233,6 @@ export async function assignCandidates(hotelId: string): Promise<AssignCandidate
 // ホテルが違うチケットは assignManually・requestCheckBySupervisor がホテルで絞って弾く
 export async function ticketArea(ticketId: string): Promise<string | undefined> {
   const rows = await query<{ area_id: string | null }>("select area_id from tickets where id = $1", [ticketId]);
-  if (!rows[0]) throw new Error("オーダーが見つかりません");
+  if (!rows[0]) throw new Error(tr("オーダーが見つかりません", "Order not found"));
   return rows[0].area_id ?? undefined;
 }

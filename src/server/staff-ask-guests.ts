@@ -2,6 +2,7 @@ import { HANDOFF_LABELS } from "@/lib/handoff-kinds";
 import { fmtDate } from "./answer-context";
 import { addDays, query } from "./db";
 import { getGuestContext, searchReservations, type GuestContext, type GuestSummary } from "./integrations/pms";
+import { tr } from "@/lib/i18n";
 
 // AIに相談で特定のゲストに言及する（予約・客室管理システムと対応アラートから、そのゲストの情報を取る）。
 // 言及は2通り: 画面でゲストを選ぶ（予約番号）か、質問の文に部屋番号・お名前を書く。文からの読み取りはLLMに任せずコードで照合する
@@ -15,14 +16,14 @@ const MAX_GUESTS = 3;
 export type GuestMention = { reservationId: string; label: string };
 export type GuestSearchResult = GuestMention & { stay: string; status: string };
 
-export const mentionLabel = (g: { roomNumber: string; guestName: string }) => `${g.roomNumber}号室 ${g.guestName}様`;
+export const mentionLabel = (g: { roomNumber: string; guestName: string }) => tr(`${g.roomNumber}号室 ${g.guestName}様`, `Room ${g.roomNumber} ${g.guestName}`);
 
 function stayStatus(g: { checkIn: string; checkOut: string }, today: string): string {
-  if (g.checkIn > today) return "到着前";
-  if (g.checkOut < today) return "チェックアウト済み";
-  if (g.checkOut === today) return "本日チェックアウト";
-  if (g.checkIn === today) return "本日チェックイン";
-  return "滞在中";
+  if (g.checkIn > today) return tr("到着前", "Not arrived");
+  if (g.checkOut < today) return tr("チェックアウト済み", "Checked out");
+  if (g.checkOut === today) return tr("本日チェックアウト", "Checking out today");
+  if (g.checkIn === today) return tr("本日チェックイン", "Checking in today");
+  return tr("滞在中", "Staying");
 }
 
 const isStaying = (g: GuestSummary, today: string) => g.checkIn <= today && today <= g.checkOut;
@@ -35,7 +36,7 @@ function sortForStaff(guests: GuestSummary[], today: string): GuestSummary[] {
 // 画面のゲスト検索。空なら今日滞在中のゲストを出す。「1203号室」「太郎様」のような書き方も受ける。
 // 予約の検索のツールは、AIエージェントと検索するスタッフの両方に権限が要る（docs/007_ai_settings.md）
 export async function searchGuests(hotelId: string, today: string, text: string, staffMemberId: string): Promise<GuestSearchResult[]> {
-  const q = compact(text).replace(/(号室|様|さま|さん)$/, "");
+  const q = compact(text).replace(/(号室|様|さま|さん)$/, "").replace(/^(room|rm\.?|mr\.?|ms\.?|mrs\.?)/i, "");
   // 「別館105」は部屋番号で探してから棟を合わせる（予約・客室管理システムは棟なしの部屋番号で持つ）
   const room = q.match(/^(本館|別館)(\d{3,4})$/);
   const guests = await searchReservations(hotelId, {
@@ -49,7 +50,7 @@ export async function searchGuests(hotelId: string, today: string, text: string,
     .map((g) => ({
       reservationId: g.reservationId,
       label: mentionLabel(g),
-      stay: `${fmtDate(g.checkIn)}〜${fmtDate(g.checkOut)}`,
+      stay: `${fmtDate(g.checkIn)}${tr("〜", "–")}${fmtDate(g.checkOut)}`,
       status: stayStatus(g, today),
     }));
 }

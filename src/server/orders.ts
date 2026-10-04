@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
 import { localNow, type Hotel } from "./hotel";
+import { roomLabel, tr } from "@/lib/i18n";
 
 // 同じフロアの近い時間の依頼を同じ人にまとめる窓（plan 4.2 動線短縮）
 const BUNDLE_WINDOW_MINUTES = 10;
@@ -49,12 +50,12 @@ export async function listRooms(hotelId: string): Promise<Room[]> {
 
 // ホテル現地の日付と時刻から日時を作る（希望日時）。過去の時刻は受け付けない
 export async function toRequestedFor(hotel: Hotel, date: string, time: string): Promise<string> {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) throw new Error("お届けの日時を確認してください");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) throw new Error(tr("お届けの日時を確認してください", "Please check the delivery date and time"));
   const row = await queryOne<{ at: string; past: boolean }>(
     `select ${ISO_TIMESTAMP("x.at")} at, x.at < now() past from (select ($1::date + $2::time) at time zone $3 at) x`,
     [date, time, hotel.timezone],
   );
-  if (!row || row.past) throw new Error("お届けの時刻が過ぎています");
+  if (!row || row.past) throw new Error(tr("お届けの時刻が過ぎています", "That delivery time has already passed"));
   return row.at;
 }
 
@@ -88,17 +89,17 @@ export async function createTickets(client: PoolClient, params: CreateParams): P
   const note = params.note?.trim().slice(0, 300) || null;
   const requestedFor = params.requestedFor ?? null;
   const room = await getRoom(client, hotel.id, params.roomId);
-  if (!room) throw new Error("部屋が見つかりません");
+  if (!room) throw new Error(tr("部屋が見つかりません", "Room not found"));
   const catalog = await getCatalog(hotel.id);
   const byRole = new Map<string, { item: CatalogItem; quantity: number }[]>();
   for (const line of lines) {
-    if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 20) throw new Error("数量は1〜20にしてください");
+    if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 20) throw new Error(tr("数量は1〜20にしてください", "Quantity must be 1–20"));
     const item = catalog.find((c) => c.id === line.itemId);
-    if (!item) throw new Error("取り扱いのない品目です");
-    if (item.status !== "available") throw new Error(`${item.name}はただいま品切れです`);
+    if (!item) throw new Error(tr("取り扱いのない品目です", "This item is not offered"));
+    if (item.status !== "available") throw new Error(tr(`${item.name}はただいま品切れです`, `${item.name} is currently out of stock`));
     byRole.set(item.job_role_id, [...(byRole.get(item.job_role_id) ?? []), { item, quantity: line.quantity }]);
   }
-  if (byRole.size === 0) throw new Error("品目を選んでください");
+  if (byRole.size === 0) throw new Error(tr("品目を選んでください", "Please choose an item"));
 
   const scheduled = requestedFor !== null && Date.parse(requestedFor) - hotel.order_schedule_lead_minutes * 60_000 > Date.now();
   const created: CreatedTicket[] = [];
@@ -120,7 +121,12 @@ export async function createTickets(client: PoolClient, params: CreateParams): P
     }
     await client.query("insert into ticket_events (ticket_id, type, actor_id, reason) values ($1, 'created', $2, $3)", [
       ticketId, createdBy ?? null,
-      scheduled ? `お届け希望 ${fmtLocal(requestedFor!, hotel.timezone)}（${hotel.order_schedule_lead_minutes}分前に割り当て）` : null,
+      scheduled
+        ? tr(
+            `お届け希望 ${fmtLocal(requestedFor!, hotel.timezone)}（${hotel.order_schedule_lead_minutes}分前に割り当て）`,
+            `Requested for ${fmtLocal(requestedFor!, hotel.timezone)} (assigned ${hotel.order_schedule_lead_minutes} min before)`,
+          )
+        : null,
     ]);
     const assignee = scheduled ? undefined : await dispatchTicket(client, hotel, ticketId, createdBy);
     created.push({
@@ -139,7 +145,7 @@ export async function dispatchTicket(client: PoolClient, hotel: Hotel, ticketId:
   const { rows } = await client.query<{ job_role_id: string | null; area_id: string | null; room_id: string; room_number: string; items: string }>(
     `update tickets t set dispatched_at = now() where t.id = $1 and t.dispatched_at is null and t.status = 'new'
      returning t.job_role_id, t.area_id, t.room_id, t.room_number,
-       (select string_agg(l.item_name || ' × ' || l.quantity, '・' order by l.id) from ticket_lines l where l.ticket_id = t.id) items`,
+       (select string_agg(l.item_name || ' × ' || l.quantity, '${tr("・", ", ")}' order by l.id) from ticket_lines l where l.ticket_id = t.id) items`,
     [ticketId],
   );
   const ticket = rows[0];
@@ -154,14 +160,14 @@ export async function dispatchTicket(client: PoolClient, hotel: Hotel, ticketId:
     ]);
     await client.query(
       "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_assigned', $2, $3, 'ticket', $4)",
-      [assignee.id, `${ticket.room_number}号室のオーダー`, ticket.items, ticketId],
+      [assignee.id, tr(`${ticket.room_number}号室のオーダー`, `Order for ${roomLabel(ticket.room_number)}`), ticket.items, ticketId],
     );
   } else {
     await client.query(
       `insert into notifications (member_id, kind, title, body, ref_type, ref_id)
        select m.id, 'ticket_supervisor', $2, $3, 'ticket', $4
        from members m where m.hotel_id = $1 and m.kind = 'human' and m.active and has_permission(m.id, 'order.reassign')`,
-      [hotel.id, `${ticket.room_number}号室のオーダーに担当者がいません`, ticket.items, ticketId],
+      [hotel.id, tr(`${ticket.room_number}号室のオーダーに担当者がいません`, `No one is available for the ${roomLabel(ticket.room_number)} order`), ticket.items, ticketId],
     );
   }
   return assignee;
@@ -197,7 +203,7 @@ export async function assignUnassigned(hotel: Hotel, actorId?: string) {
       await lockAssignment(client, hotel.id);
       const { rows } = await client.query<{ job_role_id: string | null; area_id: string | null; room_id: string; room_number: string; items: string }>(
         `select t.job_role_id, t.area_id, t.room_id, t.room_number,
-           (select string_agg(l.item_name || ' × ' || l.quantity, '・' order by l.id) from ticket_lines l where l.ticket_id = t.id) items
+           (select string_agg(l.item_name || ' × ' || l.quantity, '${tr("・", ", ")}' order by l.id) from ticket_lines l where l.ticket_id = t.id) items
          from tickets t where t.id = $1 and t.assignee_id is null and t.status = 'new' for update`,
         [target.id],
       );
@@ -208,11 +214,11 @@ export async function assignUnassigned(hotel: Hotel, actorId?: string) {
       if (!assignee) return false;
       await client.query("update tickets set assignee_id = $2, assigned_at = now(), assignment_mode = 'auto' where id = $1", [target.id, assignee.id]);
       await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'assigned', $2, $3, $4)", [
-        target.id, assignee.id, actorId ?? null, `担当者なしだったため、出勤者に割り当て（${assignee.reason}）`,
+        target.id, assignee.id, actorId ?? null, tr(`担当者なしだったため、出勤者に割り当て（${assignee.reason}）`, `Was unassigned; assigned to on-shift staff (${assignee.reason})`),
       ]);
       await client.query(
         "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_assigned', $2, $3, 'ticket', $4)",
-        [assignee.id, `${ticket.room_number}号室のオーダー`, ticket.items, target.id],
+        [assignee.id, tr(`${ticket.room_number}号室のオーダー`, `Order for ${roomLabel(ticket.room_number)}`), ticket.items, target.id],
       );
       return true;
     });
@@ -257,8 +263,11 @@ export async function pickAssignee(
     id: picked.id,
     name: picked.name,
     reason: picked.bundle
-      ? "同じフロアの直近の依頼とまとめ"
-      : `${picked.area_duty ? "" : "エリアの担当が出勤していないため全館の担当 ・ "}本日の担当量が最も少ない（${picked.load}pt）`,
+      ? tr("同じフロアの直近の依頼とまとめ", "Bundled with a recent request on the same floor")
+      : tr(
+          `${picked.area_duty ? "" : "エリアの担当が出勤していないため全館の担当 ・ "}本日の担当量が最も少ない（${picked.load}pt）`,
+          `${picked.area_duty ? "" : "No area staff on shift, so hotel-wide staff · "}Lowest workload today (${picked.load} pt)`,
+        ),
   };
 }
 

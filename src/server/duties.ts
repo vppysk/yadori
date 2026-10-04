@@ -2,6 +2,7 @@ import type { Member } from "./auth";
 import { query } from "./db";
 import { getHotel, localNow } from "./hotel";
 import { assignUnassigned } from "./orders";
+import { tr } from "@/lib/i18n";
 
 // 担当設定（docs/005_order.md 2章）: スタッフごとに担当する役割×エリアを決める固定の担当表。area_id が null は全館
 // 出勤は現場スマホでオン／オフするだけで、割り当ての候補はこの担当表で決まる
@@ -46,7 +47,7 @@ export async function setDuty(actor: Member, memberId: string, jobRoleId: string
        $3::uuid is null or exists (select 1 from areas where id = $3 and hotel_id = $4) area`,
     [memberId, jobRoleId, areaId, actor.hotel_id],
   );
-  if (!ok.member || !ok.role || !ok.area) throw new Error("スタッフ・役割・エリアが見つかりません");
+  if (!ok.member || !ok.role || !ok.area) throw new Error(tr("スタッフ・役割・エリアが見つかりません", "Staff, role or area not found"));
   if (on) {
     await query("insert into member_duties (member_id, job_role_id, area_id) values ($1, $2, $3) on conflict do nothing", [memberId, jobRoleId, areaId]);
     await assignUnassigned(await getHotel(actor.hotel_id), actor.id);

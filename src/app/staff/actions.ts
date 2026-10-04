@@ -16,6 +16,7 @@ import {
   startShift,
   startTicket,
 } from "@/server/staff-work";
+import { tr } from "@/lib/i18n";
 
 // 現場スマホの操作。どれもログインと権限を確認してから実行し、監査ログに残す（plan 4.8）
 
@@ -49,7 +50,7 @@ export async function completeTicketAction(ticketId: string) {
 
 export async function declineTicketAction(ticketId: string, reason: string) {
   const member = await authorize("order.assignable");
-  const trimmed = reason.trim() || "理由の記載なし";
+  const trimmed = reason.trim() || tr("理由の記載なし", "No reason given");
   await declineTicket(member, ticketId, trimmed.slice(0, 200));
   await audit(member, "order.assignable", "ticket.decline", { type: "ticket", id: ticketId }, { reason: trimmed });
   refresh();
@@ -83,7 +84,7 @@ export async function askAiAction(
 ): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
   const member = await authorize("handling.consult");
   const trimmed = text.trim();
-  if (!trimmed) return { ok: false, error: "質問を入力してください" };
+  if (!trimmed) return { ok: false, error: tr("質問を入力してください", "Please enter a question") };
   const canViewGuests = await can(member.id, "handling.consult.guest");
   try {
     const result = await askAi(member, { sessionId, text: trimmed.slice(0, 1000), guestIds: canViewGuests ? guestIds.slice(0, 3) : [], canViewGuests });
@@ -94,7 +95,7 @@ export async function askAiAction(
     return { ok: true, sessionId: result.sessionId };
   } catch (error) {
     console.error("[askAiAction]", error);
-    return { ok: false, error: "いま答えられません。時間をおいてお試しください。" };
+    return { ok: false, error: tr("いま答えられません。時間をおいてお試しください。", "Can't answer right now. Please try again shortly.") };
   }
 }
 
@@ -107,8 +108,13 @@ export async function searchGuestsAction(text: string): Promise<{ ok: boolean; g
     return { ok: true, guests };
   } catch (error) {
     console.error("[searchGuestsAction]", error);
-    const denied = error instanceof Error && error.message.includes("権限");
-    return { ok: false, error: denied ? "予約を検索する権限がありません（上長に確認してください）" : "予約・客室管理システムに接続できませんでした" };
+    const denied = error instanceof Error && /権限|permission/i.test(error.message);
+    return {
+      ok: false,
+      error: denied
+        ? tr("予約を検索する権限がありません（上長に確認してください）", "You don't have permission to search reservations (ask your supervisor)")
+        : tr("予約・客室管理システムに接続できませんでした", "Couldn't connect to the property management system"),
+    };
   }
 }
 

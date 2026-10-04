@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { timingSafeEqual } from "node:crypto";
 import type { Member } from "./auth";
 import { query, queryOne } from "./db";
+import { tr } from "@/lib/i18n";
 
 // 実績の出力口の接続元（plan 4.5、docs/007_ai_settings.md）。当システムに接続してくる外部システム（外部システムのメンバー）。
 // 接続元ごとにトークンの環境変数名を持ち（秘密はDBに置かない）、送られてきたトークンで接続元を特定して、その接続元の権限を確認する
@@ -25,8 +26,8 @@ export async function listExportClients(hotelId: string): Promise<ExportClient[]
 export type ExportClientInput = { name: string; tokenEnv: string; active: boolean; canRead: boolean };
 
 function validate(input: ExportClientInput) {
-  if (!input.name.trim()) throw new Error("接続元の名前を入力してください");
-  if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(input.tokenEnv.trim())) throw new Error("トークンの環境変数は英大文字・数字・_ で入力してください");
+  if (!input.name.trim()) throw new Error(tr("接続元の名前を入力してください", "Please enter a client name"));
+  if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(input.tokenEnv.trim())) throw new Error(tr("トークンの環境変数は英大文字・数字・_ で入力してください", "The token env var must use A-Z, 0-9 and _"));
 }
 
 export async function addExportClient(actor: Member, input: ExportClientInput): Promise<string> {
@@ -45,7 +46,7 @@ export async function saveExportClient(actor: Member, id: string, input: ExportC
     "update members set display_name = $3, token_env = $4, active = $5 where id = $1 and hotel_id = $2 and kind = 'external_system' returning id",
     [id, actor.hotel_id, input.name.trim(), input.tokenEnv.trim(), input.active],
   );
-  if (!row) throw new Error("接続元が見つかりません");
+  if (!row) throw new Error(tr("接続元が見つかりません", "Client not found"));
   await setCanRead(actor, id, input.canRead);
 }
 
@@ -84,12 +85,12 @@ export const exportClientContext = new AsyncLocalStorage<ConnectedClient>();
 // ツールの実行時: 接続元の権限を確かめ、監査ログに残してからホテルを返す
 export async function authorizeExportCall(tool: string, detail: Record<string, unknown>): Promise<string> {
   const client = exportClientContext.getStore();
-  if (!client) throw new Error("接続元が特定できません");
+  if (!client) throw new Error(tr("接続元が特定できません", "Couldn't identify the client"));
   const ok = await queryOne<{ ok: boolean }>("select has_permission($1, $2) ok", [client.memberId, WORK_EVENTS_READ]);
   await query(
     `insert into audit_logs (hotel_id, member_id, permission_key, action, detail) values ($1, $2, $3, 'work_events.read', $4)`,
     [client.hotelId, client.memberId, WORK_EVENTS_READ, JSON.stringify({ tool, ...detail, ok: Boolean(ok?.ok) })],
   );
-  if (!ok?.ok) throw new Error("この接続元には実績の読み取りの権限がありません");
+  if (!ok?.ok) throw new Error(tr("この接続元には実績の読み取りの権限がありません", "This client has no permission to read work data"));
   return client.hotelId;
 }

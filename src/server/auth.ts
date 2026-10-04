@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { query, queryOne } from "./db";
+import { tr } from "@/lib/i18n";
 
 // デモ用のログイン: メンバーを選ぶだけ（パスワードなし）。本番はSupabase Authと members.auth_user_id で紐づける
 export const MEMBER_COOKIE = "hotel_agent_member";
@@ -48,8 +49,8 @@ export class PermissionError extends Error {}
 // サーバーアクション用: ログインと権限を確認し、監査ログに残すための情報を返す（plan 4.8）
 export async function authorize(permissionKey: string, targetId?: string): Promise<Member> {
   const member = await getCurrentMember();
-  if (!member) throw new PermissionError("ログインしてください");
-  if (!(await can(member.id, permissionKey, targetId))) throw new PermissionError("この操作の権限がありません");
+  if (!member) throw new PermissionError(tr("ログインしてください", "Please log in"));
+  if (!(await can(member.id, permissionKey, targetId))) throw new PermissionError(tr("この操作の権限がありません", "You don't have permission for this action"));
   return member;
 }
 

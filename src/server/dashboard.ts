@@ -6,6 +6,7 @@ import { getCostBasis, multiplierOf, PATTERN_LABELS, PATTERNS, tierOfModel, type
 import { query, queryOne, transaction } from "./db";
 import type { Pattern } from "./hotel";
 import { countOpenReviews, getTargets, type Targets } from "./model-review";
+import { tr } from "@/lib/i18n";
 
 // 経営ダッシュボード（docs/000_plan.md 4.3）: AIの成果・取りこぼし・満足度・AIの仕事の一覧・前提の値。
 // モデルの見直し（提案レポート・試験運用）は /manage/models（model-review.ts）
@@ -65,13 +66,13 @@ const modelName = (basis: CostBasis, modelId: string) => {
 };
 
 const MISS_LABELS: Record<string, string> = {
-  unanswered: "AIが答えられなかった",
-  safety: "安全に関わる内容（必ず人へ）",
-  talk: "スタッフとの会話を希望",
-  guardrail: "禁止事項に反した回答を止めた",
-  staff_assigned: "担当が人（直接受けた）",
-  complaint: "クレーム（必ず人へ）",
-  other: "その他の引き継ぎ",
+  unanswered: tr("AIが答えられなかった", "AI couldn't answer"),
+  safety: tr("安全に関わる内容（必ず人へ）", "Safety issues (always to staff)"),
+  talk: tr("スタッフとの会話を希望", "Wanted to talk to staff"),
+  guardrail: tr("禁止事項に反した回答を止めた", "Blocked replies that broke a rule"),
+  staff_assigned: tr("担当が人（直接受けた）", "Staff's job (handled directly)"),
+  complaint: tr("クレーム（必ず人へ）", "Complaints (always to staff)"),
+  other: tr("その他の引き継ぎ", "Other handoffs"),
 };
 
 export async function getDashboard(hotelId: string, days = 30): Promise<DashboardData> {
@@ -195,7 +196,7 @@ export async function getDashboard(hotelId: string, days = 30): Promise<Dashboar
     jobs,
     models: [
       ...REVIEWED_JOBS.map((j) => ({ key: jobKey(j.job, j.pattern), label: j.label, tier: models[jobKey(j.job, j.pattern)] })),
-      { key: "answer:complaint", label: "ゲストへの回答：クレーム", tier: COMPLAINT_TIER, fixed: true },
+      { key: "answer:complaint", label: tr("ゲストへの回答：クレーム", "Guest replies: complaints"), tier: COMPLAINT_TIER, fixed: true },
     ],
     reviews,
   };
@@ -204,7 +205,7 @@ export async function getDashboard(hotelId: string, days = 30): Promise<Dashboar
 // 満足度の目標（上限）。モデルの見直しの提案と、試験運用の自動中断に使う
 export async function saveTargets(member: Member, targets: Targets) {
   for (const v of [targets.unansweredMax, targets.aiTalkMax]) {
-    if (!Number.isFinite(v) || v <= 0 || v > 1) throw new Error("目標は0より大きく100%以下にしてください");
+    if (!Number.isFinite(v) || v <= 0 || v > 1) throw new Error(tr("目標は0より大きく100%以下にしてください", "Targets must be above 0 and at most 100%"));
   }
   await transaction(async (client) => {
     const { rows } = await client.query("select target_unanswered_rate_max, target_ai_talk_rate_max from hotels where id = $1", [member.hotel_id]);
@@ -212,7 +213,7 @@ export async function saveTargets(member: Member, targets: Targets) {
     await client.query("insert into config_revisions (hotel_id, kind, snapshot, note, created_by) values ($1, 'ai_assignments', $2, $3, $4)", [
       member.hotel_id,
       JSON.stringify({ before: rows[0], after: { target_unanswered_rate_max: targets.unansweredMax, target_ai_talk_rate_max: targets.aiTalkMax } }),
-      "満足度の目標の変更",
+      tr("満足度の目標の変更", "Changed satisfaction targets"),
       member.id,
     ]);
   });
@@ -222,10 +223,10 @@ export async function saveTargets(member: Member, targets: Targets) {
 export async function saveAssumptions(member: Member, input: Assumptions) {
   const num = (v: number | null, min: number, max: number) => {
     if (v === null) return null;
-    if (!Number.isFinite(v) || v < min || v > max) throw new Error("数値の範囲を確認してください");
+    if (!Number.isFinite(v) || v < min || v > max) throw new Error(tr("数値の範囲を確認してください", "Please check the value ranges"));
     return v;
   };
-  if (!(input.nightPremiumRate >= 0.25)) throw new Error("深夜割増は25%以上にしてください（労働基準法37条4項）");
+  if (!(input.nightPremiumRate >= 0.25)) throw new Error(tr("深夜割増は25%以上にしてください（労働基準法37条4項）", "The night premium must be at least 25% (Japan Labor Standards Act, Art. 37(4))"));
   await transaction(async (client) => {
     await client.query("update hotels set hourly_wage_jpy = $2, fx_usd_jpy = $3, night_premium_rate = $4 where id = $1", [
       member.hotel_id, input.wageJpy === null ? null : Math.round(num(input.wageJpy, 1, 100_000)!), num(input.fxUsdJpy, 1, 1000), num(input.nightPremiumRate, 0.25, 1),

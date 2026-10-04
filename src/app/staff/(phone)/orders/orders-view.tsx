@@ -12,17 +12,18 @@ import {
   startShiftAction,
   startTicketAction,
 } from "../../actions";
+import { LIST_SEP, tr } from "@/lib/i18n";
 
 // 新しい割り当てや再割り当てを拾うための再読み込み間隔
 const REFRESH_MS = 20_000;
 
 const WEIGHT = {
-  1: { label: "軽", className: "bg-primary-soft text-primary" },
-  2: { label: "中", className: "bg-weight-mid text-weight-mid-ink" },
-  3: { label: "重", className: "bg-weight-mid-ink text-white" },
+  1: { label: tr("軽", "Light"), className: "bg-primary-soft text-primary" },
+  2: { label: tr("中", "Medium"), className: "bg-weight-mid text-weight-mid-ink" },
+  3: { label: tr("重", "Heavy"), className: "bg-weight-mid-ink text-white" },
 } as const;
 
-const DECLINE_REASONS = ["別件で手が離せない", "在庫・備品が見つからない", "担当エリア外"];
+const DECLINE_REASONS = [tr("別件で手が離せない", "Busy with another task"), tr("在庫・備品が見つからない", "Item not in stock"), tr("担当エリア外", "Outside my area")];
 
 type Props = {
   memberName: string;
@@ -52,25 +53,25 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
   const newTickets = tickets.filter((t) => t.status === "new");
   const doingTickets = tickets.filter((t) => t.status === "doing");
   const list = tab === "new" ? newTickets : doingTickets;
-  const bundled = newTickets.filter((t) => t.assign_reason?.includes("同じフロア"));
+  const bundled = newTickets.filter((t) => t.assign_reason?.includes(tr("同じフロア", "same floor")));
   const run = (fn: () => Promise<void>) => startTransition(fn);
 
   return (
     <>
       <header className="flex flex-col gap-3 bg-dark px-5 pt-5 pb-3 text-canvas">
         <div className="flex items-center justify-between gap-3">
-          <h1 className="text-xl font-bold">あなたの担当</h1>
+          <h1 className="text-xl font-bold">{tr("あなたの担当", "Your orders")}</h1>
           <span className="truncate text-xs text-[#C9CFD1]">
             {memberName}
-            {duties?.labels.length ? ` ・ ${duties.labels.join("、")}` : ""}
+            {duties?.labels.length ? ` ・ ${duties.labels.join(LIST_SEP)}` : ""}
           </span>
         </div>
         {load && (
           <div className="flex flex-col gap-1.5">
             <div className="flex justify-between text-xs text-[#C9CFD1]">
-              <span>本日の担当量 {load.myPoints}pt</span>
+              <span>{tr(`本日の担当量 ${load.myPoints}pt`, `Today's workload ${load.myPoints} pt`)}</span>
               <span>
-                出勤中の{load.members}名の平均 {load.averagePoints}pt
+                {tr(`出勤中の${load.members}名の平均 ${load.averagePoints}pt`, `Avg of ${load.members} on shift ${load.averagePoints} pt`)}
               </span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-sm bg-dark-2">
@@ -91,7 +92,7 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
               onClick={() => setTab(key)}
               className={`min-h-11 rounded-lg text-sm font-bold ${tab === key ? "bg-canvas text-ink" : "text-[#C9CFD1]"}`}
             >
-              {key === "new" ? `未着手 ${newTickets.length}` : `対応中 ${doingTickets.length}`}
+              {key === "new" ? tr(`未着手 ${newTickets.length}`, `To do ${newTickets.length}`) : tr(`対応中 ${doingTickets.length}`, `In progress ${doingTickets.length}`)}
             </button>
           ))}
         </div>
@@ -100,11 +101,11 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
       <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3.5">
         {duties && !onShift && (
           <section className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3.5">
-            <h2 className="text-sm font-bold">出勤してください</h2>
+            <h2 className="text-sm font-bold">{tr("出勤してください", "Start your shift")}</h2>
             {duties.labels.length > 0 ? (
-              <p className="text-xs leading-normal text-ink-sub">出勤すると、担当（{duties.labels.join("、")}）のオーダーが自動で割り当てられます。</p>
+              <p className="text-xs leading-normal text-ink-sub">{tr(`出勤すると、担当（${duties.labels.join("、")}）のオーダーが自動で割り当てられます。`, `Once you start, orders for your duties (${duties.labels.join(", ")}) are assigned to you automatically.`)}</p>
             ) : (
-              <p className="text-xs leading-normal text-caution">担当の役割・エリアが決まっていません。上長に管理PCで設定してもらってください。</p>
+              <p className="text-xs leading-normal text-caution">{tr("担当の役割・エリアが決まっていません。上長に管理PCで設定してもらってください。", "You have no duties yet. Ask your supervisor to set them on the admin console.")}</p>
             )}
             <button
               type="button"
@@ -112,14 +113,14 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
               onClick={() => run(startShiftAction)}
               className="min-h-13 rounded-[10px] bg-primary text-base font-bold text-white disabled:opacity-50"
             >
-              出勤する
+              {tr("出勤する", "Start shift")}
             </button>
           </section>
         )}
 
         {tab === "new" && bundled.length > 1 && (
           <div className="rounded-lg bg-primary-soft px-3 py-2 text-xs leading-normal text-primary">
-            {bundled.map((t) => t.room_number).join("と")}は同じフロアのため、まとめてあなたに割り当てました
+            {tr(`${bundled.map((t) => t.room_number).join("と")}は同じフロアのため、まとめてあなたに割り当てました`, `Rooms ${bundled.map((t) => t.room_number).join(" & ")} are on the same floor, so they were bundled for you`)}
           </div>
         )}
 
@@ -139,13 +140,13 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
               </div>
               <div className="text-[15px] leading-relaxed">{t.items}</div>
               {t.requested_for && (
-                <div className="text-[13px] font-bold text-primary">{fmtTime(t.requested_for, timezone)} にお届け（時間指定）</div>
+                <div className="text-[13px] font-bold text-primary">{tr(`${fmtTime(t.requested_for, timezone)} にお届け（時間指定）`, `Deliver at ${fmtTime(t.requested_for, timezone)} (requested time)`)}</div>
               )}
-              {t.note && <div className="rounded-lg bg-canvas px-3 py-2 text-[13px] leading-normal">備考：{t.note}</div>}
+              {t.note && <div className="rounded-lg bg-canvas px-3 py-2 text-[13px] leading-normal">{tr("備考：", "Note: ")}{t.note}</div>}
               {t.check_pending && <CheckPanel ticket={t} pending={pending} run={run} />}
               {declining === t.id ? (
                 <div className="flex flex-col gap-2">
-                  <span className="text-xs text-ink-sub">理由を選ぶと、同じ担当の次の人に割り当てます</span>
+                  <span className="text-xs text-ink-sub">{tr("理由を選ぶと、同じ担当の次の人に割り当てます", "Pick a reason and it goes to the next person on the same duty")}</span>
                   {DECLINE_REASONS.map((reason) => (
                     <button
                       key={reason}
@@ -161,7 +162,7 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
                     </button>
                   ))}
                   <button type="button" onClick={() => setDeclining(null)} className="min-h-11 text-sm text-ink-sub">
-                    やめる
+                    {tr("やめる", "Cancel")}
                   </button>
                 </div>
               ) : (
@@ -174,7 +175,7 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
                       t.status === "new" ? "bg-primary text-white" : "border-2 border-primary bg-surface text-primary"
                     }`}
                   >
-                    {t.status === "new" ? "向かう" : "届けた"}
+                    {t.status === "new" ? tr("向かう", "On my way") : tr("届けた", "Delivered")}
                   </button>
                   {/* 状況の確認が来ているときは、確認のパネルの「対応できない」を使う */}
                   {t.status === "new" && !t.check_pending && (
@@ -183,7 +184,7 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
                       onClick={() => setDeclining(t.id)}
                       className="min-h-13 rounded-[10px] border border-line-input bg-surface px-3 text-[13px] text-ink-sub"
                     >
-                      対応できない
+                      {tr("対応できない", "Can't handle")}
                     </button>
                   )}
                 </div>
@@ -191,16 +192,16 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
             </article>
           );
         })}
-        {list.length === 0 && <div className="p-6 text-center text-sm text-ink-sub">このタブのオーダーはありません</div>}
+        {list.length === 0 && <div className="p-6 text-center text-sm text-ink-sub">{tr("このタブのオーダーはありません", "No orders here")}</div>}
 
         <div className="mt-auto flex justify-center gap-4 pt-4 text-xs text-ink-sub">
           {onShift && (
             <button type="button" disabled={pending} onClick={() => run(endShiftAction)} className="min-h-11 underline">
-              退勤する
+              {tr("退勤する", "End shift")}
             </button>
           )}
           <button type="button" onClick={() => run(logoutAction)} className="min-h-11 underline">
-            ログアウト
+            {tr("ログアウト", "Log out")}
           </button>
         </div>
       </main>
@@ -209,9 +210,9 @@ export function OrdersView({ memberName, duties, tickets, load, serverNow, timez
 }
 
 const CHECK_SOURCE: Record<string, string> = {
-  overdue: "お届けの期限を過ぎました",
-  guest: "ゲストから状況の確認がありました",
-  supervisor: "上長から状況の確認です",
+  overdue: tr("お届けの期限を過ぎました", "The delivery is past due"),
+  guest: tr("ゲストから状況の確認がありました", "The guest asked for a status update"),
+  supervisor: tr("上長から状況の確認です", "Your supervisor is asking for a status update"),
 };
 const ETA_CHOICES = [5, 10, 15];
 
@@ -221,18 +222,19 @@ function CheckPanel({ ticket: t, pending, run }: { ticket: MyTicket; pending: bo
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-caution bg-caution-soft p-3">
       <strong className="text-[13px] text-caution">
-        状況を教えてください：{CHECK_SOURCE[t.check_source ?? ""] ?? ""}
-        {t.check_message ? `「${t.check_message}」` : ""}
+        {tr("状況を教えてください：", "Status update needed: ")}
+        {CHECK_SOURCE[t.check_source ?? ""] ?? ""}
+        {t.check_message ? tr(`「${t.check_message}」`, ` "${t.check_message}"`) : ""}
       </strong>
       <input
         value={note}
         onChange={(e) => setNote(e.target.value)}
         maxLength={200}
-        placeholder="一言（任意・上長に届きます）"
-        aria-label="上長への一言"
+        placeholder={tr("一言（任意・上長に届きます）", "Short note (optional, goes to your supervisor)")}
+        aria-label={tr("上長への一言", "Note to supervisor")}
         className="min-h-11 rounded-lg border border-line-input bg-surface px-3 text-sm"
       />
-      <span className="text-xs text-ink-sub">向かっています（到着まで）</span>
+      <span className="text-xs text-ink-sub">{tr("向かっています（到着まで）", "On my way (arriving in)")}</span>
       <div className="grid grid-cols-3 gap-1.5">
         {ETA_CHOICES.map((m) => (
           <button
@@ -242,7 +244,7 @@ function CheckPanel({ ticket: t, pending, run }: { ticket: MyTicket; pending: bo
             onClick={() => run(() => replyCheckAction(t.id, "on_the_way", m, note))}
             className="min-h-11 rounded-lg bg-primary text-[13px] font-bold text-white disabled:opacity-50"
           >
-            {m}分
+            {tr(`${m}分`, `${m} min`)}
           </button>
         ))}
       </div>
@@ -252,7 +254,7 @@ function CheckPanel({ ticket: t, pending, run }: { ticket: MyTicket; pending: bo
         onClick={() => run(() => replyCheckAction(t.id, "cannot", null, note))}
         className="min-h-11 rounded-lg border border-line-input bg-surface text-[13px] disabled:opacity-50"
       >
-        対応できない（ほかの人に回す）
+        {tr("対応できない（ほかの人に回す）", "Can't handle (pass to someone else)")}
       </button>
     </div>
   );
@@ -264,7 +266,7 @@ function fmtTime(iso: string, timeZone: string): string {
 
 function ago(t: MyTicket, now: number): string {
   const minutes = (from: string) => Math.max(0, Math.floor((now - Date.parse(from)) / 60_000));
-  if (t.overdue || Date.parse(t.due_at) < now) return `期限超過 ${minutes(t.due_at)}分`;
-  if (t.status === "doing" && t.started_at) return `着手から${minutes(t.started_at)}分`;
-  return `${minutes(t.assigned_at)}分前`;
+  if (t.overdue || Date.parse(t.due_at) < now) return tr(`期限超過 ${minutes(t.due_at)}分`, `Overdue ${minutes(t.due_at)} min`);
+  if (t.status === "doing" && t.started_at) return tr(`着手から${minutes(t.started_at)}分`, `${minutes(t.started_at)} min since start`);
+  return tr(`${minutes(t.assigned_at)}分前`, `${minutes(t.assigned_at)} min ago`);
 }

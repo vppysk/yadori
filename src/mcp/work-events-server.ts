@@ -3,13 +3,14 @@ import { MCPServer } from "@mastra/mcp";
 import { z } from "zod";
 import { authorizeExportCall } from "@/server/export-clients";
 import { listWorkEvents, summarizeWorkEvents } from "@/server/export";
+import { tr } from "@/lib/i18n";
 
 // 実績の出力口のMCPサーバー（plan 4.5）。既存の管理システムや別のAIエージェントが直接問い合わせる。
 // 接続元はトークンで特定し（route.ts）、その接続元の実績の読み取り権限を確認して、呼び出しを監査ログに残す（export-clients.ts）
 
 const listEvents = createTool({
   id: "list_work_events",
-  description: "業務1件ごとの実績（パターン、時間帯、担当、トークン、所要時間、コスト、結果、代理指標）を取得する。既定は過去30日",
+  description: tr("業務1件ごとの実績（パターン、時間帯、担当、トークン、所要時間、コスト、結果、代理指標）を取得する。既定は過去30日", "Get per-task work records (pattern, time band, handler, tokens, duration, cost, outcome, signals). Defaults to the last 30 days"),
   inputSchema: z.object({
     since: z.string().optional().describe("開始日時（ISO 8601）"),
     until: z.string().optional().describe("終了日時（ISO 8601）"),
@@ -23,14 +24,14 @@ const listEvents = createTool({
 
 const summarize = createTool({
   id: "summarize_work_events",
-  description: "パターン×担当ごとの件数・コスト・解決率・平均所要時間の集計",
+  description: tr("パターン×担当ごとの件数・コスト・解決率・平均所要時間の集計", "Counts, cost, resolution rate and average duration by pattern × handler"),
   inputSchema: z.object({ days: z.number().int().min(1).max(365).optional().describe("集計日数（既定30）") }),
   execute: async ({ days }) => ({ summary: await summarizeWorkEvents(await authorizeExportCall("summarize_work_events", { days }), days ?? 30) }),
 });
 
 export const workEventsMcpServer = new MCPServer({
   id: "work-events",
-  name: "ホテル運営AIエージェント 実績",
+  name: tr("ホテル運営AIエージェント 実績", "Yadori work data"),
   version: "1.0.0",
   tools: { list_work_events: listEvents, summarize_work_events: summarize },
 });

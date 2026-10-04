@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { listLoginMembers, MEMBER_COOKIE } from "@/server/auth";
+import { tr } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +9,7 @@ async function login(formData: FormData) {
   "use server";
   const memberId = String(formData.get("memberId") ?? "");
   const members = await listLoginMembers();
-  if (!members.some((m) => m.id === memberId)) throw new Error("メンバーが見つかりません");
+  if (!members.some((m) => m.id === memberId)) throw new Error(tr("メンバーが見つかりません", "Member not found"));
   (await cookies()).set(MEMBER_COOKIE, memberId, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7 });
   const next = String(formData.get("next") ?? "");
   redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/staff/orders");
@@ -20,8 +21,8 @@ export default async function LoginPage({ searchParams }: PageProps<"/staff/logi
   return (
     <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-4 py-10">
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-bold">スタッフとしてログイン</h1>
-        <p className="text-sm text-ink-sub">デモ用です。メンバーを選ぶと、そのメンバーの権限で画面が表示されます。</p>
+        <h1 className="text-xl font-bold">{tr("スタッフとしてログイン", "Log in as staff")}</h1>
+        <p className="text-sm text-ink-sub">{tr("デモ用です。メンバーを選ぶと、そのメンバーの権限で画面が表示されます。", "Demo login. Pick a member to see the app with that member's permissions.")}</p>
       </div>
       <ul className="flex flex-col gap-2">
         {members.map((m) => (

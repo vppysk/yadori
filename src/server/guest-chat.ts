@@ -21,9 +21,10 @@ import { consultIntegrations } from "./integration-agent";
 import { usageRules } from "./integrations/mcp";
 import { allCheckBodies } from "./reply-checks";
 import { route, type RouteResult } from "./router";
+import { isEn, tr } from "@/lib/i18n";
 
 const HISTORY_LIMIT = 12;
-export const GUEST_MESSAGE_HEADING = "【ゲストのメッセージ】";
+export const GUEST_MESSAGE_HEADING = tr("【ゲストのメッセージ】", "[Guest message]");
 // 回答の主担当を決める優先順（重いものを優先）
 const PATTERN_PRIORITY: Pattern[] = ["complaint", "reservation", "external", "info", "order"];
 
@@ -82,7 +83,7 @@ export async function requestStaff(reservationId: string) {
   const hotel = await getHotel(guest.hotelId);
   const conversationId = await findOrCreateConversation(hotel, guest);
   const band = await currentTimeBand(hotel);
-  return handOffToStaff(hotel, guest, conversationId, "info", band?.id, "ゲストが画面の「スタッフと話す」を押した", { guestRequested: true });
+  return handOffToStaff(hotel, guest, conversationId, "info", band?.id, tr("ゲストが画面の「スタッフと話す」を押した", "The guest tapped \"Talk to staff\""), { guestRequested: true });
 }
 
 // 「スタッフと話す」の取り消し（押し間違い用）。スタッフが引き受ける前だけ
@@ -94,9 +95,14 @@ export async function cancelStaffRequest(reservationId: string) {
   const cancelled = await cancelGuestRequest(conversationId);
   if (!cancelled) {
     const accepted = (await activeGuestRequest(conversationId))?.status === "accepted";
-    return { cancelled, error: accepted ? "スタッフがすでに対応を始めているため、取り消せませんでした。" : "取り消せるご依頼はありません。" };
+    return {
+      cancelled,
+      error: accepted
+        ? tr("スタッフがすでに対応を始めているため、取り消せませんでした。", "A staff member has already started helping you, so this can't be cancelled.")
+        : tr("取り消せるご依頼はありません。", "There is nothing to cancel."),
+    };
   }
-  await insertMessage(conversationId, "assistant", "スタッフへのご連絡を取り消しました。引き続きこちらでご質問ください。");
+  await insertMessage(conversationId, "assistant", tr("スタッフへのご連絡を取り消しました。引き続きこちらでご質問ください。", "We've cancelled the request for staff. Feel free to keep asking here."));
   return { cancelled };
 }
 
@@ -144,24 +150,24 @@ async function handOffToStaff(
   // messageId: 引き継ぎのきっかけになったゲストの発言（ボタンのときはなし）
   options: { kind?: HandoffKind; reply?: string; guestRequested?: boolean; ordered?: boolean; messageId?: string } = {},
 ) {
-  const accepted = options.ordered ? "お届けの品は下の欄でお選びください。" : "";
+  const accepted = options.ordered ? tr("お届けの品は下の欄でお選びください。", "Please choose the items to deliver below. ") : "";
   const handoffId = await createHandoff({
     hotelId: hotel.id, kind: options.kind ?? "talk_request", conversationId, roomNumber: guest.roomNumber, summary, guestRequested: options.guestRequested,
     messageId: options.messageId,
   });
   // すでに依頼を受けている会話では、引き継ぎ・通知・実績を重ねて作らない
   if (!handoffId) {
-    const reply = `${accepted}すでにスタッフにおつなぎしています。こちらの画面でそのままお待ちください。`;
+    const reply = `${accepted}${tr("すでにスタッフにおつなぎしています。こちらの画面でそのままお待ちください。", "We're already connecting you with staff. Please wait on this screen.")}`;
     await insertMessage(conversationId, "assistant", reply);
     return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
   }
   const reply = options.reply ?? (options.ordered
-    ? `${accepted}あわせてスタッフにおつなぎします。こちらの画面でそのままお待ちください。`
-    : "承知しました。スタッフにおつなぎします。こちらの画面でそのままお待ちください。");
+    ? `${accepted}${tr("あわせてスタッフにおつなぎします。こちらの画面でそのままお待ちください。", "We're also connecting you with staff. Please wait on this screen.")}`
+    : tr("承知しました。スタッフにおつなぎします。こちらの画面でそのままお待ちください。", "Certainly. We're connecting you with a staff member. Please wait on this screen."));
   await insertMessage(conversationId, "assistant", reply);
   // 安全に関わる内容は「人と話したい」と別に数える（満足度の指標に混ぜない）
   const signals = options.kind === "safety" ? { safety: true } : { wants_staff: true };
-  await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern, timeBandId, handlerKind: "human", handler: "引き継ぎ", outcome: "handed_off", signals });
+  await recordWorkEvent({ hotelId: hotel.id, conversationId, pattern, timeBandId, handlerKind: "human", handler: tr("引き継ぎ", "Handoff"), outcome: "handed_off", signals });
   return { reply, citations: [] as Citation[], tickets: await listConversationTickets(conversationId) };
 }
 
@@ -191,7 +197,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
     return handOffToStaff(hotel, guest, conversationId, intents[0]?.pattern ?? "order", band?.id, text, {
       kind: "safety",
       messageId: userMessageId,
-      reply: "すぐにスタッフにおつなぎします。命に関わる緊急の場合は、ためらわず119番に通報してください。",
+      reply: tr("すぐにスタッフにおつなぎします。命に関わる緊急の場合は、ためらわず119番に通報してください。", "We're connecting you with staff right away. If it's a life-threatening emergency, please call 119 (ambulance/fire) immediately."),
     });
   }
   // 未完了のご依頼への催促: 「状況を確認する」と同じく担当者に確認し、遅れていればクレームとして引き継ぐ（docs/005_order.md 6章）
@@ -214,7 +220,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
     await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: complaint.summary, messageId: userMessageId });
   }
   if (complaints.length === 0 && routed.result.strong_emotion) {
-    await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: `強い不満: ${text}`, messageId: userMessageId });
+    await createHandoff({ hotelId: hotel.id, kind: "complaint", conversationId, roomNumber: guest.roomNumber, summary: tr(`強い不満: ${text}`, `Strong dissatisfaction: ${text}`), messageId: userMessageId });
   }
   // 未完了のオーダーがある会話での不満・催促（「まだ届かない」など）は、オーダーの催促として担当者に状況を確認する（docs/005_order.md 6章）
   if (!followUp && (complaints.length > 0 || routed.result.strong_emotion)) await checkOpenTicketsForComplaint(conversationId);
@@ -251,7 +257,7 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   // モデルが「確認します」と答えたのに一覧を空で返すことがあるため、そのときも答えられなかったとみなす
   const unanswered = answer?.unanswered_questions.length
     ? answer.unanswered_questions
-    : answer && /スタッフに確認|確認して(ご連絡|お知らせ)/.test(answer.reply)
+    : answer && /スタッフに確認|確認して(ご連絡|お知らせ)|check with (our|the) staff|get back to you/i.test(answer.reply)
       ? [text]
       : [];
   // 指示してもマークダウンの強調・見出しを出すことがあるため取り除く
@@ -259,9 +265,9 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   const failed = generated === "";
   if (failed) {
     // 例外がなく回答文だけが空だったときも、期待した出力が得られなかったものとして扱う
-    const { cause, detail } = failure ?? { cause: "invalid_output" as const, detail: "回答文が空だった" };
+    const { cause, detail } = failure ?? { cause: "invalid_output" as const, detail: tr("回答文が空だった", "The reply was empty") };
     await createHandoff({
-      hotelId: hotel.id, kind: "system_error", conversationId, roomNumber: guest.roomNumber, summary: `AIが回答を作れなかった質問: ${text}`,
+      hotelId: hotel.id, kind: "system_error", conversationId, roomNumber: guest.roomNumber, summary: tr(`AIが回答を作れなかった質問: ${text}`, `The AI couldn't write a reply to: ${text}`),
       messageId: userMessageId, failure: { stage: "answer", cause, detail, modelId: usage.modelId },
     });
   }
@@ -274,13 +280,13 @@ export async function handleGuestMessage(reservationId: string, text: string) {
       check.failure
         ? {
             hotelId: hotel.id, kind: "system_error", conversationId, roomNumber: guest.roomNumber,
-            summary: `AIの回答を確認できなかったため、ゲストに出していない。ゲストの発言: ${text}`, messageId: userMessageId,
-            failure: { stage: "guardrail", cause: check.failure.cause, detail: `${check.failure.detail}\n止めた回答: ${generated}`, modelId: modelIdFor("medium") },
+            summary: tr(`AIの回答を確認できなかったため、ゲストに出していない。ゲストの発言: ${text}`, `The AI reply couldn't be checked, so it wasn't sent. Guest said: ${text}`), messageId: userMessageId,
+            failure: { stage: "guardrail", cause: check.failure.cause, detail: `${check.failure.detail}\n${tr("止めた回答", "Blocked reply")}: ${generated}`, modelId: modelIdFor("medium") },
           }
         : {
             hotelId: hotel.id, kind: "guardrail_blocked", conversationId, roomNumber: guest.roomNumber,
-            summary: `AIの回答が決まり「${check.rule}」に反したため止めた。ゲストの発言: ${text}`, messageId: userMessageId,
-            failure: { detail: `理由: ${check.reason}\n止めた回答: ${generated}` },
+            summary: tr(`AIの回答が決まり「${check.rule}」に反したため止めた。ゲストの発言: ${text}`, `The AI reply broke the rule "${check.rule}" and was blocked. Guest said: ${text}`), messageId: userMessageId,
+            failure: { detail: `${tr("理由", "Reason")}: ${check.reason}\n${tr("止めた回答", "Blocked reply")}: ${generated}` },
           },
     );
   }
@@ -289,11 +295,15 @@ export async function handleGuestMessage(reservationId: string, text: string) {
   // 回答を作れなかったときはシステムの不具合として引き継ぎ済みのため重ねない
   if (!failed && isUnanswered && (await unansweredCount(conversationId)) >= 1) {
     await createHandoff({
-      hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: `同じ会話で2回答えられなかった。直近の質問: ${text}`,
+      hotelId: hotel.id, kind: "unanswerable", conversationId, roomNumber: guest.roomNumber, summary: tr(`同じ会話で2回答えられなかった。直近の質問: ${text}`, `Couldn't answer twice in the same conversation. Latest question: ${text}`),
       messageId: userMessageId,
     });
   }
-  const reply = failed ? "確認してすぐにご連絡いたします。少々お待ちください。" : !check.ok ? "担当のスタッフから改めてご案内いたします。少々お待ちください。" : generated;
+  const reply = failed
+    ? tr("確認してすぐにご連絡いたします。少々お待ちください。", "We'll check and get back to you shortly. Thank you for your patience.")
+    : !check.ok
+      ? tr("担当のスタッフから改めてご案内いたします。少々お待ちください。", "A staff member will follow up with you shortly. Thank you for your patience.")
+      : generated;
   const citations = failed ? [] : [...buildCitations(facilities, routed.result.facilities, reply, guest, today), ...autoUpdateCitations(autoUpdates, answer?.used_sources, reply)];
 
   const assistantMessageId = await insertMessage(conversationId, "assistant", reply, citations);
@@ -413,6 +423,65 @@ async function buildInstructions(params: {
     .filter(([id]) => usedIntegrations.includes(id) || integrationFacts)
     .map(([, body]) => body);
 
+  if (isEn) {
+    const enStatus = now.date < guest.checkIn ? "before arrival" : now.date >= guest.checkOut ? "after departure" : "currently staying";
+    return [
+      `You are the guest assistant of "${hotel.name}". Write only in English, and write only the message addressed directly to the guest.`,
+      "IMPORTANT: The hotel information you are given is incomplete. If the guest asks about a facility, service, item or nearby place that is not in it, it may still exist; you simply don't know. Never say the hotel doesn't have it, never say \"there is no ...\", and never offer something else as a substitute. Reply that you will check with our staff and get back to them, and add the question to unanswered_questions.",
+      "Answer questions about facility hours, menus and special notices using ONLY the [Latest hotel information] attached before the guest's message. Never guess anything that is not written there; say you will check with the staff and get back to the guest.",
+      "If no date is specified, answer for today when the guest is currently staying, or for the stay period when the guest has not arrived yet. If the information differs by date, explain which days are which.",
+      "[Special notice] entries take precedence over regular information. On days with a special notice, answer with the special notice and mention how it differs from usual.",
+      "If a facility or item is marked \"No information\", do not guess times etc.; say you will check with the staff and get back to the guest. Never repeat internal labels such as \"No information\" or \"Special notice\" verbatim.",
+      "Write dates briefly, like \"today\", \"tomorrow\" or \"10/21\" (no year).",
+      "For guests who have not arrived yet, do not say \"currently\" or \"today\"; frame the answer around their stay, e.g. \"During your stay (10/20–10/23), ...\".",
+      "Do not recommend services that are not in the hotel information (such as room service).",
+      "Never promise delivery times, time changes, ETAs or completion of in-room deliveries yourself. Only report what is written under [Request status]. If the guest wants to change the time, tell them they can use \"Change time\" under \"My requests\" on the screen.",
+      "Do not promise to \"prepare\" or \"arrange\" items or services that were not accepted as a delivery request (such as preferences the guest merely mentioned). For preferences, say \"Noted, we will share this with our staff.\"",
+      "Do not add \"I will check with the staff\" to questions you could answer.",
+      "Always answer hours etc. from the [Latest hotel information], not from earlier replies in the conversation (the information may have been updated).",
+      "Do not add facts that are not in the guest situation (such as time since arrival).",
+      "Never state that something does or does not exist unless the hotel information or excerpts say so (do not say \"we don't have that\"). Say you will check with the staff and get back to the guest, and put that question in unanswered_questions.",
+      "Example: if asked \"Do you have a gym?\" and no gym appears in the hotel information, reply like \"Let me check with our staff and get back to you shortly.\" Do not say there is no gym, and do not suggest a different facility as a substitute.",
+      "Do not use markdown (** or #).",
+      "The hotel information may be written in Japanese; translate it naturally into English for the guest.",
+      "",
+      "## Hotel instructions",
+      instruction,
+      "",
+      "## Rules you must follow",
+      ...checks.map((c) => `- ${c}`),
+      "",
+      "## Guest situation",
+      `- Now: ${now.date} ${now.time} (${enStatus})`,
+      `- Stay: ${guest.checkIn} (check-in) to ${guest.checkOut} (check-out), room ${guest.roomNumber}, ${guest.adults} adult(s)`,
+      ...(order ? orderInstructions(order) : []),
+      ...(orderUpdate ? [`- About the guest's open requests, tell them the following (do not say anything new was arranged): ${orderUpdate}`] : []),
+      "",
+      "## Request status (for deliveries, only say what is written here)",
+      ...(openTickets?.length ? openTickets.map((t) => `- ${t}`) : ["- No open requests"]),
+      ...(hasComplaint ? ["- The complaint has been passed to staff. Apologize and say a staff member will contact the guest."] : []),
+      ...guest.preloaded.flatMap((p) => ["", `## ${p.integrationName}: ${p.description}`, p.text]),
+      ...(integrationFacts ? ["", "## Information from connected systems (use only when relevant to the guest's message; never guess beyond it)", integrationFacts] : []),
+      ...(ruleLines.length ? ["", "## How to use connected-system information", ...ruleLines] : []),
+      ...(hasAuto
+        ? [
+            "",
+            "## How to use auto-fetched updates",
+            "- Use [Auto-fetched latest updates] only when relevant to the guest's question, and mention the time of the update. Do not guess anything not written (such as when service will resume).",
+            "- Put the names of the sources you used in used_sources.",
+          ]
+        : []),
+      ...(hasExternal
+        ? [
+            "",
+            "## How to use external information",
+            "- Content marked \"(External: ...)\" is managed by a third party. Do not copy that marker; instead attribute the source in the sentence, like \"According to ...\". Do not guess anything not written.",
+          ]
+        : []),
+      ...(hasAuto || hasExternal ? ["- For suspended trains or severe weather, suggest alternatives or allowing extra time, and offer to connect the guest with the front desk for details."] : []),
+    ].join("\n");
+  }
+
   return [
     `あなたは「${hotel.name}」のゲスト向けアシスタント。日本語だけで、ゲストに直接話しかける文章だけを書く。`,
     "施設の営業時間・メニューなどの情報と特記事項は、ゲストの発言の前に付いている【最新の館内情報】だけを根拠に答える。書かれていないことは推測せず、スタッフに確認してご連絡すると伝える。",
@@ -485,9 +554,9 @@ function withLatestKnowledge(params: {
   const { text, needsKnowledge, facilities, facilityNames, documents, autoUpdates } = params;
   if (!needsKnowledge) return text;
   return [
-    "【最新の館内情報】（ゲストの滞在日にかかる期間のもの。会話の中の過去の回答より、必ずこちらを優先する）",
+    tr("【最新の館内情報】（ゲストの滞在日にかかる期間のもの。会話の中の過去の回答より、必ずこちらを優先する）", "[Latest hotel information] (for the guest's stay dates; always takes precedence over earlier replies in the conversation)"),
     renderFacilities(facilities, facilityNames),
-    ...(documents.length ? ["", "【館内案内・マニュアルからの抜粋】", ...documents.map((d) => `・${d.title}: ${d.content}`)] : []),
+    ...(documents.length ? ["", tr("【館内案内・マニュアルからの抜粋】", "[Excerpts from the hotel guide and manuals]"), ...documents.map((d) => `・${d.title}: ${d.content}`)] : []),
     ...renderAutoUpdates(autoUpdates),
     "",
     GUEST_MESSAGE_HEADING,
@@ -501,8 +570,11 @@ function buildCitations(facilities: FacilityInfo[], requested: string[], reply: 
   const fields = facilities.flatMap((f) => f.fields);
   if (guest.checkIn > today && fields.some((x) => x.values.length > 0)) {
     // 適用期間は最初の項目（営業時間など）から出す。メニューの提供期間まで並べると読みにくいため
-    const periods = [...new Set(facilities.flatMap((f) => (f.fields[0]?.values ?? []).map((v) => `${fmtDate(v.from)}〜${v.to ? fmtDate(v.to) : ""}`)))];
-    citations.push({ kind: "stay_date", label: `ご滞在日の情報で回答${periods.length ? `・適用期間 ${periods.join("、")}` : ""}` });
+    const periods = [...new Set(facilities.flatMap((f) => (f.fields[0]?.values ?? []).map((v) => `${fmtDate(v.from)}${tr("〜", "–")}${v.to ? fmtDate(v.to) : ""}`)))];
+    citations.push({
+      kind: "stay_date",
+      label: tr(`ご滞在日の情報で回答${periods.length ? `・適用期間 ${periods.join("、")}` : ""}`, `Answered for your stay dates${periods.length ? ` · valid ${periods.join(", ")}` : ""}`),
+    });
   }
   return citations;
 }

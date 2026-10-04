@@ -5,13 +5,14 @@ import { listWebhooks } from "@/server/webhooks";
 import { ExportClientsSection } from "./export-clients-section";
 import { IntegrationsAside } from "./integrations-aside";
 import { WebhookSection } from "./webhook-section";
+import { tr } from "@/lib/i18n";
 
 // 外部連携の「つなぐ」（docs/007_ai_settings.md）: 連携先（MCPサーバー）の接続と、AIに使わせるツール。
 // 利用ルールと書き込みの確認は、現場が扱うため管理PCの「AIの設定」にある。
 // 実績の出力口（当システムに接続してくる側: MCPの接続元とWebhook）もここ
 export default async function IntegrationsLayout({ children }: LayoutProps<"/manage/integrations">) {
   const member = await requireMember("/manage/integrations");
-  if (!(await can(member.id, "settings.integrations"))) return <p className="text-sm text-ink-sub">外部連携の権限がありません</p>;
+  if (!(await can(member.id, "settings.integrations"))) return <p className="text-sm text-ink-sub">{tr("外部連携の権限がありません", "You don't have permission for integrations")}</p>;
   const [integrations, webhooks, clients] = await Promise.all([listIntegrations(member.hotel_id), listWebhooks(member.hotel_id), listExportClients(member.hotel_id)]);
   return (
     <div className="flex flex-1 flex-col gap-5 xl:flex-row">

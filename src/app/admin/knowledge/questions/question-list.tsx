@@ -6,6 +6,7 @@ import { GAP_REASON_LABELS, type GapReason } from "@/lib/gap-reasons";
 import type { GapEvidence, OpenGap } from "@/server/questions";
 import { answerQuestionAction, dismissQuestionAction, getConversationAction } from "../../actions";
 import { ConversationMessages, type PanelMessage } from "../../conversation-messages";
+import { roomLabel, tr } from "@/lib/i18n";
 
 const fmt = (iso: string) => new Date(iso).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
@@ -51,11 +52,11 @@ export function QuestionList({ questions }: { questions: OpenGap[] }) {
     <div className="flex flex-col gap-2">
       {notice && (
         <p role="status" className="rounded-lg bg-primary-soft px-3 py-2 text-xs leading-relaxed text-primary">
-          期間のある内容のため、資料として登録しました。案内情報で確認してから案内に使います。
-          <Link href="/admin/knowledge/sources" className="ml-1 font-bold underline underline-offset-2">資料を確認する</Link>
+          {tr("期間のある内容のため、資料として登録しました。案内情報で確認してから案内に使います。", "This has a date range, so it was added as a source. Review it before it's used for answers.")}
+          <Link href="/admin/knowledge/sources" className="ml-1 font-bold underline underline-offset-2">{tr("資料を確認する", "Review source")}</Link>
         </p>
       )}
-      {questions.length === 0 && <p className="text-sm text-ink-sub">未回答の質問はありません</p>}
+      {questions.length === 0 && <p className="text-sm text-ink-sub">{tr("未回答の質問はありません", "No unanswered questions")}</p>}
       {questions.map((q) => {
         const reasons = [...new Set(q.evidences.map((e) => e.reason))];
         if (q.id !== currentId) {
@@ -71,7 +72,7 @@ export function QuestionList({ questions }: { questions: OpenGap[] }) {
             >
               <span className="min-w-0 flex-1 truncate">{q.question}</span>
               <ReasonLabels reasons={reasons} />
-              <span className="shrink-0 text-xs text-ink-sub">{q.ask_count}回</span>
+              <span className="shrink-0 text-xs text-ink-sub">{tr(`${q.ask_count}回`, `${q.ask_count}×`)}</span>
             </button>
           );
         }
@@ -79,7 +80,7 @@ export function QuestionList({ questions }: { questions: OpenGap[] }) {
           <div key={q.id} className="flex flex-col gap-2 rounded-[10px] bg-caution-soft p-3.5">
             <div className="flex justify-between gap-3 text-sm">
               <strong>{q.question}</strong>
-              <span className="shrink-0 text-xs text-ink-sub">{q.ask_count}回 ・ 最後 {fmt(q.last_asked_at)}</span>
+              <span className="shrink-0 text-xs text-ink-sub">{tr(`${q.ask_count}回 ・ 最後 ${fmt(q.last_asked_at)}`, `${q.ask_count}× · last ${fmt(q.last_asked_at)}`)}</span>
             </div>
             {q.evidences.length > 0 && (
               <ul className="flex flex-col gap-1 text-xs">
@@ -91,34 +92,34 @@ export function QuestionList({ questions }: { questions: OpenGap[] }) {
                       disabled={!e.conversation_id || pending}
                       className="flex min-h-9 w-full items-center gap-2 rounded-md bg-surface px-2.5 text-left hover:bg-canvas disabled:opacity-60"
                     >
-                      <span className="shrink-0 text-ink-sub">{e.room_number ? `${e.room_number}号室` : "—"} ・ {fmt(e.asked_at)}</span>
+                      <span className="shrink-0 text-ink-sub">{e.room_number ? roomLabel(e.room_number) : "—"} ・ {fmt(e.asked_at)}</span>
                       <span className="shrink-0 rounded border border-line-input px-1.5 py-0.5">{GAP_REASON_LABELS[e.reason]}</span>
                       <span className="min-w-0 flex-1 truncate">{e.question}</span>
-                      <span className="shrink-0 font-bold text-primary">会話を見る</span>
+                      <span className="shrink-0 font-bold text-primary">{tr("会話を見る", "View chat")}</span>
                     </button>
                   </li>
                 ))}
               </ul>
             )}
             <label htmlFor={`ans-${q.id}`} className="flex justify-between text-xs text-ink-sub">
-              回答
-              {q.draft_answer && <span>スタッフの返信から作った下書き。確認して直してください</span>}
+              {tr("回答", "Answer")}
+              {q.draft_answer && <span>{tr("スタッフの返信から作った下書き。確認して直してください", "Draft from a staff reply. Please review and edit")}</span>}
             </label>
             <textarea
               id={`ans-${q.id}`}
               rows={3}
               value={answerOf(q)}
               onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
-              placeholder="例：ペット同伴は不可です。近隣のペットホテルは…"
+              placeholder={tr("例：ペット同伴は不可です。近隣のペットホテルは…", "e.g. Pets aren't allowed. A nearby pet hotel is…")}
               className="w-full rounded-lg border border-line-input bg-surface px-3 py-2.5 text-sm outline-none focus:border-primary"
             />
             {error && <p className="text-xs text-danger">{error}</p>}
             <div className="flex justify-end gap-2">
               <button type="button" disabled={pending} onClick={() => submit(q, "dismiss")} className="min-h-10 rounded-lg border border-line-input bg-surface px-3.5 text-sm">
-                案内しない
+                {tr("案内しない", "Don't answer")}
               </button>
               <button type="button" disabled={pending || !answerOf(q).trim()} onClick={() => submit(q, "answer")} className="min-h-10 rounded-lg bg-dark px-4 text-sm font-bold text-white disabled:opacity-50">
-                回答して登録
+                {tr("回答して登録", "Save answer")}
               </button>
             </div>
           </div>
@@ -126,17 +127,17 @@ export function QuestionList({ questions }: { questions: OpenGap[] }) {
       })}
 
       {conversation && (
-        <aside aria-label="根拠の会話" className="fixed inset-y-0 right-0 z-20 flex w-[420px] max-w-full flex-col border-l border-line bg-surface shadow-xl">
+        <aside aria-label={tr("根拠の会話", "Source conversation")} className="fixed inset-y-0 right-0 z-20 flex w-[420px] max-w-full flex-col border-l border-line bg-surface shadow-xl">
           <header className="flex items-start justify-between gap-3 border-b border-line px-5 pt-5 pb-4">
             <div className="flex flex-col gap-0.5">
-              <h2 className="text-lg font-bold">{conversation.evidence.room_number ? `${conversation.evidence.room_number}号室` : "会話"}</h2>
-              <p className="text-[13px] text-ink-sub">{GAP_REASON_LABELS[conversation.evidence.reason]} ・ 読むだけ</p>
+              <h2 className="text-lg font-bold">{conversation.evidence.room_number ? roomLabel(conversation.evidence.room_number) : tr("会話", "Conversation")}</h2>
+              <p className="text-[13px] text-ink-sub">{GAP_REASON_LABELS[conversation.evidence.reason]} ・ {tr("読むだけ", "Read only")}</p>
             </div>
-            <button type="button" onClick={() => setConversation(null)} aria-label="会話を閉じる" className="flex size-11 shrink-0 items-center justify-center rounded-lg text-xl text-ink-sub hover:bg-canvas">
+            <button type="button" onClick={() => setConversation(null)} aria-label={tr("会話を閉じる", "Close conversation")} className="flex size-11 shrink-0 items-center justify-center rounded-lg text-xl text-ink-sub hover:bg-canvas">
               ×
             </button>
           </header>
-          <ConversationMessages key={conversation.evidence.id} messages={conversation.messages} targetId={conversation.evidence.message_id} targetLabel="この質問" />
+          <ConversationMessages key={conversation.evidence.id} messages={conversation.messages} targetId={conversation.evidence.message_id} targetLabel={tr("この質問", "This question")} />
         </aside>
       )}
     </div>

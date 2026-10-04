@@ -3,6 +3,7 @@ import { query, queryOne, transaction } from "./db";
 import { sendWrite } from "./integration-agent";
 import { fetchToolDefinitions, syncTools, type Integration, type ToolRole } from "./integrations/mcp";
 import { extractChecks, listReplyChecks, replaceChecks, type ReplyCheck } from "./reply-checks";
+import { tr } from "@/lib/i18n";
 
 // 外部連携の設定（docs/007_ai_settings.md）。
 // つなぐ（/manage、開発者・経営）: 連携先の接続、AIに使わせるツール、システムが決まった場面で呼ぶツール、スタッフの確認の要否
@@ -66,13 +67,13 @@ export type ConnectionInput = {
 export async function saveConnection(member: Member, integrationId: string, input: ConnectionInput) {
   await transaction(async (client) => {
     const before = await getConnectionSnapshot(member.hotel_id, integrationId);
-    if (!before) throw new Error("連携先が見つかりません");
-    if (!input.name.trim()) throw new Error("連携先の名前を入力してください");
+    if (!before) throw new Error(tr("連携先が見つかりません", "Connection not found"));
+    if (!input.name.trim()) throw new Error(tr("連携先の名前を入力してください", "Please enter a connection name"));
     await client.query("update integrations set name = $3, endpoint_env = $4, token_env = $5, active = $6 where id = $1 and hotel_id = $2", [
       integrationId, member.hotel_id, input.name.trim(), input.endpointEnv.trim() || null, input.tokenEnv.trim() || null, input.active,
     ]);
     for (const role of ["reservation", "search"] as const) {
-      if (input.tools.filter((t) => t.role === role).length > 1) throw new Error(`「${ROLE_LABELS[role]}」に指定できるツールは1つです`);
+      if (input.tools.filter((t) => t.role === role).length > 1) throw new Error(tr(`「${ROLE_LABELS[role]}」に指定できるツールは1つです`, `Only one tool can be set to \"${ROLE_LABELS[role]}\"`));
     }
     for (const t of input.tools) {
       // システムが決まった場面で呼ぶツールは、スタッフの確認を挟めない（予約の確認・毎回読む情報）
@@ -82,7 +83,7 @@ export async function saveConnection(member: Member, integrationId: string, inpu
       );
     }
     await client.query("insert into config_revisions (hotel_id, kind, snapshot, note, created_by) values ($1, 'integrations', $2, $3, $4)", [
-      member.hotel_id, JSON.stringify({ before, after: input }), `外部連携「${input.name.trim()}」の接続の変更`, member.id,
+      member.hotel_id, JSON.stringify({ before, after: input }), tr(`外部連携「${input.name.trim()}」の接続の変更`, `Changed connection \"${input.name.trim()}\"`), member.id,
     ]);
   });
 }
@@ -95,9 +96,9 @@ async function getConnectionSnapshot(hotelId: string, integrationId: string) {
 
 export async function addIntegration(member: Member, input: { name: string; slug: string; endpointEnv: string; tokenEnv: string }): Promise<string> {
   const slug = input.slug.trim().toLowerCase();
-  if (!input.name.trim()) throw new Error("連携先の名前を入力してください");
-  if (!/^[a-z][a-z0-9_]{1,30}$/.test(slug)) throw new Error("記号は英小文字で始まる英数字・_（2〜31文字）にしてください");
-  if (!input.endpointEnv.trim()) throw new Error("接続先の環境変数を入力してください");
+  if (!input.name.trim()) throw new Error(tr("連携先の名前を入力してください", "Please enter a connection name"));
+  if (!/^[a-z][a-z0-9_]{1,30}$/.test(slug)) throw new Error(tr("記号は英小文字で始まる英数字・_（2〜31文字）にしてください", "The slug must start with a lowercase letter and use a-z, 0-9 or _ (2–31 chars)"));
+  if (!input.endpointEnv.trim()) throw new Error(tr("接続先の環境変数を入力してください", "Please enter the endpoint env var"));
   const [{ id }] = await query<{ id: string }>(
     "insert into integrations (hotel_id, name, kind, slug, endpoint_env, token_env) values ($1, $2, 'mcp', $3, $4, $5) returning id",
     [member.hotel_id, input.name.trim(), slug, input.endpointEnv.trim(), input.tokenEnv.trim() || null],
@@ -109,14 +110,14 @@ export async function addIntegration(member: Member, input: { name: string; slug
 
 export async function syncIntegration(member: Member, integrationId: string) {
   const integration = await findIntegration(member.hotel_id, integrationId);
-  if (!integration) throw new Error("連携先が見つかりません");
+  if (!integration) throw new Error(tr("連携先が見つかりません", "Connection not found"));
   return syncTools(integration);
 }
 
 export const ROLE_LABELS: Record<ToolRole, string> = {
-  reservation: "ゲストの予約の取得",
-  search: "予約の検索（スタッフのAI相談）",
-  preload: "ゲストの情報として毎回読む",
+  reservation: tr("ゲストの予約の取得", "Get guest reservation"),
+  search: tr("予約の検索（スタッフのAI相談）", "Search reservations (staff AI)"),
+  preload: tr("ゲストの情報として毎回読む", "Always read as guest info"),
 };
 
 // ---------- 使い方（管理PC） ----------
@@ -176,7 +177,7 @@ export async function getUsage(hotelId: string, integrationId: string): Promise<
 // 利用ルールを保存し、回答後にチェックすべき項目を抜き出して差し替える（抜き出しに失敗しても保存は通す）
 export async function saveUsageRule(member: Member, integrationId: string, body: string): Promise<{ checksUpdated: boolean }> {
   const integration = await findIntegration(member.hotel_id, integrationId);
-  if (!integration) throw new Error("連携先が見つかりません");
+  if (!integration) throw new Error(tr("連携先が見つかりません", "Connection not found"));
   const trimmed = body.trim().slice(0, 4000);
   const checks = await extractChecks(member.hotel_id, trimmed, "integration").catch((error) => {
     console.warn("[integrations] チェック項目を抜き出せなかった", error);
@@ -193,7 +194,7 @@ export async function saveUsageRule(member: Member, integrationId: string, body:
     if (checks) await replaceChecks(client, member.hotel_id, { type: "integration", integrationId }, checks);
     await client.query("insert into config_revisions (hotel_id, kind, snapshot, note, created_by) values ($1, 'integrations', $2, $3, $4)", [
       member.hotel_id, JSON.stringify({ before: { rule: before.rows[0]?.body ?? "" }, after: { rule: trimmed, checks: checks ?? null } }),
-      `「${integration.name}」の利用ルールの変更`, member.id,
+      tr(`「${integration.name}」の利用ルールの変更`, `Changed usage rules for \"${integration.name}\"`), member.id,
     ]);
   });
   return { checksUpdated: checks !== undefined };
@@ -205,7 +206,7 @@ export async function decideWrite(member: Member, writeId: string, approve: bool
     `select w.status from integration_writes w join integrations i on i.id = w.integration_id where w.id = $1 and i.hotel_id = $2`,
     [writeId, member.hotel_id],
   );
-  if (!write || !["pending_confirm", "held"].includes(write.status)) throw new Error("この書き込みは確認できません");
+  if (!write || !["pending_confirm", "held"].includes(write.status)) throw new Error(tr("この書き込みは確認できません", "This write can't be confirmed"));
   if (!approve) {
     await query("update integration_writes set status = 'rejected', confirmed_by = $2 where id = $1", [writeId, member.id]);
     return;

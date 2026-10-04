@@ -1,4 +1,5 @@
 import type { AdminNavItem } from "./admin-nav";
+import { tr } from "@/lib/i18n";
 
 // 案内情報（答える内容）のどれか1つでも扱える権限
 export const KNOWLEDGE_KEYS = ["knowledge.question.answer", "knowledge.facility.edit", "knowledge.notice.edit", "knowledge.document.register"];
@@ -15,14 +16,14 @@ export const ORDER_KEYS = ["order.board.view", "settings.items"];
 // unseenUpdates: 自動反映で内容が変わり、まだ誰も開いていない資料の数（資料を扱える人にだけバッジで出す。docs/006_guide_info.md）
 export function adminNavItems(keys: Set<string>, unseenUpdates = 0): AdminNavItem[] {
   const items: AdminNavItem[] = [
-    { href: "/admin/orders", label: "オーダー管理", allowed: ORDER_KEYS.some((k) => keys.has(k)) },
+    { href: "/admin/orders", label: tr("オーダー管理", "Orders"), allowed: ORDER_KEYS.some((k) => keys.has(k)) },
     {
       href: "/admin/knowledge",
-      label: "AIの設定",
+      label: tr("AIの設定", "AI settings"),
       allowed: GUEST_AI_KEYS.some((k) => keys.has(k)),
       badge: keys.has("knowledge.facility.edit") ? unseenUpdates : 0,
     },
-    { href: "/admin/handoffs", label: "対応アラート", allowed: keys.has("handling.complaint.view") },
+    { href: "/admin/handoffs", label: tr("対応アラート", "Alerts"), allowed: keys.has("handling.complaint.view") },
   ];
   return items.filter((i) => i.allowed !== false);
 }

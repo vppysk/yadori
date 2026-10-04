@@ -3,6 +3,7 @@
 // LLMは呼ばない（提案の埋め込みだけ取得する。LLM_MODE=mock ならモックの埋め込み）。何度実行しても入れ直すだけ
 import { embed } from "@/lib/llm/embeddings";
 import type { GapReason } from "@/lib/gap-reasons";
+import { isEn } from "@/lib/i18n";
 import { query, queryOne, transaction } from "@/server/db";
 
 const HOTEL_ID = "00000000-0000-0000-0000-000000000001";
@@ -21,7 +22,7 @@ type Evidence = {
 };
 type Gap = { question: string; draft?: string; evidences: Evidence[] };
 
-const GAPS: Gap[] = [
+const GAPS_JA: Gap[] = [
   {
     question: "近くにコインランドリーはありますか",
     draft: "ホテルから徒歩3分の場所にコインランドリーがございます。フロントで地図をお渡ししております。",
@@ -122,6 +123,111 @@ const GAPS: Gap[] = [
     ],
   },
 ];
+
+// 英語のデモ（NEXT_PUBLIC_APP_LOCALE=en）
+const GAPS_EN: Gap[] = [
+  {
+    question: "Is there a coin laundry nearby?",
+    draft: "There is a coin laundry a 3-minute walk from the hotel. The front desk can give you a map.",
+    evidences: [
+      {
+        room: "1011", hoursBefore: 20, at: 0, reason: "staff_answered", question: "Is there a coin laundry nearby?",
+        staffAnswer: "There's a coin laundry a 3-minute walk from the hotel. We can give you a map at the front desk.",
+        messages: [
+          ["user", "Is there a coin laundry nearby?"],
+          ["assistant", "I'm sorry, I don't have that information. I'll check with the staff and get back to you."],
+          ["staff", "This is Ken from the front desk. There's a coin laundry a 3-minute walk from the hotel. We can give you a map at the front desk. (Staff: Ken Yamamoto)"],
+        ],
+      },
+      {
+        room: "606", hoursBefore: 9, at: 0, reason: "ai_deferred", question: "Where can I do laundry?",
+        messages: [
+          ["user", "We're staying a week and need to do laundry. Is there somewhere we can?"],
+          ["assistant", "Sorry for the trouble. I'll check with the staff and get back to you."],
+        ],
+      },
+      {
+        room: "1403", hoursBefore: 5, at: 2, reason: "guest_unsatisfied", question: "Where is the coin laundry?",
+        messages: [
+          ["user", "Do you have a laundry service?"],
+          ["assistant", "Put your items in the laundry bag in your room and leave it at the front desk; they will be returned by 18:00 the next day."],
+          ["user", "No, I want to wash them myself. Where's the coin laundry?"],
+          ["assistant", "I'm sorry. I'll check with the staff and get back to you."],
+        ],
+      },
+    ],
+  },
+  {
+    question: "When is the breakfast lounge least crowded?",
+    draft: "The Breakfast Lounge is usually quieter before 7:30 and after 9:00.",
+    evidences: [
+      {
+        room: "610", hoursBefore: 18, at: 0, reason: "staff_answered", question: "When is the breakfast lounge least crowded?",
+        staffAnswer: "It's usually quieter before 7:30 and after 9:00.",
+        messages: [
+          ["user", "What time is the breakfast lounge least busy?"],
+          ["assistant", "We'll check and get back to you shortly. Thank you for your patience."],
+          ["staff", "This is Ken from the front desk. It's usually quieter before 7:30 and after 9:00. (Staff: Ken Yamamoto)"],
+        ],
+      },
+      {
+        room: "1204", hoursBefore: 7, at: 0, reason: "ai_failed", question: "How busy is breakfast?",
+        messages: [
+          ["user", "Will breakfast be crowded tomorrow?"],
+          ["assistant", "We'll check and get back to you shortly. Thank you for your patience."],
+        ],
+      },
+    ],
+  },
+  {
+    question: "Do the onsen hours change over New Year?",
+    draft: "On December 31 and January 1, Yukimi Onsen stays open until 2:00 a.m.",
+    evidences: [
+      {
+        room: "1210", hoursBefore: 15, at: 0, reason: "staff_answered", question: "Do the onsen hours change over New Year?",
+        staffAnswer: "On Dec 31 and Jan 1 the onsen is open until 2:00 a.m.",
+        messages: [
+          ["user", "We're staying over New Year. Is the onsen open late on New Year's Eve?"],
+          ["assistant", "Yukimi Onsen is normally open 6:00-24:00. I'll check with the staff about New Year hours and get back to you."],
+          ["staff", "This is Aiko, the supervisor. On Dec 31 and Jan 1 the onsen is open until 2:00 a.m. (Staff: Aiko Tanaka)"],
+        ],
+      },
+    ],
+  },
+  {
+    question: "Do I need to reserve parking?",
+    evidences: [
+      {
+        room: "1106", hoursBefore: 12, at: 0, reason: "handed_off", question: "Do I need to reserve parking?",
+        messages: [
+          ["user", "Do I need to book parking? Also I'd like to talk to a person."],
+          ["assistant", "Certainly. We're connecting you with a staff member. Please wait on this screen."],
+        ],
+      },
+      {
+        room: "915", hoursBefore: 4, at: 0, reason: "ai_failed", question: "Do I need to reserve parking?",
+        messages: [
+          ["user", "Do I need to reserve parking?"],
+          ["assistant", "A staff member will follow up with you shortly. Thank you for your patience."],
+        ],
+      },
+    ],
+  },
+  {
+    question: "Is there a pet hotel nearby?",
+    evidences: [
+      {
+        room: "503", hoursBefore: 10, at: 0, reason: "ai_guessed", question: "Is there a pet hotel nearby?",
+        messages: [
+          ["user", "We brought our dog. Is there somewhere nearby that can look after him?"],
+          ["assistant", "There should be a few pet hotels in the area. You may want to search online for details."],
+        ],
+      },
+    ],
+  },
+];
+
+const GAPS = isEn ? GAPS_EN : GAPS_JA;
 
 async function main() {
   const hotel = await queryOne<{ timezone: string }>("select timezone from hotels where id = $1", [HOTEL_ID]);

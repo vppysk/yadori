@@ -13,6 +13,7 @@
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
+    "db:reset:ja": "supabase db reset --sql-paths ./seed.ja.sql",
     "dev:shifts": "tsx --env-file=.env.local scripts/dev-start-shifts.ts",
     "try:guest": "tsx --env-file=.env.local scripts/try-guest-chat.ts",
     "dev:cron": "tsx --env-file=.env.local scripts/dev-cron.ts",
@@ -20,7 +21,12 @@
     "dev:seed-documents": "tsx --env-file=.env.local scripts/dev-seed-documents.ts",
     "dev:seed-activity": "tsx --env-file=.env.local scripts/dev-seed-activity.ts",
     "dev:seed-alerts": "tsx --env-file=.env.local scripts/dev-seed-alerts.ts",
-    "dev:seed-gaps": "tsx --env-file=.env.local scripts/dev-seed-gaps.ts"
+    "dev:seed-gaps": "tsx --env-file=.env.local scripts/dev-seed-gaps.ts",
+    "demo": "node scripts/with-env.mjs .env.local .env.demo.local -- next dev",
+    "demo:cron": "tsx --env-file=.env.local --env-file-if-exists=.env.demo.local scripts/dev-cron.ts",
+    "demo:setup": "supabase db reset && tsx --env-file=.env.local --env-file-if-exists=.env.demo.local scripts/dev-start-shifts.ts && tsx --env-file=.env.local --env-file-if-exists=.env.demo.local scripts/dev-seed-documents.ts && tsx --env-file=.env.local --env-file-if-exists=.env.demo.local scripts/dev-seed-activity.ts && tsx --env-file=.env.local --env-file-if-exists=.env.demo.local scripts/dev-seed-alerts.ts && tsx --env-file=.env.local --env-file-if-exists=.env.demo.local scripts/dev-seed-gaps.ts",
+    "demo:shifts": "tsx --env-file=.env.local --env-file-if-exists=.env.demo.local scripts/dev-start-shifts.ts",
+    "demo:try": "tsx --env-file=.env.local --env-file-if-exists=.env.demo.local scripts/try-guest-chat.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.55",

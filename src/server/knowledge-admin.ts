@@ -6,6 +6,7 @@ import { query, queryOne } from "./db";
 import { effectivePeriods, type FieldWithValues, type InfoValue, overlaps, parseValidRange, periodText } from "./facility-fields";
 import { getHotel, localNow } from "./hotel";
 import { recordLlmCall } from "./metrics";
+import { tr } from "@/lib/i18n";
 
 // 更新から長く経った項目に「要確認」を出す日数（plan 4.1 品質管理）
 export const STALE_DAYS = 90;
@@ -60,7 +61,7 @@ async function loadApprovedValues(facilityId: string) {
   }));
 }
 
-const valueLabel = (fieldName: string, v: { title: string | null }) => (v.title ? `${fieldName}「${v.title}」` : fieldName);
+const valueLabel = (fieldName: string, v: { title: string | null }) => (v.title ? tr(`${fieldName}「${v.title}」`, `${fieldName} "${v.title}"`) : fieldName);
 
 export async function getFacilityView(hotelId: string, facilityId: string): Promise<FacilityViewData | undefined> {
   const facility = await queryOne<{ id: string; name: string; kind: "facility" | "global"; updated_at: string }>(
@@ -112,7 +113,7 @@ function overriddenByNotice(fields: { name: string; values: { title: string | nu
 // 特記事項の登録前の確認: 優先して案内することになる値と、期間が重なる他の特記事項
 export async function previewNotice(hotelId: string, facilityId: string, startsAt: string, endsAt: string) {
   const view = await getFacilityView(hotelId, facilityId);
-  if (!view) throw new Error("施設が見つかりません");
+  if (!view) throw new Error(tr("施設が見つかりません", "Facility not found"));
   return {
     overrides: overriddenByNotice(view.fields, startsAt, endsAt),
     overlappingNotices: view.notices.filter((n) => n.starts_at < endsAt && startsAt < n.ends_at).map((n) => n.body),
@@ -144,10 +145,10 @@ export async function readDocument(hotelId: string, file: File): Promise<string>
     const { text } = await extractText(await getDocumentProxy(bytes), { mergePages: true });
     // PDFの字形によっては「⾵⾒」のような部首の文字で出るため、通常の漢字に揃える
     const normalized = text.normalize("NFKC").trim();
-    if (!normalized) throw new Error("PDFから文字を読み取れませんでした（画像だけのPDFは、画像として読み込んでください）");
+    if (!normalized) throw new Error(tr("PDFから文字を読み取れませんでした（画像だけのPDFは、画像として読み込んでください）", "Couldn't read text from the PDF (for image-only PDFs, upload them as images)"));
     return normalized;
   }
-  if (!file.type.startsWith("image/")) throw new Error("PDFか画像（PNG・JPEG）を選んでください");
+  if (!file.type.startsWith("image/")) throw new Error(tr("PDFか画像（PNG・JPEG）を選んでください", "Please choose a PDF or an image (PNG/JPEG)"));
   if (llmMode() === "mock") return "（モック）冬季営業のお知らせ";
 
   const startedAt = performance.now();

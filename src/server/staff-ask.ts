@@ -13,6 +13,9 @@ import { recordLlmCall } from "./metrics";
 import { consultIntegrations } from "./integration-agent";
 import { resolveGuests, type GuestMention } from "./staff-ask-guests";
 import { staffAskTier } from "./ai-jobs";
+import { isEn, tr } from "@/lib/i18n";
+
+const UNTITLED = tr("（無題）", "(untitled)");
 
 // スタッフ向けの相談相手（plan 4.1）: 新人が、ゲストと同じ知識ベース（マスタ・特記事項・マニュアル）に質問できる。
 // 会話（セッション）は人ごとに複数持てる。特定のゲストに言及すると、予約・客室管理システムと対応アラートから情報を取る（staff-ask-guests.ts）
@@ -33,7 +36,7 @@ async function ownSession(member: Member, sessionId: string): Promise<{ id: stri
 
 export async function listAskSessions(member: Member): Promise<AskSession[]> {
   return query<AskSession>(
-    `select c.id, coalesce(c.title, '（無題）') title, ${ISO_TIMESTAMP("coalesce(max(m.created_at), c.started_at)")} updated_at
+    `select c.id, coalesce(c.title, '${UNTITLED}') title, ${ISO_TIMESTAMP("coalesce(max(m.created_at), c.started_at)")} updated_at
      from conversations c left join messages m on m.conversation_id = c.id
      where c.channel = 'staff_ask' and c.staff_member_id = $1 and c.archived_at is null
      group by c.id having count(m.id) > 0
@@ -45,7 +48,7 @@ export async function listAskSessions(member: Member): Promise<AskSession[]> {
 export async function getAskSession(member: Member, sessionId: string): Promise<{ id: string; title: string; messages: AskMessage[] } | undefined> {
   const session = await ownSession(member, sessionId);
   if (!session) return undefined;
-  return { id: session.id, title: session.title ?? "（無題）", messages: await listMessages(session.id) };
+  return { id: session.id, title: session.title ?? UNTITLED, messages: await listMessages(session.id) };
 }
 
 async function listMessages(conversationId: string): Promise<AskMessage[]> {
@@ -70,7 +73,7 @@ export async function askAi(
   const hotel = await getHotel(member.hotel_id);
   const today = localNow(hotel.timezone).date;
   const session = params.sessionId ? await ownSession(member, params.sessionId) : undefined;
-  if (params.sessionId && !session) throw new Error("会話が見つかりません");
+  if (params.sessionId && !session) throw new Error(tr("会話が見つかりません", "Conversation not found"));
   const conversationId =
     session?.id ??
     (
@@ -110,6 +113,7 @@ export async function askAi(
     "【話題のゲスト】は予約・客室管理システムと対応アラートから取った、そのゲストの情報。書かれていることだけを使い、書かれていない要望や経緯を推測しない。料金・支払いは見られないので「フロントで確認してください」と答える。",
     "当てはまる予約が複数あるときや見つからないときは、推測で1人に決めず、部屋番号かお名前を確かめるよう返す。ゲストの話題でない質問には【話題のゲスト】を使わない。",
     `今日: ${now.date} ${now.time}`,
+    ...(isEn ? ["Answer in English (the information below may be in Japanese; translate it). Instead of 「上長に確認してください」, say \"Please check with your supervisor.\""] : []),
   ].join("\n");
   // 館内の情報は最後の質問と一緒に渡す（過去の回答の繰り返しを防ぐ。guest-chat.ts の withLatestKnowledge と同じ理由）
   const latest = [
@@ -130,7 +134,7 @@ export async function askAi(
   requestContext.set("tier", tier);
   requestContext.set("thinking", false);
   requestContext.set("instructions", instructions);
-  let reply = "うまく答えられませんでした。上長に確認してください。";
+  let reply = tr("うまく答えられませんでした。上長に確認してください。", "I couldn't answer that. Please check with your supervisor.");
   let usedSources: string[] | undefined;
   let usage: LlmUsage = { modelId: modelIdFor(tier), inputTokens: 0, outputTokens: 0, reasoningTokens: 0, ms: 0 };
   // 答えられなかったか（モデルごとの品質の比較に使う。docs/000_plan.md 4.3）
@@ -147,7 +151,7 @@ export async function askAi(
     reply = cleanReply(answer.reply) || reply;
     usage = answer.usage;
     usedSources = answer.used_sources;
-    unanswered = answer.unanswered_questions.length > 0 || /上長に確認/.test(reply);
+    unanswered = answer.unanswered_questions.length > 0 || /上長に確認|check with your supervisor/i.test(reply);
   } catch (error) {
     console.warn("[staff-ask] 回答を作れなかった", error);
   }
@@ -155,7 +159,7 @@ export async function askAi(
   // 根拠: 関係する施設の特記事項と、使ったマニュアル（類似度の高いもの）と、使った自動取得の情報
   const citations: Citation[] = [
     ...noticeCitations(facilities, [], `${text}\n${reply}`),
-    ...documents.filter((d) => d.similarity > 0.5).slice(0, 2).map((d) => ({ kind: "document" as const, label: `${d.title}（更新 ${fmtDate(d.updated_at)}）` })),
+    ...documents.filter((d) => d.similarity > 0.5).slice(0, 2).map((d) => ({ kind: "document" as const, label: tr(`${d.title}（更新 ${fmtDate(d.updated_at)}）`, `${d.title} (updated ${fmtDate(d.updated_at)})`) })),
     ...autoUpdateCitations(autoUpdates, usedSources, reply),
   ];
   const [{ id }] = await query<{ id: string }>(

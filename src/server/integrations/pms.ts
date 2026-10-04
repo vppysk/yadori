@@ -1,5 +1,6 @@
 import { query, queryOne } from "../db";
 import { callTool, listAiTools, memberMayUse, renderToolResult, type Integration } from "./mcp";
+import { tr } from "@/lib/i18n";
 
 // 予約・客室管理システムとの変換層。plan 3章「ゲスト文脈」、docs/007_ai_settings.md。
 // 会話の最初の予約の取得は本人確認に当たるため、連携係に選ばせず、/manage で「ゲストの予約の取得」に指定したツールをここで呼ぶ。
@@ -53,8 +54,8 @@ type RawReservation = {
 // ゲスト文脈プロバイダ: 予約内容と、毎回読むゲストの情報を取得する
 export async function getGuestContext(reservationId: string, options: { staffMemberId?: string } = {}): Promise<GuestContext | undefined> {
   const tool = await reservationTool("reservation");
-  if (!tool) throw new Error("ゲストの予約を取得する連携が設定されていません（/manage/integrations）");
-  if (options.staffMemberId && !(await memberMayUse(options.staffMemberId, tool.permission_key))) throw new Error("予約内容の取得の権限がありません");
+  if (!tool) throw new Error(tr("ゲストの予約を取得する連携が設定されていません（/manage/integrations）", "No connection is set up to get guest reservations (/manage/integrations)"));
+  if (options.staffMemberId && !(await memberMayUse(options.staffMemberId, tool.permission_key))) throw new Error(tr("予約内容の取得の権限がありません", "No permission to get reservation details"));
 
   const raw = await callTool<RawReservation>(tool.integration, tool.name, { reservation_id: reservationId }, { purpose: "guest_context", staffMemberId: options.staffMemberId });
   if (!raw || raw.error || raw.hotel_id !== tool.integration.hotel_id) return undefined;
@@ -102,7 +103,7 @@ export async function searchReservations(
 ): Promise<GuestSummary[]> {
   const tool = await reservationTool("search");
   if (!tool || tool.integration.hotel_id !== hotelId) return [];
-  if (!(await memberMayUse(staffMemberId, tool.permission_key))) throw new Error("予約の検索の権限がありません");
+  if (!(await memberMayUse(staffMemberId, tool.permission_key))) throw new Error(tr("予約の検索の権限がありません", "No permission to search reservations"));
   const { reservations } = await callTool<{ reservations: RawReservation[] }>(tool.integration, tool.name, { hotel_id: hotelId, ...params }, { purpose: "search", staffMemberId });
   const labels = new Map(
     (await query<{ id: string; label: string }>("select id, label from rooms where hotel_id = $1 and id = any($2)", [

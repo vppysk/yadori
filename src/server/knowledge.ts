@@ -1,6 +1,10 @@
 import { embed } from "@/lib/llm/embeddings";
 import { query } from "./db";
 import { effectivePeriods, type FieldWithValues, type InfoValue, overlaps, parseValidRange } from "./facility-fields";
+import { tr } from "@/lib/i18n";
+
+// 回答に渡すときの「全体」欄の名前
+export const HOTEL_WIDE = tr("館内全体", "Hotel-wide");
 
 export type FacilityInfo = {
   facility: string;
@@ -55,7 +59,7 @@ export async function getFacilityInfo(
       const own = values.filter((v) => v.facility_id === f.id);
       const fieldIds = [...new Set(own.map((v) => v.field_id))];
       return {
-        facility: f.kind === "global" ? "館内全体" : f.name,
+        facility: f.kind === "global" ? HOTEL_WIDE : f.name,
         fields: fieldIds.map((fieldId) => ({
           fieldId,
           name: own.find((v) => v.field_id === fieldId)!.field,

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { permissionKeys, requireMember } from "@/server/auth";
+import { tr } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 
@@ -9,5 +10,5 @@ export default async function OrdersIndex() {
   const keys = await permissionKeys(member.id);
   if (keys.has("order.board.view")) redirect("/admin/orders/board");
   if (keys.has("settings.items")) redirect("/admin/orders/duties");
-  return <main className="p-8 text-sm text-ink-sub">オーダー管理の権限がありません</main>;
+  return <main className="p-8 text-sm text-ink-sub">{tr("オーダー管理の権限がありません", "You don't have permission for orders")}</main>;
 }

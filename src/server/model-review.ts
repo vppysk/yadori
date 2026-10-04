@@ -6,6 +6,7 @@ import type { Member } from "./auth";
 import { callCostJpy, getCostBasis, multiplierOf, TIERS, tierOfModel, type CostBasis } from "./cost-basis";
 import { ISO_TIMESTAMP, query, queryOne, transaction } from "./db";
 import type { Pattern } from "./hotel";
+import { isEn, tr } from "@/lib/i18n";
 
 // モデルの見直し（docs/000_plan.md 4.3）: 定期評価 → 提案レポート → 承認（全部適用か試験運用）→ 自動中断。
 // 定期評価はLLMを使わず、過去30日の実績から計算する
@@ -136,7 +137,7 @@ function pessimisticDiff(from: TierStat, to: TierStat): number {
 
 const TIER_NAME: Record<ModelTier, string> = { small: "Lightning", medium: "Super", large: "Ultra" };
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
-const yen = (v: number) => `${v >= 0 ? "+" : "−"}${Math.round(Math.abs(v)).toLocaleString("ja-JP")}円`;
+const yen = (v: number) => (isEn ? `${v >= 0 ? "+" : "−"}¥${Math.round(Math.abs(v)).toLocaleString("ja-JP")}` : `${v >= 0 ? "+" : "−"}${Math.round(Math.abs(v)).toLocaleString("ja-JP")}円`);
 
 export type ReportDetail = {
   volume: number;
@@ -179,10 +180,10 @@ export function evaluateJob(basis: CostBasis, s: JobStats, hotelTargets: Targets
         kind: "switch", to, score: currentOk ? total : -1e9 + total,
         detail: { ...base, candidate: { tier: to, stat }, handoffsPerMonth, humanCostPerMonth, totalPerMonth: total, pessimisticTotalPerMonth: pessimistic },
         reason: [
-          currentOk ? null : `いまの${TIER_NAME[from]}は満足度の目標を外れています（答えられなかった ${pct(current.unansweredRate)}・AI起因の会話希望 ${pct(current.aiTalkRate)}）`,
-          `人に回る率 ${pct(current.handoffRate)}→${pct(stat.handoffRate)}（実測 ${current.n}件・${stat.n}件）`,
-          `総額 ${yen(total)}／月（悲観的に見ても ${yen(pessimistic)}）`,
-        ].filter(Boolean).join("。"),
+          currentOk ? null : tr(`いまの${TIER_NAME[from]}は満足度の目標を外れています（答えられなかった ${pct(current.unansweredRate)}・AI起因の会話希望 ${pct(current.aiTalkRate)}）`, `The current ${TIER_NAME[from]} misses the satisfaction targets (unanswered ${pct(current.unansweredRate)}, AI-caused staff requests ${pct(current.aiTalkRate)})`),
+          tr(`人に回る率 ${pct(current.handoffRate)}→${pct(stat.handoffRate)}（実測 ${current.n}件・${stat.n}件）`, `Handoff rate ${pct(current.handoffRate)} → ${pct(stat.handoffRate)} (measured on ${current.n} and ${stat.n} cases)`),
+          tr(`総額 ${yen(total)}／月（悲観的に見ても ${yen(pessimistic)}）`, `Total ${yen(total)}/month (${yen(pessimistic)} even in a pessimistic case)`),
+        ].filter(Boolean).join(tr("。", ". ")),
       };
       if (!best || best.kind === "trial" || candidate.score < best.score) best = candidate;
       continue;
@@ -190,17 +191,20 @@ export function evaluateJob(basis: CostBasis, s: JobStats, hotelTargets: Targets
     if (best?.kind === "switch") continue;
     const upgrade = TIERS.indexOf(to) > TIERS.indexOf(from);
     const why = !currentOk && upgrade
-      ? `いまの${TIER_NAME[from]}は満足度の目標を外れています（答えられなかった ${pct(current.unansweredRate)}・AI起因の会話希望 ${pct(current.aiTalkRate)}）`
+      ? tr(`いまの${TIER_NAME[from]}は満足度の目標を外れています（答えられなかった ${pct(current.unansweredRate)}・AI起因の会話希望 ${pct(current.aiTalkRate)}）`, `The current ${TIER_NAME[from]} misses the satisfaction targets (unanswered ${pct(current.unansweredRate)}, AI-caused staff requests ${pct(current.aiTalkRate)})`)
       : upgrade && breakevenPt !== null && breakevenPt <= TRIAL_BREAKEVEN_PT && current.handoffRate >= TRIAL_MIN_HANDOFF
-        ? `人に回る率 ${pct(current.handoffRate)}。${TIER_NAME[to]}は人に回る率が ${breakevenPt.toFixed(2)}ポイント下がれば元が取れます`
+        ? tr(
+            `人に回る率 ${pct(current.handoffRate)}。${TIER_NAME[to]}は人に回る率が ${breakevenPt.toFixed(2)}ポイント下がれば元が取れます`,
+            `Handoff rate is ${pct(current.handoffRate)}. ${TIER_NAME[to]} pays for itself if it lowers handoffs by ${breakevenPt.toFixed(2)} points`,
+          )
         : !upgrade && -aiCostPerMonth >= TRIAL_SAVING_JPY
-          ? `${TIER_NAME[to]}にするとAI費が ${yen(aiCostPerMonth)}／月`
+          ? tr(`${TIER_NAME[to]}にするとAI費が ${yen(aiCostPerMonth)}／月`, `Switching to ${TIER_NAME[to]} changes AI cost by ${yen(aiCostPerMonth)}/month`)
           : undefined;
     if (!why) continue;
     const candidate: Candidate = {
       kind: "trial", to, score: upgrade ? 0 : 1,
       detail: { ...base, candidate: { tier: to, stat: null }, handoffsPerMonth: null, humanCostPerMonth: null, totalPerMonth: null, pessimisticTotalPerMonth: null },
-      reason: `${why}。${TIER_NAME[to]}の実測がないため、一部で試して確かめます`,
+      reason: tr(`${why}。${TIER_NAME[to]}の実測がないため、一部で試して確かめます`, `${why}. There is no measured data for ${TIER_NAME[to]} yet, so try it on part of the traffic`),
     };
     if (!best || candidate.score < best.score) best = candidate;
   }
@@ -267,15 +271,15 @@ export async function approveReport(member: Member, reportId: string, decision: 
       [reportId, member.hotel_id],
     );
     const report = rows[0];
-    if (!report) throw new Error("この提案はすでに判断済みか、取り下げられています");
+    if (!report) throw new Error(tr("この提案はすでに判断済みか、取り下げられています", "This proposal has already been decided or withdrawn"));
     const { rows: model } = await client.query<{ tier: ModelTier }>("select tier from ai_models where hotel_id = $1 and job = $2 and pattern = $3 for update", [
       member.hotel_id, report.job, report.pattern,
     ]);
-    if (model[0]?.tier !== report.from_tier) throw new Error("いまのモデルが提案の時点から変わっています。次の定期評価を待ってください");
+    if (model[0]?.tier !== report.from_tier) throw new Error(tr("いまのモデルが提案の時点から変わっています。次の定期評価を待ってください", "The model has changed since this proposal. Please wait for the next review"));
     const label = `${jobLabel(report.job, report.pattern)}：${TIER_NAME[report.from_tier]}→${TIER_NAME[report.to_tier]}`;
     if (decision.mode === "apply") {
-      if (report.kind !== "switch") throw new Error("実測がないため、まず試験運用してください");
-      await revise(client, member.hotel_id, member.id, `提案の承認（全部適用）: ${label}。${report.reason}`, async () => {
+      if (report.kind !== "switch") throw new Error(tr("実測がないため、まず試験運用してください", "There is no measured data, so run a trial first"));
+      await revise(client, member.hotel_id, member.id, tr(`提案の承認（全部適用）: ${label}。${report.reason}`, `Approved proposal (applied to all): ${label}. ${report.reason}`), async () => {
         await client.query("update ai_models set tier = $4 where hotel_id = $1 and job = $2 and pattern = $3", [member.hotel_id, report.job, report.pattern, report.to_tier]);
       });
       await client.query("update model_reports set status = 'applied', decided_by = $2, decided_at = now() where id = $1", [reportId, member.id]);
@@ -283,9 +287,9 @@ export async function approveReport(member: Member, reportId: string, decision: 
     }
     const share = Number(decision.share);
     const days = Math.round(Number(decision.days));
-    if (!(share >= 0.01 && share <= 0.5)) throw new Error("割合は1〜50%にしてください");
-    if (!(days >= 1 && days <= 60)) throw new Error("期間は1〜60日にしてください");
-    await revise(client, member.hotel_id, member.id, `提案の承認（試験運用 ${Math.round(share * 100)}%・${days}日）: ${label}。${report.reason}`, async () => {
+    if (!(share >= 0.01 && share <= 0.5)) throw new Error(tr("割合は1〜50%にしてください", "Share must be 1–50%"));
+    if (!(days >= 1 && days <= 60)) throw new Error(tr("期間は1〜60日にしてください", "Duration must be 1–60 days"));
+    await revise(client, member.hotel_id, member.id, tr(`提案の承認（試験運用 ${Math.round(share * 100)}%・${days}日）: ${label}。${report.reason}`, `Approved proposal (trial ${Math.round(share * 100)}%, ${days} days): ${label}. ${report.reason}`), async () => {
       await client.query(
         `insert into model_trials (hotel_id, job, pattern, report_id, from_tier, tier, share, ends_at, created_by)
          values ($1, $2, $3, $4, $5, $6, $7, now() + make_interval(days => $8), $9)`,
@@ -300,7 +304,7 @@ export async function dismissReport(member: Member, reportId: string) {
   const rows = await query("update model_reports set status = 'dismissed', decided_by = $3, decided_at = now() where id = $1 and hotel_id = $2 and status = 'open' returning id", [
     reportId, member.hotel_id, member.id,
   ]);
-  if (rows.length === 0) throw new Error("この提案はすでに判断済みか、取り下げられています");
+  if (rows.length === 0) throw new Error(tr("この提案はすでに判断済みか、取り下げられています", "This proposal has already been decided or withdrawn"));
 }
 
 async function stop(client: PoolClient, hotelId: string, trialId: string, memberId: string | null, reason: string): Promise<boolean> {
@@ -310,15 +314,15 @@ async function stop(client: PoolClient, hotelId: string, trialId: string, member
   );
   const trial = rows[0];
   if (!trial) return false;
-  await revise(client, hotelId, memberId, `試験運用の中断: ${jobLabel(trial.job, trial.pattern)}の${TIER_NAME[trial.tier]}。${reason}`, async () => {
+  await revise(client, hotelId, memberId, tr(`試験運用の中断: ${jobLabel(trial.job, trial.pattern)}の${TIER_NAME[trial.tier]}。${reason}`, `Stopped trial: ${TIER_NAME[trial.tier]} for ${jobLabel(trial.job, trial.pattern)}. ${reason}`), async () => {
     await client.query("update model_trials set stopped_at = now(), stop_reason = $2 where id = $1", [trialId, reason]);
   });
   return true;
 }
 
 export async function stopTrial(member: Member, trialId: string) {
-  const stopped = await transaction((client) => stop(client, member.hotel_id, trialId, member.id, "手動で中断"));
-  if (!stopped) throw new Error("この試験運用はすでに終わっています");
+  const stopped = await transaction((client) => stop(client, member.hotel_id, trialId, member.id, tr("手動で中断", "Stopped manually")));
+  if (!stopped) throw new Error(tr("この試験運用はすでに終わっています", "This trial has already ended"));
 }
 
 // 試験運用の自動中断（cron から呼ぶ）: 試すモデルの実績が MIN_SAMPLES 件以上たまり、満足度の目標を外れたら止めて、承認できる人に通知する
@@ -338,8 +342,14 @@ export async function monitorTrials(hotelId: string): Promise<number> {
     const limit = base ? jobTargets(base, targets) : targets;
     if (!stat || stat.n < MIN_SAMPLES || meetsTargets(stat, limit)) continue;
     const reason = t.job === "answer"
-      ? `自動中断: 答えられなかった ${pct(stat.unansweredRate)}（目標 ${pct(limit.unansweredMax)}以下）・AI起因の会話希望 ${pct(stat.aiTalkRate)}（目標 ${pct(limit.aiTalkMax)}以下）、実測 ${stat.n}件`
-      : `自動中断: 答えられなかった ${pct(stat.unansweredRate)}（いまのモデルより悪い。基準 ${pct(limit.unansweredMax)}以下）、実測 ${stat.n}件`;
+      ? tr(
+          `自動中断: 答えられなかった ${pct(stat.unansweredRate)}（目標 ${pct(limit.unansweredMax)}以下）・AI起因の会話希望 ${pct(stat.aiTalkRate)}（目標 ${pct(limit.aiTalkMax)}以下）、実測 ${stat.n}件`,
+          `Auto-stopped: unanswered ${pct(stat.unansweredRate)} (target ≤ ${pct(limit.unansweredMax)}), AI-caused staff requests ${pct(stat.aiTalkRate)} (target ≤ ${pct(limit.aiTalkMax)}), measured on ${stat.n} cases`,
+        )
+      : tr(
+          `自動中断: 答えられなかった ${pct(stat.unansweredRate)}（いまのモデルより悪い。基準 ${pct(limit.unansweredMax)}以下）、実測 ${stat.n}件`,
+          `Auto-stopped: unanswered ${pct(stat.unansweredRate)} (worse than the current model; limit ≤ ${pct(limit.unansweredMax)}), measured on ${stat.n} cases`,
+        );
     const done = await transaction((client) => stop(client, hotelId, t.id, null, reason));
     if (!done) continue;
     stopped++;
@@ -347,7 +357,7 @@ export async function monitorTrials(hotelId: string): Promise<number> {
       `insert into notifications (member_id, kind, title, body, ref_type, ref_id)
        select id, 'model_trial_stopped', $2, $3, 'model_trial', $4 from members
        where hotel_id = $1 and kind = 'human' and active and has_permission(id, 'settings.ai_assignment')`,
-      [hotelId, `試験運用を自動で中断しました（${jobLabel(t.job, t.pattern)}）`, reason, t.id],
+      [hotelId, tr(`試験運用を自動で中断しました（${jobLabel(t.job, t.pattern)}）`, `A trial was stopped automatically (${jobLabel(t.job, t.pattern)})`), reason, t.id],
     );
   }
   return stopped;

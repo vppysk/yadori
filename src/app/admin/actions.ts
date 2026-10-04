@@ -19,6 +19,7 @@ import { answerGap, dismissGap, getConversationMessages, type AnswerResult, type
 import { acceptHandoff, closeHandoff, replyToGuest } from "@/server/staff-work";
 import { decideWrite, saveUsageRule } from "@/server/integrations-admin";
 import { saveInstructions } from "@/server/policy";
+import { tr } from "@/lib/i18n";
 
 // 管理PCの操作。ログインと権限（範囲付きなら対象の施設）を確認し、監査ログに残す（plan 4.8）
 
@@ -30,7 +31,7 @@ async function guard<T>(fn: () => Promise<T>): Promise<Result<T>> {
   } catch (error) {
     if (error instanceof PermissionError) return { ok: false, error: error.message };
     console.error("[admin action]", error);
-    return { ok: false, error: error instanceof Error ? error.message : "保存できませんでした" };
+    return { ok: false, error: error instanceof Error ? error.message : tr("保存できませんでした", "Couldn't save") };
   }
 }
 
@@ -63,8 +64,8 @@ export async function createInfoSourceAction(formData: FormData): Promise<Result
       body = file.type.startsWith("text/") || /\.(txt|md)$/.test(file.name) ? (await file.text()).normalize("NFKC") : await readDocument(member.hotel_id, file);
     }
     const title = String(formData.get("title") ?? "").trim().slice(0, 120) || fileName || "";
-    if (!title) throw new Error("資料の名前を入力してください");
-    if (!body.trim()) throw new Error("文章を入力するか、ファイルを選んでください");
+    if (!title) throw new Error(tr("資料の名前を入力してください", "Please enter a source name"));
+    if (!body.trim()) throw new Error(tr("文章を入力するか、ファイルを選んでください", "Please enter text or choose a file"));
     const id = await createSource(member, { title, fileName, body: body.slice(0, 50_000), isExternal });
     await audit(member, "knowledge.facility.edit", "source.create", { type: "info_source", id }, { title, file: fileName, external: isExternal });
     return id;
@@ -109,8 +110,8 @@ export async function addNoticeAction(facilityId: string, input: { body: string;
   return guard(async () => {
     const member = await authorize("knowledge.notice.edit", facilityId);
     const body = input.body.trim();
-    if (!body) throw new Error("内容を入力してください");
-    if (!input.startsAt || !input.endsAt || input.endsAt <= input.startsAt) throw new Error("期限は開始より後にしてください");
+    if (!body) throw new Error(tr("内容を入力してください", "Please enter the content"));
+    if (!input.startsAt || !input.endsAt || input.endsAt <= input.startsAt) throw new Error(tr("期限は開始より後にしてください", "The end must be after the start"));
     await addNotice(member, facilityId, { body: body.slice(0, 300), startsAt: input.startsAt, endsAt: input.endsAt });
     await audit(member, "knowledge.notice.edit", "notice.add", { type: "facility", id: facilityId }, { body });
     refresh();
@@ -120,7 +121,7 @@ export async function addNoticeAction(facilityId: string, input: { body: string;
 export async function deleteNoticeAction(noticeId: string): Promise<Result> {
   return guard(async () => {
     const notice = await queryOne<{ facility_id: string }>("select facility_id from special_notices where id = $1", [noticeId]);
-    if (!notice) throw new Error("特記事項が見つかりません");
+    if (!notice) throw new Error(tr("特記事項が見つかりません", "Special notice not found"));
     const member = await authorize("knowledge.notice.edit", notice.facility_id);
     await deleteNotice(member, noticeId);
     await audit(member, "knowledge.notice.edit", "notice.delete", { type: "notice", id: noticeId });
@@ -133,7 +134,7 @@ export async function answerQuestionAction(gapId: string, answer: string): Promi
   return guard(async () => {
     const member = await authorize("knowledge.question.answer");
     const trimmed = answer.trim();
-    if (!trimmed) throw new Error("回答を入力してください");
+    if (!trimmed) throw new Error(tr("回答を入力してください", "Please enter an answer"));
     const result = await answerGap(member, gapId, trimmed.slice(0, 2000));
     await audit(member, "knowledge.question.answer", "question.answer", { type: "knowledge_gap", id: gapId }, result);
     refresh();
@@ -251,8 +252,8 @@ export async function registerDocumentAction(formData: FormData): Promise<Result
         ? (await file.text()).normalize("NFKC")
         : await readDocument(member.hotel_id, file);
     }
-    if (!title) throw new Error("タイトルを入力してください");
-    if (!text) throw new Error("本文を入力するか、ファイルを選んでください");
+    if (!title) throw new Error(tr("タイトルを入力してください", "Please enter a title"));
+    if (!text) throw new Error(tr("本文を入力するか、ファイルを選んでください", "Please enter text or choose a file"));
     // 登録時の確認はしない（plan 4.1）。回答精度は定期評価で見る
     const id = await transaction((client) => insertDocument(client, { hotelId: member.hotel_id, title, source: "upload", text: text.slice(0, 50_000), createdBy: member.id }));
     await audit(member, "knowledge.document.register", "document.register", { type: "document", id }, { title });
@@ -271,7 +272,7 @@ export async function deleteDocumentAction(documentId: string): Promise<Result> 
 
 function parseOrThrow<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
   const parsed = schema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "入力内容を確認してください");
+  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? tr("入力内容を確認してください", "Please check your input"));
   return parsed.data;
 }
 

@@ -5,6 +5,7 @@ import { createHandoff } from "./handoffs";
 import type { Hotel } from "./hotel";
 import { dispatchTicket, fmtLocal, toRequestedFor } from "./orders";
 import { declineTicket } from "./staff-work";
+import { LIST_SEP, roomLabel, tr } from "@/lib/i18n";
 
 // オーダーの状況確認と催促（docs/005_order.md 6章）。
 // 期限切れ・ゲストの「状況を確認する」・上長の依頼で、今の担当者に状況を確認する。担当者は定型の返事と任意の一言で答える。
@@ -14,9 +15,9 @@ export type CheckSource = "overdue" | "guest" | "supervisor";
 export type CheckReply = "on_the_way" | "cannot";
 
 const SOURCE_LABEL: Record<CheckSource, string> = {
-  overdue: "お届けの期限を過ぎました",
-  guest: "ゲストから状況の確認がありました",
-  supervisor: "上長から状況の確認です",
+  overdue: tr("お届けの期限を過ぎました", "The delivery is past due"),
+  guest: tr("ゲストから状況の確認がありました", "The guest asked for a status update"),
+  supervisor: tr("上長から状況の確認です", "Your supervisor is asking for a status update"),
 };
 
 // ゲストの「状況を確認する」を続けて押せない間隔
@@ -47,11 +48,11 @@ export async function requestCheck(
     [ticketId, source, options.actorId ?? null, message],
   );
   await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'check_requested', $2, $3, $4)", [
-    ticketId, ticket.assignee_id, options.actorId ?? null, [SOURCE_LABEL[source], message].filter(Boolean).join("：") || null,
+    ticketId, ticket.assignee_id, options.actorId ?? null, [SOURCE_LABEL[source], message].filter(Boolean).join(tr("：", ": ")) || null,
   ]);
   await client.query(
     "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_check', $2, $3, 'ticket', $4)",
-    [ticket.assignee_id, `${ticket.room_number}号室 状況の確認`, [SOURCE_LABEL[source], message].filter(Boolean).join("：") || null, ticketId],
+    [ticket.assignee_id, tr(`${ticket.room_number}号室 状況の確認`, `${roomLabel(ticket.room_number)}: status check`), [SOURCE_LABEL[source], message].filter(Boolean).join(tr("：", ": ")) || null, ticketId],
   );
   return "requested";
 }
@@ -62,16 +63,16 @@ export async function replyCheck(member: Member, ticketId: string, reply: CheckR
   if (reply === "cannot") {
     await transaction(async (client) => {
       const updated = await markReplied(client, member, ticketId, "cannot", null, note);
-      if (!updated) throw new Error("確認に返事できるオーダーではありません");
+      if (!updated) throw new Error(tr("確認に返事できるオーダーではありません", "This order has no status check to reply to"));
     });
     // 着手済みでも返せる（確認への返事として）
-    await declineTicket(member, ticketId, note ?? "状況の確認に「対応できない」と返事", { allowStarted: true });
+    await declineTicket(member, ticketId, note ?? tr("状況の確認に「対応できない」と返事", "Replied \"can't handle\" to the status check"), { allowStarted: true });
     return;
   }
   const eta = ETA_CHOICES.includes(options.etaMinutes as (typeof ETA_CHOICES)[number]) ? options.etaMinutes! : 10;
   await transaction(async (client) => {
     const updated = await markReplied(client, member, ticketId, "on_the_way", eta, note);
-    if (!updated) throw new Error("確認に返事できるオーダーではありません");
+    if (!updated) throw new Error(tr("確認に返事できるオーダーではありません", "This order has no status check to reply to"));
     // 「向かっています」は着手とみなす
     const { rowCount } = await client.query("update tickets set status = 'doing', started_at = now() where id = $1 and status = 'new'", [ticketId]);
     if (rowCount) await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id) values ($1, 'started', $2, $2)", [ticketId, member.id]);
@@ -87,9 +88,9 @@ async function markReplied(client: PoolClient, member: Member, ticketId: string,
     [ticketId, member.id, reply, etaMinutes, note],
   );
   if (!rows[0]) return false;
-  const label = reply === "on_the_way" ? `向かっています（あと${etaMinutes}分）` : "対応できない";
+  const label = reply === "on_the_way" ? tr(`向かっています（あと${etaMinutes}分）`, `On my way (${etaMinutes} min)`) : tr("対応できない", "Can't handle");
   await client.query("insert into ticket_events (ticket_id, type, member_id, actor_id, reason) values ($1, 'check_replied', $2, $2, $3)", [
-    ticketId, member.id, [label, note].filter(Boolean).join("："),
+    ticketId, member.id, [label, note].filter(Boolean).join(tr("：", ": ")),
   ]);
   return true;
 }
@@ -98,11 +99,11 @@ async function markReplied(client: PoolClient, member: Member, ticketId: string,
 export async function requestCheckBySupervisor(member: Member, ticketId: string, message: string) {
   const result = await transaction(async (client) => {
     const { rows } = await client.query("select 1 from tickets where id = $1 and hotel_id = $2", [ticketId, member.hotel_id]);
-    if (!rows[0]) throw new Error("オーダーが見つかりません");
+    if (!rows[0]) throw new Error(tr("オーダーが見つかりません", "Order not found"));
     return requestCheck(client, ticketId, "supervisor", { actorId: member.id, message });
   });
-  if (result === "no_assignee") throw new Error("担当者がいないため確認できません。手動で割り当ててください");
-  if (result === "pending") throw new Error("担当者の返事を待っています");
+  if (result === "no_assignee") throw new Error(tr("担当者がいないため確認できません。手動で割り当ててください", "No one is assigned, so there's no one to ask. Please assign someone manually"));
+  if (result === "pending") throw new Error(tr("担当者の返事を待っています", "Waiting for the assignee's reply"));
 }
 
 // ---------- ゲストの「状況を確認する」 ----------
@@ -114,34 +115,41 @@ export async function nudgeFromGuest(hotel: Hotel, conversationId: string, ticke
   const ticket = await queryOne<{ status: string; dispatched: boolean; requested_for: string | null; cooling: boolean; overdue: boolean; items: string }>(
     `select status, dispatched_at is not null dispatched, requested_for,
        last_nudged_at > now() - make_interval(mins => $3) cooling, due_at < now() overdue,
-       (select string_agg(item_name || '×' || quantity, '、' order by id) from ticket_lines where ticket_id = t.id) items
+       (select string_agg(item_name || '×' || quantity, '${LIST_SEP}' order by id) from ticket_lines where ticket_id = t.id) items
      from tickets t where id = $1 and conversation_id = $2`,
     [ticketId, conversationId, NUDGE_COOLDOWN_MINUTES],
   );
-  if (!ticket || !["new", "doing"].includes(ticket.status)) throw new Error("このご依頼は完了しています");
+  if (!ticket || !["new", "doing"].includes(ticket.status)) throw new Error(tr("このご依頼は完了しています", "This request is already complete"));
   // 時間指定で割り当て前なら、予定の時刻を伝えるだけ
   if (!ticket.dispatched && ticket.requested_for) {
-    return { message: `${fmtLocal(ticket.requested_for, hotel.timezone)}にお届けする予定です。` };
+    return { message: tr(`${fmtLocal(ticket.requested_for, hotel.timezone)}にお届けする予定です。`, `It's scheduled for ${fmtLocal(ticket.requested_for, hotel.timezone)}.`) };
   }
-  if (ticket.cooling) return { message: "担当のスタッフに確認しています。少々お待ちください。" };
+  if (ticket.cooling) return { message: tr("担当のスタッフに確認しています。少々お待ちください。", "We're checking with the staff member in charge. Thank you for your patience.") };
 
   const nudges = await transaction(async (client) => {
     const { rows } = await client.query<{ guest_nudges: number }>(
       "update tickets set guest_nudges = guest_nudges + 1, last_nudged_at = now() where id = $1 returning guest_nudges",
       [ticketId],
     );
-    await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'guest_nudged', $2)", [ticketId, `${rows[0].guest_nudges}回目`]);
+    await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'guest_nudged', $2)", [ticketId, tr(`${rows[0].guest_nudges}回目`, `#${rows[0].guest_nudges}`)]);
     await requestCheck(client, ticketId, "guest");
     return rows[0].guest_nudges;
   });
-  if (ticket.overdue || nudges >= 2) await complaintForOrder(hotel.id, conversationId, ticketId, roomNumber, `${ticket.items}のお届けが遅れ、ゲストから状況の確認（${nudges}回目${ticket.overdue ? "・期限超過" : ""}）`);
-  return { message: "担当のスタッフに状況を確認しています。わかり次第こちらに表示します。" };
+  if (ticket.overdue || nudges >= 2)
+    await complaintForOrder(
+      hotel.id, conversationId, ticketId, roomNumber,
+      tr(
+        `${ticket.items}のお届けが遅れ、ゲストから状況の確認（${nudges}回目${ticket.overdue ? "・期限超過" : ""}）`,
+        `Delivery of ${ticket.items} is late; the guest asked for an update (#${nudges}${ticket.overdue ? ", past due" : ""})`,
+      ),
+    );
+  return { message: tr("担当のスタッフに状況を確認しています。わかり次第こちらに表示します。", "We're checking with the staff member in charge and will show the update here.") };
 }
 
 // チャットでの催促（ルーターの order_follow_up）: 未完了のご依頼それぞれに「状況を確認する」と同じ処理をし、返事の文を作る
 export async function followUpOrders(hotel: Hotel, conversationId: string, roomNumber: string): Promise<string | undefined> {
   const open = await query<{ id: string; items: string }>(
-    `select t.id, (select string_agg(item_name || '×' || quantity, '、' order by id) from ticket_lines where ticket_id = t.id) items
+    `select t.id, (select string_agg(item_name || '×' || quantity, '${LIST_SEP}' order by id) from ticket_lines where ticket_id = t.id) items
      from tickets t where t.conversation_id = $1 and t.status in ('new', 'doing') order by t.created_at`,
     [conversationId],
   );
@@ -149,7 +157,7 @@ export async function followUpOrders(hotel: Hotel, conversationId: string, roomN
   const lines: string[] = [];
   for (const ticket of open) {
     const { message } = await nudgeFromGuest(hotel, conversationId, ticket.id, roomNumber);
-    lines.push(`ご依頼の${ticket.items}は、${message}`);
+    lines.push(tr(`ご依頼の${ticket.items}は、${message}`, `About your ${ticket.items}: ${message}`));
   }
   return lines.join("\n");
 }
@@ -171,7 +179,7 @@ export async function checkOpenTicketsForComplaint(conversationId: string) {
   for (const { id } of open) {
     await transaction(async (client) => {
       await client.query("update tickets set guest_nudges = guest_nudges + 1, last_nudged_at = now() where id = $1", [id]);
-      await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'guest_nudged', 'チャットでの不満・催促')", [id]);
+      await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'guest_nudged', $2)", [id, tr("チャットでの不満・催促", "Complaint or follow-up in chat")]);
       await requestCheck(client, id, "guest");
     });
   }
@@ -183,24 +191,26 @@ export async function checkOpenTicketsForComplaint(conversationId: string) {
 // 回答係に渡す未完了のご依頼の状況（回答係はこれ以外のお届けの状況を言わない）
 export async function describeOpenTickets(conversationId: string, timezone: string): Promise<string[]> {
   const rows = await query<{ items: string; status: string; dispatched: boolean; requested_for: string | null; pending: boolean; reply: string | null; eta: string | null }>(
-    `select (select string_agg(item_name || '×' || quantity, '、' order by id) from ticket_lines where ticket_id = t.id) items,
+    `select (select string_agg(item_name || '×' || quantity, '${LIST_SEP}' order by id) from ticket_lines where ticket_id = t.id) items,
        t.status, t.dispatched_at is not null dispatched, t.requested_for,
        t.check_requested_at is not null and t.check_replied_at is null pending, t.check_reply reply, t.check_eta_at eta
      from tickets t where t.conversation_id = $1 and t.status in ('new', 'doing') order by t.created_at`,
     [conversationId],
   );
   return rows.map((r) => {
-    const when = r.requested_for ? `${fmtLocal(r.requested_for, timezone)}にお届けの予定` : "できるだけ早くお届け";
+    const when = r.requested_for
+      ? tr(`${fmtLocal(r.requested_for, timezone)}にお届けの予定`, `scheduled for ${fmtLocal(r.requested_for, timezone)}`)
+      : tr("できるだけ早くお届け", "as soon as possible");
     const state = r.pending
-      ? "担当のスタッフに状況を確認中"
+      ? tr("担当のスタッフに状況を確認中", "checking with the staff member in charge")
       : r.reply === "on_the_way"
-        ? `スタッフが向かっている${r.eta ? `（${fmtLocal(r.eta, timezone)}ごろ）` : ""}`
+        ? tr(`スタッフが向かっている${r.eta ? `（${fmtLocal(r.eta, timezone)}ごろ）` : ""}`, `staff is on the way${r.eta ? ` (around ${fmtLocal(r.eta, timezone)})` : ""}`)
         : r.status === "doing"
-          ? "スタッフが準備・移動中"
+          ? tr("スタッフが準備・移動中", "staff is preparing it")
           : r.dispatched
-            ? "受付済み"
-            : "時間指定で受付済み";
-    return `${r.items}: ${when}。${state}`;
+            ? tr("受付済み", "received")
+            : tr("時間指定で受付済み", "received with a requested time");
+    return tr(`${r.items}: ${when}。${state}`, `${r.items}: ${when}; ${state}`);
   });
 }
 
@@ -211,34 +221,34 @@ export async function rescheduleTicket(
   params: { conversationId: string; ticketId: string; date: string; time: string; until?: string; checkOut: string },
 ): Promise<string> {
   const { conversationId, ticketId, date, time, until, checkOut } = params;
-  if (date > checkOut) throw new Error("ご滞在中の日時をお選びください");
+  if (date > checkOut) throw new Error(tr("ご滞在中の日時をお選びください", "Please choose a time during your stay"));
   const requestedFor = await toRequestedFor(hotel, date, time);
-  const label = `${fmtLocal(requestedFor, hotel.timezone)}${until ? `〜${until}` : ""}`;
+  const label = `${fmtLocal(requestedFor, hotel.timezone)}${until ? `${tr("〜", "–")}${until}` : ""}`;
   return transaction(async (client) => {
     const { rows } = await client.query<{ status: string; assignee_id: string | null; dispatched: boolean; room_number: string; items: string }>(
       `select t.status, t.assignee_id, t.dispatched_at is not null dispatched, t.room_number,
-         (select string_agg(item_name || '×' || quantity, '、' order by id) from ticket_lines where ticket_id = t.id) items
+         (select string_agg(item_name || '×' || quantity, '${LIST_SEP}' order by id) from ticket_lines where ticket_id = t.id) items
        from tickets t where t.id = $1 and t.conversation_id = $2 for update`,
       [ticketId, conversationId],
     );
     const ticket = rows[0];
-    if (!ticket || !["new", "doing"].includes(ticket.status)) throw new Error("このご依頼は完了しています");
+    if (!ticket || !["new", "doing"].includes(ticket.status)) throw new Error(tr("このご依頼は完了しています", "This request is already complete"));
     // 向かっている途中の人とぶつからないよう、対応中は自動で変えず担当者に希望を伝える
     if (ticket.status === "doing") {
-      await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'rescheduled', $2)", [ticketId, `対応中のため担当者に伝えた: ${label}`]);
-      const result = await requestCheck(client, ticketId, "guest", { message: `お届けは${label}をご希望です` });
+      await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'rescheduled', $2)", [ticketId, tr(`対応中のため担当者に伝えた: ${label}`, `In progress, so told the assignee: ${label}`)]);
+      const result = await requestCheck(client, ticketId, "guest", { message: tr(`お届けは${label}をご希望です`, `Guest would like it at ${label}`) });
       return result === "requested"
-        ? `${ticket.items}はスタッフが準備・移動中のため、${label}のご希望を担当のスタッフに伝えました。`
-        : `${ticket.items}は担当のスタッフに確認中です。${label}のご希望もあわせてお伝えします。`;
+        ? tr(`${ticket.items}はスタッフが準備・移動中のため、${label}のご希望を担当のスタッフに伝えました。`, `Staff is already preparing your ${ticket.items}, so we've passed on your request for ${label}.`)
+        : tr(`${ticket.items}は担当のスタッフに確認中です。${label}のご希望もあわせてお伝えします。`, `We're checking on your ${ticket.items} and will pass on your request for ${label}.`);
     }
     const later = Date.parse(requestedFor) - hotel.order_schedule_lead_minutes * 60_000 > Date.now();
     await client.query(
       `update tickets set requested_for = $2, due_at = $2, escalated_at = null,
          note = case when $3::text is null then note else concat_ws('／', nullif(note, ''), $3) end
        where id = $1`,
-      [ticketId, requestedFor, until ? `お届け希望 ${label}` : null],
+      [ticketId, requestedFor, until ? tr(`お届け希望 ${label}`, `Requested for ${label}`) : null],
     );
-    await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'rescheduled', $2)", [ticketId, `ゲストが時間を変更: ${label}`]);
+    await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'rescheduled', $2)", [ticketId, tr(`ゲストが時間を変更: ${label}`, `Guest changed the time: ${label}`)]);
     if (later && ticket.dispatched) {
       // 保留に戻し、前倒しの時刻に改めて割り当てる
       await client.query(
@@ -251,18 +261,23 @@ export async function rescheduleTicket(
       if (ticket.assignee_id) {
         await client.query(
           "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_released', $2, $3, 'ticket', $4)",
-          [ticket.assignee_id, `${ticket.room_number}号室のオーダーは対応不要になりました`, `お届けが${label}に変わったため、改めて割り当てます`, ticketId],
+          [
+            ticket.assignee_id,
+            tr(`${ticket.room_number}号室のオーダーは対応不要になりました`, `${roomLabel(ticket.room_number)} order no longer needs you`),
+            tr(`お届けが${label}に変わったため、改めて割り当てます`, `The delivery moved to ${label}, so it will be reassigned`),
+            ticketId,
+          ],
         );
       }
     } else if (ticket.assignee_id) {
       await client.query(
         "insert into notifications (member_id, kind, title, body, ref_type, ref_id) values ($1, 'ticket_check', $2, $3, 'ticket', $4)",
-        [ticket.assignee_id, `${ticket.room_number}号室 お届け時間の変更`, `お届けは${label}をご希望です`, ticketId],
+        [ticket.assignee_id, tr(`${ticket.room_number}号室 お届け時間の変更`, `${roomLabel(ticket.room_number)}: delivery time changed`), tr(`お届けは${label}をご希望です`, `Guest would like it at ${label}`), ticketId],
       );
     } else if (!ticket.dispatched) {
       await dispatchTicket(client, hotel, ticketId);
     }
-    return `${ticket.items}は${label}にお届けするよう変更しました。`;
+    return tr(`${ticket.items}は${label}にお届けするよう変更しました。`, `We've changed the delivery of your ${ticket.items} to ${label}.`);
   });
 }
 
@@ -278,7 +293,7 @@ export async function rescheduleOrders(hotel: Hotel, params: { conversationId: s
     try {
       lines.push(await rescheduleTicket(hotel, { ...params, ticketId: id }));
     } catch (error) {
-      lines.push(error instanceof Error ? error.message : "お届け時間を変更できませんでした。");
+      lines.push(error instanceof Error ? error.message : tr("お届け時間を変更できませんでした。", "We couldn't change the delivery time."));
     }
   }
   return [...new Set(lines)].join("\n");

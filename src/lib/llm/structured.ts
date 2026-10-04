@@ -2,6 +2,7 @@ import { generateText, tool } from "ai";
 import type { z } from "zod";
 import { InvalidOutputError } from "./errors";
 import { getModel, modelIdFor, type ModelOptions, type ModelTier } from "./models";
+import { isEn, outputLanguage } from "../i18n";
 
 type StructuredParams<T extends z.ZodType> = {
   tier: ModelTier;
@@ -53,7 +54,8 @@ export async function generateStructured<T extends z.ZodType>({
     try {
       result = await generateText({
         model: getModel(tier, { thinking }),
-        system,
+        // 英語表示のときは、指示が日本語でも出力（要約・理由など）を英語にさせる
+        system: isEn ? `${system}\n\n${outputLanguage()}` : system,
         prompt,
         tools: { [name]: tool({ description, inputSchema: schema }) },
         toolChoice: { type: "tool", toolName: name },

@@ -3,6 +3,7 @@ import { getAiAgentMemberId, getHotel } from "./hotel";
 import { requestCheck } from "./order-checks";
 import { assignUnassigned, dispatchScheduled } from "./orders";
 import { notifySupervisors, reassign } from "./staff-work";
+import { LIST_SEP, roomLabel, tr } from "@/lib/i18n";
 
 // 定期実行（1分ごと想定）: 割り当てはできるだけ自動で行い、期限を過ぎたら担当者に状況を確認する（docs/005_order.md 5・6章）
 export async function runTicketChecks(hotelId: string) {
@@ -23,14 +24,14 @@ export async function runTicketChecks(hotelId: string) {
     [hotelId, reassignAfter],
   );
   for (const { id } of stale) {
-    await transaction((client) => reassign(client, hotel, id, `${reassignAfter}分間着手されなかった`, { stale: true }));
+    await transaction((client) => reassign(client, hotel, id, tr(`${reassignAfter}分間着手されなかった`, `Not started for ${reassignAfter} min`), { stale: true }));
   }
 
   // 期限を過ぎた: 担当者に状況を確認し、上長に知らせる（1回だけ）。自動では割り当て直さない（向かっている途中の人とぶつからないように）。
   // 返事がなければ上長の判断を待つ。ゲストの不満・催促はクレームとして引き継ぐ（order-checks.ts）
   const overdue = await query<{ id: string; room_number: string; items: string; minutes: number; assignee: string | null; status: string }>(
     `select t.id, t.room_number, t.status,
-       (select string_agg(item_name || '×' || quantity, '、' order by id) from ticket_lines where ticket_id = t.id) items,
+       (select string_agg(item_name || '×' || quantity, '${LIST_SEP}' order by id) from ticket_lines where ticket_id = t.id) items,
        floor(extract(epoch from (now() - t.due_at)) / 60)::int minutes, m.display_name assignee
      from tickets t left join members m on m.id = t.assignee_id
      where t.hotel_id = $1 and t.status in ('new', 'doing') and t.due_at < now() and t.escalated_at is null`,
@@ -41,10 +42,13 @@ export async function runTicketChecks(hotelId: string) {
       const { rowCount } = await client.query("update tickets set escalated_at = now() where id = $1 and escalated_at is null", [ticket.id]);
       if (!rowCount) return;
       const check = await requestCheck(client, ticket.id, "overdue", { actorId: aiMemberId });
-      const facts = `${ticket.items} が期限を${ticket.minutes}分超過（${ticket.status === "doing" ? "対応中" : "未着手"}）。担当：${ticket.assignee ?? "なし"}`;
-      const next = check === "no_assignee" ? "担当者がいません。手動で割り当ててください" : "担当者に状況を確認しています";
+      const facts = tr(
+        `${ticket.items} が期限を${ticket.minutes}分超過（${ticket.status === "doing" ? "対応中" : "未着手"}）。担当：${ticket.assignee ?? "なし"}`,
+        `${ticket.items} is ${ticket.minutes} min overdue (${ticket.status === "doing" ? "in progress" : "not started"}). Assignee: ${ticket.assignee ?? "none"}`,
+      );
+      const next = check === "no_assignee" ? tr("担当者がいません。手動で割り当ててください", "No assignee. Please assign manually") : tr("担当者に状況を確認しています", "Asking the assignee for a status update");
       await client.query("insert into ticket_events (ticket_id, type, reason) values ($1, 'escalated', $2)", [ticket.id, facts]);
-      await notifySupervisors(client, hotelId, `${ticket.room_number}号室 オーダー遅延`, `${facts}。${next}`, ticket.id);
+      await notifySupervisors(client, hotelId, tr(`${ticket.room_number}号室 オーダー遅延`, `${roomLabel(ticket.room_number)}: order overdue`), tr(`${facts}。${next}`, `${facts}. ${next}`), ticket.id);
     });
   }
   return { dispatched, picked, reassigned: stale.length, escalated: overdue.length };

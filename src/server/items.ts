@@ -2,6 +2,7 @@ import type { Member } from "./auth";
 import { query, transaction } from "./db";
 import { getHotel } from "./hotel";
 import type { ItemStatus } from "./orders";
+import { tr } from "@/lib/i18n";
 
 // オーダー管理のマスタ設定（plan 4.2、docs/005_order.md）: 品目設定（品目の分類・役割・重み・期限・取り扱いの状態、割り当ての設定）とエリア設定（エリアと部屋）。
 // スタッフの担当（役割×エリア）は duties.ts
@@ -29,7 +30,7 @@ export type ItemSettings = {
   suggestions: string[];
 };
 
-const WEIGHT_LABEL = { 1: "軽", 2: "中", 3: "重" } as const;
+const WEIGHT_LABEL = { 1: tr("軽", "Light"), 2: tr("中", "Medium"), 3: tr("重", "Heavy") } as const;
 // 見直しの提案を出す最低の実測件数
 const MIN_SAMPLES = 3;
 
@@ -94,7 +95,12 @@ function suggest(items: ItemRow[]): string[] {
     const distances = levelMean.map((m, i) => (m === null ? Infinity : Math.abs(item.actual_minutes! - m) + (i + 1 === item.weight ? 0 : 0.01)));
     const best = (distances.indexOf(Math.min(...distances)) + 1) as 1 | 2 | 3;
     if (best !== item.weight) {
-      out.push(`${item.name}は実測の平均（${item.actual_minutes}分）が「${WEIGHT_LABEL[best]}」の品目と同程度です。「${WEIGHT_LABEL[best]}」に変更すると割り当てがより均等になります。`);
+      out.push(
+        tr(
+          `${item.name}は実測の平均（${item.actual_minutes}分）が「${WEIGHT_LABEL[best]}」の品目と同程度です。「${WEIGHT_LABEL[best]}」に変更すると割り当てがより均等になります。`,
+          `${item.name} takes ${item.actual_minutes} min on average, similar to \"${WEIGHT_LABEL[best]}\" items. Changing it to \"${WEIGHT_LABEL[best]}\" would balance assignments better.`,
+        ),
+      );
     }
   }
   return out;
@@ -112,9 +118,9 @@ export async function saveItemSettings(member: Member, input: SaveItemsInput) {
     for (const [sort, item] of input.items.entries()) {
       const name = item.name.trim().slice(0, 40);
       if (!name) continue;
-      const category = item.category.trim().slice(0, 20) || "その他";
-      if (![1, 2, 3].includes(item.weight) || item.due_minutes < 1 || item.due_minutes > 600) throw new Error(`「${name}」の重みか期限を確認してください`);
-      if (!STATUSES.includes(item.status)) throw new Error(`「${name}」の状態を確認してください`);
+      const category = item.category.trim().slice(0, 20) || tr("その他", "Other");
+      if (![1, 2, 3].includes(item.weight) || item.due_minutes < 1 || item.due_minutes > 600) throw new Error(tr(`「${name}」の重みか期限を確認してください`, `Check the weight or due time of \"${name}\"`));
+      if (!STATUSES.includes(item.status)) throw new Error(tr(`「${name}」の状態を確認してください`, `Check the status of \"${name}\"`));
       const aliases = item.aliases.map((a) => a.trim()).filter(Boolean).slice(0, 20);
       if (item.id) {
         await client.query(
@@ -129,8 +135,8 @@ export async function saveItemSettings(member: Member, input: SaveItemsInput) {
       }
     }
     const s = input.settings;
-    if (s.reassignMinutes < 1 || s.reassignMinutes > 120) throw new Error("次の人へ回すまでの時間は1〜120分にしてください");
-    if (s.scheduleLeadMinutes < 0 || s.scheduleLeadMinutes > 240) throw new Error("時間指定の割り当ては0〜240分前にしてください");
+    if (s.reassignMinutes < 1 || s.reassignMinutes > 120) throw new Error(tr("次の人へ回すまでの時間は1〜120分にしてください", "Pass-on time must be 1–120 min"));
+    if (s.scheduleLeadMinutes < 0 || s.scheduleLeadMinutes > 240) throw new Error(tr("時間指定の割り当ては0〜240分前にしてください", "Scheduled assignment must be 0–240 min before"));
     await client.query(
       "update hotels set order_reassign_minutes = $2, order_bundle_enabled = $3, order_decline_reason_required = $4, order_schedule_lead_minutes = $5 where id = $1",
       [member.hotel_id, s.reassignMinutes, s.bundleEnabled, s.declineReasonRequired, s.scheduleLeadMinutes],
@@ -140,7 +146,7 @@ export async function saveItemSettings(member: Member, input: SaveItemsInput) {
 
 export async function addArea(member: Member, name: string) {
   const trimmed = name.trim().slice(0, 20);
-  if (!trimmed) throw new Error("エリア名を入力してください");
+  if (!trimmed) throw new Error(tr("エリア名を入力してください", "Please enter an area name"));
   await query(
     "insert into areas (hotel_id, name, sort) select $1, $2, coalesce(max(sort), 0) + 1 from areas where hotel_id = $1",
     [member.hotel_id, trimmed],
@@ -149,7 +155,7 @@ export async function addArea(member: Member, name: string) {
 
 export async function deleteArea(member: Member, areaId: string) {
   const [{ n }] = await query<{ n: number }>("select count(*)::int n from member_duties where area_id = $1", [areaId]);
-  if (n > 0) throw new Error("スタッフの担当で使っているエリアは削除できません。先に担当設定で外してください");
+  if (n > 0) throw new Error(tr("スタッフの担当で使っているエリアは削除できません。先に担当設定で外してください", "This area is used in staff duties. Remove it in Duties first"));
   await query("delete from areas where id = $1 and hotel_id = $2", [areaId, member.hotel_id]);
 }
 
@@ -157,7 +163,7 @@ export async function deleteArea(member: Member, areaId: string) {
 export async function setFloorArea(member: Member, building: string | null, floor: number, areaId: string | null) {
   if (areaId) {
     const rows = await query("select 1 from areas where id = $1 and hotel_id = $2", [areaId, member.hotel_id]);
-    if (rows.length === 0) throw new Error("エリアが見つかりません");
+    if (rows.length === 0) throw new Error(tr("エリアが見つかりません", "Area not found"));
   }
   await query("update rooms set area_id = $4 where hotel_id = $1 and building is not distinct from $2 and floor = $3", [
     member.hotel_id, building, floor, areaId,

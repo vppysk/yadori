@@ -1,12 +1,13 @@
 import { can, getCurrentMember } from "@/server/auth";
 import { listWorkEvents, toCsv } from "@/server/export";
+import { tr } from "@/lib/i18n";
 
 // 実績のダウンロード（CSV／JSON）。ログイン中のメンバーの権限で出す
 export async function GET(request: Request) {
   const member = await getCurrentMember();
-  if (!member) return Response.json({ error: "ログインしてください" }, { status: 401 });
+  if (!member) return Response.json({ error: tr("ログインしてください", "Please log in") }, { status: 401 });
   const allowed = (await can(member.id, "settings.ai_assignment")) || (await can(member.id, "integration.work_events.read"));
-  if (!allowed) return Response.json({ error: "権限がありません" }, { status: 403 });
+  if (!allowed) return Response.json({ error: tr("権限がありません", "No permission") }, { status: 403 });
 
   const url = new URL(request.url);
   const rows = await listWorkEvents(member.hotel_id, {

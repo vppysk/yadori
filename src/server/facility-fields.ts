@@ -1,3 +1,5 @@
+import { tr } from "@/lib/i18n";
+
 // 館内の情報の値（docs/002_facility_master_design.md）。型はなく、タイトル（任意）＋本文（自由文）＋期間（終了日なし可）。
 // 期間の重なりは、同じ施設・項目・タイトルの値同士で、承認時にスタッフが選んだ優先度（大きい方が優先）で決める。
 // DBに依存しない関数だけを置く（管理PCの確認画面でも使う）
@@ -40,16 +42,17 @@ type Period = { from: string; to: string | null };
 
 export const overlaps = (a: Period, b: Period) => a.from <= (b.to ?? FAR) && b.from <= (a.to ?? FAR);
 
-export const periodText = (p: Period) => (p.to === p.from ? `${p.from}のみ` : `${p.from}〜${p.to ?? "（終了日なし）"}`);
+export const periodText = (p: Period) =>
+  p.to === p.from ? tr(`${p.from}のみ`, `${p.from} only`) : `${p.from}${tr("〜", " to ")}${p.to ?? tr("（終了日なし）", "(no end date)")}`;
 
 // 重なりを比べる単位: 同じ項目で、タイトルが同じ（空白と全角半角の違いは無視）
 export const titleKey = (title: string | null) => (title ?? "").normalize("NFKC").replace(/\s+/g, "");
 
 // AIに渡す1行。期間は必ず付ける（滞在日で答え分けるため）。外部情報は出どころを付ける（案内で「○○によると」と添えさせる）
 export function describeValue(fieldName: string, v: { title: string | null; body: string; external?: boolean; sourceTitle?: string | null } & Period): string {
-  const head = v.title ? `${fieldName}「${v.title}」` : fieldName;
-  const origin = v.external ? `（外部情報: ${v.sourceTitle ?? "外部の資料"}）` : "";
-  return `${head}: ${v.body || "（内容の記載なし）"}（適用期間 ${periodText(v)}）${origin}`;
+  const head = v.title ? tr(`${fieldName}「${v.title}」`, `${fieldName} "${v.title}"`) : fieldName;
+  const origin = v.external ? tr(`（外部情報: ${v.sourceTitle ?? "外部の資料"}）`, ` (External: ${v.sourceTitle ?? "external source"})`) : "";
+  return tr(`${head}: ${v.body || "（内容の記載なし）"}（適用期間 ${periodText(v)}）${origin}`, `${head}: ${v.body || "(no details)"} (valid ${periodText(v)})${origin}`);
 }
 
 // 値ごとに、同じタイトルでより優先される値に覆われていない期間を返す（覆われた部分は案内に使わない）。

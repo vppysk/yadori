@@ -1,5 +1,6 @@
 import { describeValue } from "./facility-fields";
-import type { FacilityInfo } from "./knowledge";
+import { HOTEL_WIDE, type FacilityInfo } from "./knowledge";
+import { tr } from "@/lib/i18n";
 
 // ゲスト向けの回答とスタッフのAI相談で共通の、回答に渡す館内情報の組み立てと根拠の表示
 
@@ -15,33 +16,38 @@ export function cleanReply(reply: string): string {
   return reply
     .replace(/\*\*|__|^#+\s*/gm, "")
     .replace(/[（(]\s*外部情報\s*[:：]\s*([^）)]+?)\s*[）)]/g, "（$1の情報）")
+    .replace(/\(\s*External\s*:\s*([^)]+?)\s*\)/gi, "(source: $1)")
     .trim();
 }
+
+const NO_INFO = tr("情報なし", "No information");
 
 export function renderFacilities(facilities: FacilityInfo[], requested: string[]): string {
   const lines: string[] = [];
   for (const f of facilities) {
     lines.push(`■${f.facility}`);
-    for (const n of f.notices) lines.push(`  【特記事項・最優先】${n.body}（${n.starts_at}〜${n.ends_at} の間有効）`);
+    for (const n of f.notices)
+      lines.push(tr(`  【特記事項・最優先】${n.body}（${n.starts_at}〜${n.ends_at} の間有効）`, `  [Special notice - top priority] ${n.body} (valid ${n.starts_at} to ${n.ends_at})`));
     for (const field of f.fields) {
-      if (field.values.length === 0) lines.push(`  ${field.name}: 情報なし`);
+      if (field.values.length === 0) lines.push(`  ${field.name}: ${NO_INFO}`);
       for (const v of field.values) lines.push(`  ${describeValue(field.name, v)}`);
     }
-    if (f.fields.length === 0 && f.notices.length === 0) lines.push("  情報なし");
+    if (f.fields.length === 0 && f.notices.length === 0) lines.push(`  ${NO_INFO}`);
   }
   for (const name of requested) {
-    if (!facilities.some((f) => f.facility === name)) lines.push(`■${name}`, "  情報なし");
+    if (!facilities.some((f) => f.facility === name)) lines.push(`■${name}`, `  ${NO_INFO}`);
   }
-  return lines.length ? lines.join("\n") : "情報なし";
+  return lines.length ? lines.join("\n") : NO_INFO;
 }
 
 // 特記事項の根拠は、質問に関係する施設（ルーターが選んだ施設・回答に名前が出た施設・館内全体）のものだけ
 export function noticeCitations(facilities: FacilityInfo[], requested: string[], reply: string): Citation[] {
   const citations: Citation[] = [];
-  const related = (f: FacilityInfo) => requested.includes(f.facility) || reply.includes(f.facility) || f.facility === "館内全体";
+  const related = (f: FacilityInfo) => requested.includes(f.facility) || reply.includes(f.facility) || f.facility === HOTEL_WIDE;
   for (const f of facilities.filter(related)) {
     for (const n of f.notices) {
-      citations.push({ kind: "notice", label: `${f.facility}の特記事項を反映（${fmtDate(n.updated_at.slice(0, 10))} ${n.updated_at.slice(11)} 更新）` });
+      const updated = `${fmtDate(n.updated_at.slice(0, 10))} ${n.updated_at.slice(11)}`;
+      citations.push({ kind: "notice", label: tr(`${f.facility}の特記事項を反映（${updated} 更新）`, `Includes the ${f.facility} special notice (updated ${updated})`) });
     }
   }
   return [...new Map(citations.map((c) => [c.label, c])).values()];

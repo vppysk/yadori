@@ -2,6 +2,7 @@ import { after } from "next/server";
 import type { LlmFailureCause } from "@/lib/llm/errors";
 import { query, queryOne } from "./db";
 import { writeBackHandoff } from "./integration-agent";
+import { tr } from "@/lib/i18n";
 
 export type HandoffKind =
   | "talk_request"
@@ -69,7 +70,7 @@ function scheduleWriteBack(hotelId: string, handoffId: string) {
       await writeBackHandoff({
         guest: { hotelId, reservationId: row.reservation_id, roomNumber: row.room_number ?? "", checkIn: row.stay_start ?? "", checkOut: row.stay_end ?? "" },
         conversationId: row.conversation_id ?? undefined, handoffId, kind: row.kind, summary: row.summary, aiReply: row.ai_reply ?? undefined,
-        handedTo: row.kind === "overdue_order" ? "上長" : "フロント",
+        handedTo: row.kind === "overdue_order" ? tr("上長", "Supervisor") : tr("フロント", "Front desk"),
       });
     } catch (error) {
       console.warn("[handoffs] お客様メモへの書き戻しに失敗", error);

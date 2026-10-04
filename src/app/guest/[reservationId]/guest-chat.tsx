@@ -4,14 +4,15 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { Citation, GuestChatMessage, GuestSession } from "@/server/guest-chat";
 import type { GuestOrderDraft, SubmitOrderInput } from "@/server/order-drafts";
 import type { GuestTicket } from "@/server/orders";
+import { formatDayWithWeekday, roomLabel, tr } from "@/lib/i18n";
 
 // チケットの進み具合を追うための再取得間隔
 const POLL_MS = 15_000;
 
 const QUICK_REPLIES = [
-  { label: "朝食の時間", text: "朝食の時間を教えてください" },
-  { label: "レストラン予約", text: "レストランを予約したいです" },
-  { label: "アメニティ追加", text: "アメニティを追加でお願いしたいです" },
+  { label: tr("朝食の時間", "Breakfast hours"), text: tr("朝食の時間を教えてください", "What time is breakfast?") },
+  { label: tr("レストラン予約", "Restaurant booking"), text: tr("レストランを予約したいです", "I'd like to book the restaurant.") },
+  { label: tr("アメニティ追加", "More amenities"), text: tr("アメニティを追加でお願いしたいです", "Could I get some extra amenities?") },
 ];
 
 type StaffAction = "talk_to_staff" | "cancel_staff";
@@ -62,14 +63,14 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(data.error ?? "送信できませんでした。もう一度お試しください。");
+        setError(data.error ?? tr("送信できませんでした。もう一度お試しください。", "Couldn't send. Please try again."));
         // 取り消せなかったときは、スタッフが引き受けた状態を画面に反映する
         if (body.action) await refresh();
         return;
       }
       await refresh();
     } catch {
-      setError("通信できませんでした。電波の良い場所でもう一度お試しください。");
+      setError(tr("通信できませんでした。電波の良い場所でもう一度お試しください。", "Connection failed. Please try again where the signal is better."));
     } finally {
       setPendingText(null);
       setPendingAction(null);
@@ -86,12 +87,12 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        return data.error ?? "送信できませんでした。もう一度お試しください。";
+        return data.error ?? tr("送信できませんでした。もう一度お試しください。", "Couldn't send. Please try again.");
       }
       await refresh();
       return null;
     } catch {
-      return "通信できませんでした。電波の良い場所でもう一度お試しください。";
+      return tr("通信できませんでした。電波の良い場所でもう一度お試しください。", "Connection failed. Please try again where the signal is better.");
     }
   }
 
@@ -121,7 +122,7 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
           {staffRequest ? (
             <span className="flex min-h-11 items-center gap-1.5 rounded-full bg-primary-soft px-3 text-[13px] font-medium text-primary">
               <PersonIcon />
-              {staffRequest.status === "accepted" ? "スタッフが対応中" : "スタッフに連絡済み"}
+              {staffRequest.status === "accepted" ? tr("スタッフが対応中", "Staff is helping") : tr("スタッフに連絡済み", "Staff notified")}
             </span>
           ) : (
             <button
@@ -131,14 +132,14 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
               className="flex min-h-11 items-center gap-1.5 rounded-full border border-line px-3 text-[13px] font-medium disabled:opacity-50"
             >
               <PersonIcon />
-              {pendingAction === "talk_to_staff" ? "おつなぎしています…" : "スタッフと話す"}
+              {pendingAction === "talk_to_staff" ? tr("おつなぎしています…", "Connecting…") : tr("スタッフと話す", "Talk to staff")}
             </button>
           )}
         </div>
         <div className="flex items-center gap-2 text-xs text-ink-sub">
-          <span className="rounded-xl bg-primary-soft px-2.5 py-1 font-medium text-primary">{session.guest.roomNumber}号室</span>
+          <span className="rounded-xl bg-primary-soft px-2.5 py-1 font-medium text-primary">{roomLabel(session.guest.roomNumber)}</span>
           <span className="rounded-xl bg-muted px-2.5 py-1">
-            {formatDay(session.guest.checkIn)} 〜 {formatDay(session.guest.checkOut)}
+            {formatDay(session.guest.checkIn)} {tr("〜", "–")} {formatDay(session.guest.checkOut)}
           </span>
           {openTickets.length > 0 && (
             <button
@@ -147,7 +148,7 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
               onClick={() => setOrdersOpen((v) => !v)}
               className="ml-auto flex min-h-11 items-center rounded-full border border-primary px-3 text-xs font-bold text-primary"
             >
-              ご依頼の状況 {openTickets.length}件
+              {tr(`ご依頼の状況 ${openTickets.length}件`, `My requests (${openTickets.length})`)}
             </button>
           )}
         </div>
@@ -165,8 +166,8 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
           <div className="flex items-center justify-between gap-2 rounded-xl bg-primary-soft py-1 pr-1 pl-3 text-xs text-primary">
             <span>
               {staffRequest.status === "accepted"
-                ? "スタッフが対応しています。メッセージはスタッフに届きます。"
-                : "スタッフにおつなぎしています。メッセージはスタッフに届きます。"}
+                ? tr("スタッフが対応しています。メッセージはスタッフに届きます。", "A staff member is helping you. Your messages go to them directly.")
+                : tr("スタッフにおつなぎしています。メッセージはスタッフに届きます。", "Connecting you to staff. Your messages go to them directly.")}
             </span>
             {staffRequest.status === "open" && (
               <button
@@ -175,7 +176,7 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
                 disabled={busy}
                 className="min-h-11 shrink-0 rounded-full px-3 font-medium underline underline-offset-2 disabled:opacity-50"
               >
-                {pendingAction === "cancel_staff" ? "取り消し中…" : "取り消す"}
+                {pendingAction === "cancel_staff" ? tr("取り消し中…", "Cancelling…") : tr("取り消す", "Cancel")}
               </button>
             )}
           </div>
@@ -185,9 +186,9 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
       <main ref={listRef} className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 py-5" aria-live="polite">
         {timeline.length === 0 && !busy && (
           <p className="mt-6 text-center text-sm leading-relaxed text-ink-sub">
-            館内のご案内やお部屋へのお届けなど、
+            {tr("館内のご案内やお部屋へのお届けなど、", "Ask about the hotel, or request items")}
             <br />
-            お気軽にお申し付けください。
+            {tr("お気軽にお申し付けください。", "delivered to your room — anytime.")}
           </p>
         )}
         {timeline.map((item) => {
@@ -206,7 +207,7 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
           <>
             <UserBubble text={pendingText} />
             <div className="self-start rounded-[16px_16px_16px_4px] border border-line bg-surface px-3.5 py-3 text-[15px] text-ink-sub">
-              <span className="inline-flex gap-1" aria-label="回答を作成中">
+              <span className="inline-flex gap-1" aria-label={tr("回答を作成中", "Writing a reply")}>
                 <Dot delay="0ms" />
                 <Dot delay="150ms" />
                 <Dot delay="300ms" />
@@ -237,20 +238,20 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
 
       <form onSubmit={onSubmit} className="flex items-center gap-2 border-t border-line bg-surface px-4 pt-2.5 pb-7">
         <label htmlFor="guest-msg" className="sr-only">
-          メッセージ
+          {tr("メッセージ", "Message")}
         </label>
         <input
           id="guest-msg"
           type="text"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={staffRequest ? "スタッフへのメッセージ" : "ご質問・ご依頼をどうぞ"}
+          placeholder={staffRequest ? tr("スタッフへのメッセージ", "Message to staff") : tr("ご質問・ご依頼をどうぞ", "Ask a question or make a request")}
           autoComplete="off"
           className="min-h-11 flex-1 rounded-full border border-line-input bg-canvas px-4 text-[15px] outline-none focus:border-primary"
         />
         <button
           type="submit"
-          aria-label="送信"
+          aria-label={tr("送信", "Send")}
           disabled={busy || draft.trim() === ""}
           className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary text-white disabled:opacity-40"
         >
@@ -301,20 +302,21 @@ function CitationBadge({ citation }: { citation: Citation }) {
 }
 
 const STEPS = [
-  { label: "受付済み", reached: ["new", "doing", "done"] },
-  { label: "準備中", reached: ["doing", "done"] },
-  { label: "お届け済み", reached: ["done"] },
+  { label: tr("受付済み", "Received"), reached: ["new", "doing", "done"] },
+  { label: tr("準備中", "Preparing"), reached: ["doing", "done"] },
+  { label: tr("お届け済み", "Delivered"), reached: ["done"] },
 ];
 
 // ご依頼の状況の文言（docs/005_order.md 6章）。担当者の一言はゲストには出さない
 function ticketStatus(t: GuestTicket, timezone: string): string {
   const time = (iso: string) => new Date(iso).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: timezone });
-  if (t.status === "done") return "お届けしました";
-  if (!t.dispatched && t.requested_for) return `${time(t.requested_for)}にお届けする予定です`;
-  if (t.check_pending) return "担当のスタッフに状況を確認しています";
-  if (t.check_reply === "on_the_way") return `スタッフが向かっています${t.check_eta_at ? `（${time(t.check_eta_at)}ごろ）` : ""}`;
-  if (t.status === "doing") return "スタッフが準備・移動しています";
-  return "承りました。スタッフが準備します";
+  if (t.status === "done") return tr("お届けしました", "Delivered");
+  if (!t.dispatched && t.requested_for) return tr(`${time(t.requested_for)}にお届けする予定です`, `Scheduled for ${time(t.requested_for)}`);
+  if (t.check_pending) return tr("担当のスタッフに状況を確認しています", "Checking with the staff member in charge");
+  if (t.check_reply === "on_the_way")
+    return tr(`スタッフが向かっています${t.check_eta_at ? `（${time(t.check_eta_at)}ごろ）` : ""}`, `On the way${t.check_eta_at ? ` (around ${time(t.check_eta_at)})` : ""}`);
+  if (t.status === "doing") return tr("スタッフが準備・移動しています", "Staff is preparing it");
+  return tr("承りました。スタッフが準備します", "Received. Staff will prepare it");
 }
 
 // 未完了のご依頼の一覧。メッセージを書かなくても「状況を確認する」で担当者に確認できる
@@ -350,40 +352,40 @@ function OpenOrders({
       });
       if (extra && res.ok) setEditing(null);
       const data = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
-      setNotes((n) => ({ ...n, [ticketId]: data.message ?? data.error ?? "確認できませんでした" }));
+      setNotes((n) => ({ ...n, [ticketId]: data.message ?? data.error ?? tr("確認できませんでした", "Couldn't check") }));
       await onChange();
     } catch {
-      setNotes((n) => ({ ...n, [ticketId]: "通信できませんでした。電波の良い場所でもう一度お試しください。" }));
+      setNotes((n) => ({ ...n, [ticketId]: tr("通信できませんでした。電波の良い場所でもう一度お試しください。", "Connection failed. Please try again where the signal is better.") }));
     } finally {
       setPending(null);
     }
   }
 
   return (
-    <section aria-label="ご依頼の状況" className="flex flex-col gap-2 rounded-xl border border-line bg-canvas p-2.5">
+    <section aria-label={tr("ご依頼の状況", "My requests")} className="flex flex-col gap-2 rounded-xl border border-line bg-canvas p-2.5">
       {tickets.map((t) => (
         <div key={t.id} className="flex flex-col gap-1.5 rounded-[10px] bg-surface px-3 py-2.5">
-          <span className="text-sm">{t.lines.map((l) => `${l.item} × ${l.quantity}`).join("、")}</span>
+          <span className="text-sm">{t.lines.map((l) => `${l.item} × ${l.quantity}`).join(tr("、", ", "))}</span>
           <span className="text-xs text-primary">{ticketStatus(t, timezone)}</span>
           {notes[t.id] && <span className="text-xs text-ink-sub">{notes[t.id]}</span>}
           {editing?.ticketId === t.id ? (
             <div className="flex flex-col gap-1.5">
               <div className="flex gap-1.5">
                 <select
-                  aria-label="お届けの日"
+                  aria-label={tr("お届けの日", "Delivery date")}
                   value={editing.date}
                   onChange={(e) => setEditing({ ...editing, date: e.target.value })}
                   className="min-h-11 flex-1 rounded-[10px] border border-line-input bg-canvas px-2 text-[15px]"
                 >
                   {dates.map((d) => (
                     <option key={d} value={d}>
-                      {d === today ? "本日" : "明日"}（{formatDay(d)}）
+                      {d === today ? tr("本日", "Today") : tr("明日", "Tomorrow")} ({formatDay(d)})
                     </option>
                   ))}
                 </select>
                 <input
                   type="time"
-                  aria-label="お届けの時刻"
+                  aria-label={tr("お届けの時刻", "Delivery time")}
                   step={600}
                   value={editing.time}
                   onChange={(e) => setEditing({ ...editing, time: e.target.value })}
@@ -397,10 +399,10 @@ function OpenOrders({
                   disabled={pending !== null || !editing.time}
                   className="min-h-11 flex-1 rounded-full bg-primary text-[13px] font-bold text-white disabled:opacity-40"
                 >
-                  {pending === t.id ? "変更しています…" : "この時間に変更する"}
+                  {pending === t.id ? tr("変更しています…", "Changing…") : tr("この時間に変更する", "Change to this time")}
                 </button>
                 <button type="button" onClick={() => setEditing(null)} className="min-h-11 px-3 text-[13px] text-ink-sub">
-                  やめる
+                  {tr("やめる", "Cancel")}
                 </button>
               </div>
             </div>
@@ -412,7 +414,7 @@ function OpenOrders({
                 disabled={pending !== null || t.check_pending || t.nudge_cooling}
                 className="min-h-11 rounded-full border border-line text-[13px] font-medium disabled:opacity-40"
               >
-                {pending === t.id ? "確認しています…" : "状況を確認する"}
+                {pending === t.id ? tr("確認しています…", "Checking…") : tr("状況を確認する", "Check status")}
               </button>
               <button
                 type="button"
@@ -420,7 +422,7 @@ function OpenOrders({
                 disabled={pending !== null}
                 className="min-h-11 rounded-full border border-line text-[13px] font-medium disabled:opacity-40"
               >
-                時間を変更
+                {tr("時間を変更", "Change time")}
               </button>
             </div>
           )}
@@ -436,10 +438,10 @@ function TicketCard({ ticket, timezone }: { ticket: GuestTicket; timezone: strin
     ? new Date(ticket.requested_for).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: timezone })
     : null;
   return (
-    <section className="flex w-[86%] flex-col gap-3 self-start rounded-2xl border border-line bg-surface p-3.5" aria-label="ご依頼の状況">
+    <section className="flex w-[86%] flex-col gap-3 self-start rounded-2xl border border-line bg-surface p-3.5" aria-label={tr("ご依頼の状況", "Request status")}>
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold">{done ? "お届けしました" : "ご依頼を承りました"}</h2>
-        {!done && <span className="text-xs text-ink-sub">{scheduled ? `${scheduled} にお届け予定` : `目安 ${ticket.due_minutes_total}分以内`}</span>}
+        <h2 className="text-sm font-bold">{done ? tr("お届けしました", "Delivered") : tr("ご依頼を承りました", "Request received")}</h2>
+        {!done && <span className="text-xs text-ink-sub">{scheduled ? tr(`${scheduled} にお届け予定`, `Scheduled for ${scheduled}`) : tr(`目安 ${ticket.due_minutes_total}分以内`, `Within about ${ticket.due_minutes_total} min`)}</span>}
       </div>
       {ticket.lines.map((line, i) => (
         <div key={i} className="flex justify-between rounded-[10px] bg-canvas px-3 py-2.5 text-sm">
@@ -447,7 +449,7 @@ function TicketCard({ ticket, timezone }: { ticket: GuestTicket; timezone: strin
           <span className="font-bold">× {line.quantity}</span>
         </div>
       ))}
-      {ticket.note && <p className="text-xs leading-relaxed text-ink-sub">備考：{ticket.note}</p>}
+      {ticket.note && <p className="text-xs leading-relaxed text-ink-sub">{tr("備考：", "Note: ")}{ticket.note}</p>}
       <ol className="flex items-center gap-1.5">
         {STEPS.map((step) => {
           const reached = step.reached.includes(ticket.status);
@@ -460,7 +462,7 @@ function TicketCard({ ticket, timezone }: { ticket: GuestTicket; timezone: strin
         })}
       </ol>
       <p className="text-xs leading-relaxed text-ink-sub">
-        {done ? "ご利用ありがとうございます。" : `${ticketStatus(ticket, timezone)}。お届けしたらこちらでお知らせします。`}
+        {done ? tr("ご利用ありがとうございます。", "Thank you!") : tr(`${ticketStatus(ticket, timezone)}。お届けしたらこちらでお知らせします。`, `${ticketStatus(ticket, timezone)}. We'll let you know here once it's delivered.`)}
       </p>
     </section>
   );
@@ -502,11 +504,11 @@ function OrderDraftCard({
   }
 
   return (
-    <section className="flex w-[92%] flex-col gap-3 self-start rounded-2xl border border-primary bg-surface p-3.5" aria-label="お届けする品を選ぶ">
+    <section className="flex w-[92%] flex-col gap-3 self-start rounded-2xl border border-primary bg-surface p-3.5" aria-label={tr("お届けする品を選ぶ", "Choose items to deliver")}>
       <div className="flex flex-col gap-0.5">
-        <h2 className="text-sm font-bold">お届けする品をお選びください</h2>
+        <h2 className="text-sm font-bold">{tr("お届けする品をお選びください", "Please choose the items to deliver")}</h2>
         {draft.requested.length > 0 && (
-          <p className="text-xs text-ink-sub">ご依頼：{draft.requested.map((r) => `${r.label} × ${r.quantity}`).join("、")}</p>
+          <p className="text-xs text-ink-sub">{tr("ご依頼：", "You asked for: ")}{draft.requested.map((r) => `${r.label} × ${r.quantity}`).join(tr("、", ", "))}</p>
         )}
       </div>
       {categories.map((category) => (
@@ -518,24 +520,24 @@ function OrderDraftCard({
               <div key={line.itemId} className="flex min-h-11 items-center justify-between gap-2 rounded-[10px] bg-canvas py-1 pr-1 pl-3 text-sm">
                 <span className={line.paused ? "text-ink-sub" : ""}>{line.name}</span>
                 {line.paused ? (
-                  <span className="pr-2 text-xs text-caution">品切れ中</span>
+                  <span className="pr-2 text-xs text-caution">{tr("品切れ中", "Out of stock")}</span>
                 ) : (
                   <span className="flex items-center gap-1">
                     <button
                       type="button"
-                      aria-label={`${line.name}を減らす`}
+                      aria-label={tr(`${line.name}を減らす`, `Fewer ${line.name}`)}
                       onClick={() => change(line.itemId, -1)}
                       disabled={!quantities[line.itemId]}
                       className="flex size-11 items-center justify-center rounded-full border border-line bg-surface text-lg disabled:opacity-30"
                     >
                       −
                     </button>
-                    <span className="w-6 text-center font-bold" aria-live="polite" aria-label={`${line.name}の数量`}>
+                    <span className="w-6 text-center font-bold" aria-live="polite" aria-label={tr(`${line.name}の数量`, `${line.name} quantity`)}>
                       {quantities[line.itemId] ?? 0}
                     </span>
                     <button
                       type="button"
-                      aria-label={`${line.name}を増やす`}
+                      aria-label={tr(`${line.name}を増やす`, `More ${line.name}`)}
                       onClick={() => change(line.itemId, 1)}
                       className="flex size-11 items-center justify-center rounded-full border border-line bg-surface text-lg"
                     >
@@ -548,18 +550,18 @@ function OrderDraftCard({
         </div>
       ))}
       <label className="flex flex-col gap-1 text-xs text-ink-sub">
-        備考（任意）
+        {tr("備考（任意）", "Note (optional)")}
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
           maxLength={300}
-          placeholder="使い道やご希望があればどうぞ"
+          placeholder={tr("使い道やご希望があればどうぞ", "Anything we should know?")}
           className="rounded-[10px] border border-line-input bg-canvas px-3 py-2 text-[15px] text-ink outline-none focus:border-primary"
         />
       </label>
       <fieldset className="flex flex-col gap-1.5">
-        <legend className="mb-1 text-xs text-ink-sub">お届け</legend>
+        <legend className="mb-1 text-xs text-ink-sub">{tr("お届け", "Delivery")}</legend>
         <div className="grid grid-cols-2 gap-1.5">
           <button
             type="button"
@@ -567,7 +569,7 @@ function OrderDraftCard({
             onClick={() => setDeliver(null)}
             className={`min-h-11 rounded-[10px] border text-[13px] ${deliver === null ? "border-primary bg-primary-soft font-bold text-primary" : "border-line"}`}
           >
-            できるだけ早く
+            {tr("できるだけ早く", "As soon as possible")}
           </button>
           <button
             type="button"
@@ -575,26 +577,26 @@ function OrderDraftCard({
             onClick={() => setDeliver((d) => d ?? { date: today, time: "" })}
             className={`min-h-11 rounded-[10px] border text-[13px] ${deliver !== null ? "border-primary bg-primary-soft font-bold text-primary" : "border-line"}`}
           >
-            時間を指定
+            {tr("時間を指定", "Choose a time")}
           </button>
         </div>
         {deliver && (
           <div className="flex gap-1.5">
             <select
-              aria-label="お届けの日"
+              aria-label={tr("お届けの日", "Delivery date")}
               value={deliver.date}
               onChange={(e) => setDeliver({ ...deliver, date: e.target.value })}
               className="min-h-11 flex-1 rounded-[10px] border border-line-input bg-canvas px-2 text-[15px]"
             >
               {dates.map((d) => (
                 <option key={d} value={d}>
-                  {d === today ? "本日" : "明日"}（{formatDay(d)}）
+                  {d === today ? tr("本日", "Today") : tr("明日", "Tomorrow")} ({formatDay(d)})
                 </option>
               ))}
             </select>
             <input
               type="time"
-              aria-label="お届けの時刻"
+              aria-label={tr("お届けの時刻", "Delivery time")}
               step={600}
               value={deliver.time}
               onChange={(e) => setDeliver({ ...deliver, time: e.target.value })}
@@ -615,7 +617,7 @@ function OrderDraftCard({
           disabled={pending !== null || total === 0 || (deliver !== null && !deliver.time)}
           className="min-h-11 flex-1 rounded-full bg-primary text-sm font-bold text-white disabled:opacity-40"
         >
-          {pending === "submit" ? "送信しています…" : "この内容で依頼する"}
+          {pending === "submit" ? tr("送信しています…", "Sending…") : tr("この内容で依頼する", "Place request")}
         </button>
         <button
           type="button"
@@ -623,7 +625,7 @@ function OrderDraftCard({
           disabled={pending !== null}
           className="min-h-11 shrink-0 rounded-full px-3 text-[13px] text-ink-sub underline underline-offset-2 disabled:opacity-50"
         >
-          {pending === "cancel" ? "取り消し中…" : "取り消す"}
+          {pending === "cancel" ? tr("取り消し中…", "Cancelling…") : tr("取り消す", "Cancel")}
         </button>
       </div>
     </section>
@@ -672,16 +674,12 @@ function localDate(iso: string, timezone: string): string {
 function dayLabel(iso: string, session: GuestSession): string {
   const time = new Date(iso).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: session.timezone });
   const date = localDate(iso, session.timezone);
-  const label = date === session.today ? `本日 ${time}` : `${formatDay(date)} ${time}`;
+  const label = date === session.today ? `${tr("本日", "Today")} ${time}` : `${formatDay(date)} ${time}`;
   const daysBefore = Math.round((Date.parse(session.guest.checkIn) - Date.parse(date)) / 86_400_000);
-  return daysBefore > 0 ? `${label} ・ ご到着の${daysBefore}日前` : label;
+  return daysBefore > 0 ? `${label} ・ ${tr(`ご到着の${daysBefore}日前`, `${daysBefore} day${daysBefore === 1 ? "" : "s"} before arrival`)}` : label;
 }
 
-function formatDay(date: string): string {
-  const d = new Date(`${date}T00:00:00Z`);
-  const weekday = "日月火水木金土"[d.getUTCDay()];
-  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}（${weekday}）`;
-}
+const formatDay = formatDayWithWeekday;
 
 function Dot({ delay }: { delay: string }) {
   return <span className="size-1.5 animate-bounce rounded-full bg-ink-sub" style={{ animationDelay: delay }} />;
