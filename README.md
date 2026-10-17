@@ -53,6 +53,13 @@ Lessons that shaped the code (details in `CLAUDE.md`):
 - Giving the answering agent lookup tools led to tool calls written as text and repeated calls, so the server fetches facility info **for the stay dates** and attaches it right before the guest's message.
 - Every LLM call is recorded with tokens, latency and cost (`llm_calls`), which powers the dashboard and the model review.
 
+### Where Token Factory accelerated the work
+
+- One OpenAI-compatible endpoint for the whole Nemotron family let each job pick its own model and change it with a config line, so we ran real experiments per job.
+- Per-call token counts feed our own cost accounting, which drives the dashboard and the daily model review.
+- Fast, inexpensive Lightning calls made a router in front of every guest message affordable, and thinking-off mode kept guest replies responsive (about 1.5 s).
+- Tavily (optional, `TAVILY_API_KEY`): registered web pages (train status, weather, events) are fetched on a schedule with Tavily Extract, summarized by Nemotron and used in guest answers and staff alerts.
+
 ## Architecture
 
 TypeScript end to end.

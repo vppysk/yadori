@@ -4,7 +4,8 @@ Devpostのフォームに貼り付ける文章。フォームの項目名・文�
 
 - リポジトリ: https://github.com/vppysk/yadori （MIT）
 - 動画: https://youtu.be/RpO_7y7n4rY （2:56）
-- トラック: **Best Apps and Agents**
+- トラック: **Best Apps and Agents Track**（公式ルールの表記）
+- 公式ルール（PDF、2026-10-18取得）で確認した要件は末尾の「ルールの確認結果」を参照
 
 ---
 
@@ -87,6 +88,20 @@ For operational AI, where the LLM stops matters as much as what it does. Letting
 
 TypeScript, Next.js, Mastra, Supabase (Postgres, pgvector), Model Context Protocol, NVIDIA Nemotron 3.5 Lightning / 3 Super / 3 Ultra, Nebius Token Factory, Qwen3-Embedding-8B, GLM-5.3-Flash, Tavily (optional web page fetching)
 
+## New project statement
+
+Yadori was created for this hackathon. The first commit is dated 2026-09-25, inside the Submission Period (Aug 26 – Oct 30, 2026), and everything in the repository was built during it.
+
+## Where Nebius Token Factory accelerated the work
+
+- One OpenAI-compatible endpoint for the whole Nemotron family let each job pick its own model (Lightning for routing, Super for answers, Ultra for complaints) and change it with a config line, so we could run real experiments per job instead of arguing about one model choice.
+- Per-call token counts from Token Factory feed our own cost accounting, which drives the dashboard and the daily model review.
+- Fast, inexpensive Lightning calls made a router in front of every guest message affordable, and thinking-off mode kept the guest chat responsive (typical replies in about 1.5 s).
+
+## Tavily (bonus prize)
+
+Yadori makes a functional runtime call to the Tavily API: staff register web pages (train status, weather, nearby events) as sources, and the app fetches them on a schedule with Tavily Extract, summarizes them with Nemotron, and uses the summary in guest answers and staff alerts. Tavily is optional in the setup (`TAVILY_API_KEY`), and the main demo video focuses on the core flow.
+
 ## Try it out
 
 - Code and setup: https://github.com/vppysk/yadori (README: run locally with Docker + a Token Factory API key; one command seeds the English demo)
@@ -139,3 +154,21 @@ Open `/` for links to every screen. Staff screens use a demo login without passw
 - [ ] フォームの項目名・文字数の上限に合わせて上の文章を調整する（長い項目は「What it does」と「How we built it」を削る）
 - [ ] フィードバックの欄は、最初に「具体的に何が良く、何が困ったか」が伝わる並びになっているか確認する
 - [ ] 提出後に、動画とリポジトリのURLをもう一度開いて確認する
+
+---
+
+## ルールの確認結果（公式ルールPDF、2026-10-18）
+
+- **締切**: 2026-10-30 10:00 PDT（2026年10月31日 2:00 GMT+9）。提出後は変更できない（下書きの保存はできる）
+- **必須**: Project（Token FactoryまたはAI Cloudで動き、NVIDIAのオープンなモデルを1つ以上使う）／**動くデモ・ホスト済みアプリ・test buildのURL**／機能の説明／**公開リポジトリのURL**（オープンソースのライセンスファイルがAboutに見える）／READMEのセットアップ手順／**Nemotronを使った場所とToken Factoryで速くなった点、ほかのNebiusツールを強調**／デモ動画（**3分未満**、**YouTubeで公開**、第三者の商標や著作権のある音楽を含めない）／トラックの選択／**Token Factory・AI Cloud・NVIDIAのツールへのフィードバック**／（開始前から存在したプロジェクトのみ）更新点の説明
+- **審査**: 第1段階は合否（トラックの趣旨に合うか・必須のAPIを使っているか）。第2段階は同じ配点の4つ — Technological Implementation / Design / Potential Impact / Quality of the Idea
+- **賞**: Best Apps and Agents Track、Most Valuable Feedback（フィードバックの欄を埋めた提出が対象）、**Best Use of Tavily（$3,000、実行時にTavily APIを呼ぶ提出が対象）**
+- **言語**: 提出物はすべて英語
+- **審査員の確認**: 審査員は動かさず、動画・説明・画像だけで判断してよい
+
+### 残るリスクと対応
+
+1. **「動くデモ・ホスト済みアプリ・test build」のURL**: 今はローカルで動かす前提。リポジトリのURLに加え、GitHubのRelease（タグ `v1.0.0`）を作って「test build」のURLとして書くと、要件を満たしやすい。ホスト済みのデモは必須ではない（ルール上「または」）
+2. **Tavily賞**: 動画ではTavilyの場面を映していないが、実行時の呼び出しは実装済み（URL資料の取得）。賞の対象にするなら、説明文に書く（上に書いた）。確実にしたいなら、動画に頼らず、READMEのデモ手順にURL資料の登録を足す
+3. **動画の商標**: 動画の音声と字幕で「NVIDIA Nemotron」「Nebius Token Factory」の名前は出る（スポンサーの名称）。ロゴや他社の商標・音楽は使っていない
+4. **READMEに追記する点**: Token Factoryで速くなった点の項目（上の文章をREADMEにも入れる）
