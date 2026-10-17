@@ -4,6 +4,8 @@ Yadori (宿り, "a place to stay") is an AI agent that runs hotel guest service 
 
 Built for the **Nebius × NVIDIA Global AI Hackathon** (track: Best Apps and Agents). All runtime inference runs on **NVIDIA Nemotron models served by Nebius Token Factory**.
 
+**Demo video (3 min):** <https://youtu.be/RpO_7y7n4rY>
+
 The demo hotel is **Hotel Yukiakari Niseko**, a fictional ski-resort hotel in Hokkaido, Japan.
 
 ## The problem

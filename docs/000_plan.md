@@ -26,7 +26,8 @@ Nebius x NVIDIA Global AI Hackathon 応募用（締切: 2026-10-30 10:00 PDT ＝
 
 ### 現在地（2026-10-04 追記）
 - プロダクト名: Yadori、デモホテル: Hotel Yukiakari Niseko。英語化（`NEXT_PUBLIC_APP_LOCALE=en`）・英語のデモデータ・README（英語）・デモ台本（`docs/demo/en/script.md`）を実装済み。作業は `main` 1本。ホスティングは不要（デモはローカルで収録。公式ルールは test build 可）
-- 残り: 公開リポジトリのpush、動画の収録・編集、Devpostの提出
+- デモ動画（英語・2:56）: https://youtu.be/RpO_7y7n4rY 。公開リポジトリは `yadori`（push済み）
+- 残り: Devpostの提出（説明文・トラック・Token Factory/NVIDIAへのフィードバック）
 
 ### 現在地（2026-09-26）
 **W1〜W4の計画項目（8章のMVP範囲）はすべて実装済み**。予定より約3週間前倒し。残りはW5（ホスティング・README・英語動画・提出）。
