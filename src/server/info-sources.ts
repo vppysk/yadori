@@ -210,7 +210,7 @@ export async function extract(hotelId: string, title: string, body: string, opti
       // 時刻・金額・休みの記載がない件は、内容か項目名が抜き出した文にあるときだけ使う
       if (target.id !== null && target.id === global?.id && !/\d|休|closed/i.test(item.body)) {
         const quoted = normName(object.quotes.join(" ")).toLowerCase();
-        if (!quoted.includes(normName(item.body).toLowerCase()) && !quoted.includes(normName(item.field).toLowerCase())) continue;
+        if (!quoted.includes(normName(item.field).toLowerCase())) continue;
       }
       const to = item.to && DATE.test(item.to) ? item.to : null;
       if (!item.field.trim() || !item.body.trim() || !DATE.test(item.from) || (to && to < item.from)) continue;

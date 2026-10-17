@@ -205,7 +205,8 @@ export function GuestChat({ reservationId, initialSession }: { reservationId: st
         })}
         {pendingText !== null && (
           <>
-            <UserBubble text={pendingText} />
+            {/* 回答待ちの間に再取得で同じ発言が保存済みとして出たら、重ねて出さない */}
+            {!(session.messages.at(-1)?.role === "user" && session.messages.at(-1)?.content === pendingText) && <UserBubble text={pendingText} />}
             <div className="self-start rounded-[16px_16px_16px_4px] border border-line bg-surface px-3.5 py-3 text-[15px] text-ink-sub">
               <span className="inline-flex gap-1" aria-label={tr("回答を作成中", "Writing a reply")}>
                 <Dot delay="0ms" />
