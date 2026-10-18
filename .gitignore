@@ -44,3 +44,8 @@ next-env.d.ts
 
 # demo video deliverables (published on YouTube instead)
 /docs/demo/en/outputs/
+
+# Devpost submission inputs (drafts for the web form; kept local)
+/docs/devpost.md
+/docs/devpost-form.md
+/docs/devpost-additional-info.md
