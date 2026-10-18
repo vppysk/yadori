@@ -71,7 +71,7 @@ TypeScript end to end.
 
 ## Run it locally
 
-Requirements: Node.js 22+ (24 recommended), Docker (for local Supabase), a Nebius Token Factory API key.
+Requirements: Node.js 22.9+ (24 recommended), Docker (for local Supabase), a Nebius Token Factory API key.
 
 ```bash
 git clone <this repository>
